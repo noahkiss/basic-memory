@@ -268,7 +268,7 @@ def test_embedding_provider_factory_forwards_fastembed_runtime_knobs():
 
 
 def test_embedding_provider_factory_uses_default_cache_dir_when_unset(config_home, monkeypatch):
-    """Factory should pass the data-dir-relative default when cache_dir is None.
+    """Factory should pass the shared user-level default when cache_dir is None.
 
     Legacy configs that carry an explicit ``semantic_embedding_cache_dir: null``
     must still get a user-writable cache path rather than letting FastEmbed fall
@@ -276,6 +276,7 @@ def test_embedding_provider_factory_uses_default_cache_dir_when_unset(config_hom
     """
     monkeypatch.delenv("BASIC_MEMORY_CONFIG_DIR", raising=False)
     monkeypatch.delenv("FASTEMBED_CACHE_PATH", raising=False)
+    monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
     reset_embedding_provider_cache()
 
     config = BasicMemoryConfig(
@@ -289,7 +290,7 @@ def test_embedding_provider_factory_uses_default_cache_dir_when_unset(config_hom
 
     provider = create_embedding_provider(config)
     assert isinstance(provider, FastEmbedEmbeddingProvider)
-    expected = str(config_home / ".basic-memory" / "fastembed_cache")
+    expected = str(config_home / ".cache" / "fastembed")
     assert provider.cache_dir == expected
 
 
@@ -304,6 +305,7 @@ def test_embedding_provider_factory_cache_key_reflects_resolved_cache_dir(
     """
     monkeypatch.delenv("BASIC_MEMORY_CONFIG_DIR", raising=False)
     monkeypatch.delenv("FASTEMBED_CACHE_PATH", raising=False)
+    monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
     reset_embedding_provider_cache()
 
     base_kwargs = dict(
@@ -323,7 +325,7 @@ def test_embedding_provider_factory_cache_key_reflects_resolved_cache_dir(
 
     assert isinstance(provider_b, FastEmbedEmbeddingProvider)
     assert provider_b is not provider_a
-    assert provider_a.cache_dir == str(config_home / ".basic-memory" / "fastembed_cache")
+    assert provider_a.cache_dir == str(config_home / ".cache" / "fastembed")
     assert provider_b.cache_dir == str(tmp_path / "alt-cache")
 
 

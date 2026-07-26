@@ -32,6 +32,7 @@ from basic_memory.config_models import (
     _secure_config_file,
     default_fastembed_cache_dir as default_fastembed_cache_dir,
     resolve_data_dir as resolve_data_dir,
+    shared_fastembed_cache_dir as shared_fastembed_cache_dir,
 )
 from basic_memory.telemetry import configure_telemetry
 from basic_memory.utils import generate_permalink, setup_logging

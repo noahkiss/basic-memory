@@ -119,9 +119,16 @@ The decisive structural fact: **commands that avoid importing `basic_memory.mcp.
 (importing `basic_memory.cli.main` is only 0.41 s). Any `tend` subcommand that needs to be fast must
 talk to the repository/service layer directly and must not reach through the MCP tool layer.
 
-Embedding model: `qdrant/bge-small-en-v1.5-onnx-q` (quantized ONNX), 64 MB on disk. It is cached
-**inside the Basic Memory data dir** (`$BASIC_MEMORY_CONFIG_DIR/fastembed_cache/`), not in a shared
-Hugging Face cache — so each config dir pays its own 64 MB download.
+Embedding model: `qdrant/bge-small-en-v1.5-onnx-q` (quantized ONNX), 64 MB on disk.
+
+Upstream cached it **inside the Basic Memory data dir** (`$BASIC_MEMORY_CONFIG_DIR/fastembed_cache/`),
+so every config dir paid its own 64 MB download. **Changed in this fork:** the default is now the
+shared `$XDG_CACHE_HOME/fastembed` (falling back to `~/.cache/fastembed`), because the model is an
+immutable artifact keyed by model name and does not belong inside the isolation boundary
+`BASIC_MEMORY_CONFIG_DIR` exists to draw. `FASTEMBED_CACHE_PATH` and the
+`semantic_embedding_cache_dir` config field still override it, and an install that already
+downloaded the model to the legacy path keeps using that copy rather than silently re-downloading.
+See `default_fastembed_cache_dir()` in `src/basic_memory/config_models.py`.
 
 ---
 

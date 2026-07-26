@@ -83,26 +83,59 @@ def resolve_data_dir() -> Path:
     return Path.home() / ("." + DATA_DIR_NAME)
 
 
+def shared_fastembed_cache_dir() -> Path:
+    """Return the user-level FastEmbed cache shared by every config dir.
+
+    Follows the XDG base-directory convention. Cache data is explicitly *not*
+    config or state: it is re-downloadable, so it does not belong under the
+    per-instance data dir that ``BASIC_MEMORY_CONFIG_DIR`` isolates.
+    """
+    if xdg_cache := os.getenv("XDG_CACHE_HOME"):
+        return Path(xdg_cache) / "fastembed"
+    return Path.home() / ".cache" / "fastembed"
+
+
 def default_fastembed_cache_dir() -> str:
     """Return the default cache directory used for FastEmbed model artifacts.
 
     Resolution order:
       1. ``FASTEMBED_CACHE_PATH`` env var — honors FastEmbed's own convention
          so users who already configure it through the environment keep working.
-      2. ``<basic-memory data dir>/fastembed_cache`` — the same stable,
-         user-writable directory Basic Memory already uses for config and
-         the default SQLite database. Honors ``BASIC_MEMORY_CONFIG_DIR``.
+      2. ``<XDG cache home>/fastembed`` — one shared cache for the whole user.
+      3. ``<basic-memory data dir>/fastembed_cache`` — the legacy per-config-dir
+         location, used only when a model was already downloaded there.
+
+    Why shared rather than per-config-dir?
+      ``BASIC_MEMORY_CONFIG_DIR`` isolates config, database, and state so that
+      several instances (a real store plus test or lab dirs) can coexist. The
+      embedding model is none of those — it is a 64 MB immutable artifact keyed
+      by model name — so scoping it per config dir made every additional
+      instance re-download and re-store the same bytes.
 
     Why not ``tempfile.gettempdir()``?
       FastEmbed's own default is ``<system tmp>/fastembed_cache``, which is
       ephemeral in many sandboxed MCP runtimes (e.g. Codex CLI wipes /tmp
       between invocations). The model then disappears and every subsequent
-      ONNX load raises ``NO_SUCHFILE``. Persisting the cache under the
-      per-user data directory works identically on macOS, Linux, and Windows.
+      ONNX load raises ``NO_SUCHFILE``. Both paths below are persistent and
+      work identically on macOS, Linux, and Windows.
     """
     if env_override := os.getenv("FASTEMBED_CACHE_PATH"):
         return env_override
-    return str(resolve_data_dir() / "fastembed_cache")
+
+    shared = shared_fastembed_cache_dir()
+
+    # Trigger: an install that predates the shared cache, whose model already
+    # lives under the data dir.
+    # Why: re-pointing it at an empty shared cache would silently re-download
+    # 64 MB and orphan the old copy.
+    # Outcome: keep using the legacy path until it is gone; new installs and
+    # every additional config dir get the shared one.
+    if not shared.exists():
+        legacy = resolve_data_dir() / "fastembed_cache"
+        if legacy.exists():
+            return str(legacy)
+
+    return str(shared)
 
 
 @dataclass
@@ -336,10 +369,12 @@ class BasicMemoryConfig(BaseSettings):
         default=None,
         description=(
             "Optional override for the FastEmbed model cache directory. "
-            "When unset, Basic Memory resolves this at runtime to "
-            "<basic-memory data dir>/fastembed_cache (or FASTEMBED_CACHE_PATH "
-            "when that env var is set) so the model persists across runs "
-            "without hardcoding a path into config.json."
+            "When unset, Basic Memory resolves this at runtime to the shared "
+            "<XDG cache home>/fastembed (or FASTEMBED_CACHE_PATH when that env "
+            "var is set, or the legacy <basic-memory data dir>/fastembed_cache "
+            "when a model was already downloaded there) so the model persists "
+            "across runs, and is shared across config dirs, without hardcoding "
+            "a path into config.json."
         ),
     )
     semantic_embedding_threads: int | None = Field(

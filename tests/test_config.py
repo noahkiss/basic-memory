@@ -487,14 +487,71 @@ class TestDataDirHelpers:
 
         assert resolve_data_dir() == custom
 
-    def test_default_fastembed_cache_dir_uses_data_dir(self, config_home, monkeypatch):
-        """Default cache path is a subdir of the Basic Memory data dir."""
+    def test_default_fastembed_cache_dir_uses_shared_xdg_cache(self, config_home, monkeypatch):
+        """Default cache path is the user-level XDG cache, not the data dir."""
         monkeypatch.delenv("BASIC_MEMORY_CONFIG_DIR", raising=False)
         monkeypatch.delenv("FASTEMBED_CACHE_PATH", raising=False)
+        monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
 
-        assert default_fastembed_cache_dir() == str(
-            config_home / ".basic-memory" / "fastembed_cache"
-        )
+        assert default_fastembed_cache_dir() == str(config_home / ".cache" / "fastembed")
+
+    def test_default_fastembed_cache_dir_honors_xdg_cache_home(self, config_home, monkeypatch):
+        """XDG_CACHE_HOME relocates the shared cache."""
+        monkeypatch.delenv("BASIC_MEMORY_CONFIG_DIR", raising=False)
+        monkeypatch.delenv("FASTEMBED_CACHE_PATH", raising=False)
+        xdg_cache = config_home / "xdg-cache"
+        monkeypatch.setenv("XDG_CACHE_HOME", str(xdg_cache))
+
+        assert default_fastembed_cache_dir() == str(xdg_cache / "fastembed")
+
+    def test_default_fastembed_cache_dir_is_shared_across_config_dirs(
+        self, config_home, monkeypatch
+    ):
+        """Isolating config/state must not fork the 64 MB model download.
+
+        ``BASIC_MEMORY_CONFIG_DIR`` exists so a test or lab instance can keep
+        its own config, database, and state. The embedding model is an
+        immutable artifact keyed by model name, so it is deliberately outside
+        that isolation boundary.
+        """
+        monkeypatch.delenv("FASTEMBED_CACHE_PATH", raising=False)
+        monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
+        shared = str(config_home / ".cache" / "fastembed")
+
+        monkeypatch.setenv("BASIC_MEMORY_CONFIG_DIR", str(config_home / "lab-a"))
+        assert default_fastembed_cache_dir() == shared
+
+        monkeypatch.setenv("BASIC_MEMORY_CONFIG_DIR", str(config_home / "lab-b"))
+        assert default_fastembed_cache_dir() == shared
+
+    def test_default_fastembed_cache_dir_keeps_existing_legacy_cache(
+        self, config_home, monkeypatch
+    ):
+        """An install that already downloaded the model keeps using that copy.
+
+        Repointing it at an empty shared cache would silently re-download 64 MB
+        and orphan the old directory.
+        """
+        monkeypatch.delenv("BASIC_MEMORY_CONFIG_DIR", raising=False)
+        monkeypatch.delenv("FASTEMBED_CACHE_PATH", raising=False)
+        monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
+        legacy = config_home / ".basic-memory" / "fastembed_cache"
+        legacy.mkdir(parents=True)
+
+        assert default_fastembed_cache_dir() == str(legacy)
+
+    def test_default_fastembed_cache_dir_prefers_shared_once_it_exists(
+        self, config_home, monkeypatch
+    ):
+        """When both exist, the shared cache wins — the legacy path is a bridge."""
+        monkeypatch.delenv("BASIC_MEMORY_CONFIG_DIR", raising=False)
+        monkeypatch.delenv("FASTEMBED_CACHE_PATH", raising=False)
+        monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
+        (config_home / ".basic-memory" / "fastembed_cache").mkdir(parents=True)
+        shared = config_home / ".cache" / "fastembed"
+        shared.mkdir(parents=True)
+
+        assert default_fastembed_cache_dir() == str(shared)
 
     def test_default_fastembed_cache_dir_env_override(self, tmp_path, monkeypatch):
         """FASTEMBED_CACHE_PATH is preferred when set."""
@@ -521,11 +578,12 @@ class TestDataDirHelpers:
         """
         monkeypatch.delenv("BASIC_MEMORY_CONFIG_DIR", raising=False)
         monkeypatch.delenv("FASTEMBED_CACHE_PATH", raising=False)
+        monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
 
         resolved = Path(default_fastembed_cache_dir())
 
-        # Must equal the data-dir-relative default.
-        assert resolved == config_home / ".basic-memory" / "fastembed_cache"
+        # Must equal the shared user-level default.
+        assert resolved == config_home / ".cache" / "fastembed"
         # And must not equal FastEmbed's own <tempdir>/fastembed_cache fallback.
         assert resolved != Path(tempfile.gettempdir()) / "fastembed_cache"
 
