@@ -1,3 +1,129 @@
+# FORK NOTICE — read this first
+
+This repository is a **hard fork** of [`basicmachines-co/basic-memory`](https://github.com/basicmachines-co/basic-memory),
+maintained at [`noahkiss/basic-memory`](https://github.com/noahkiss/basic-memory).
+
+**It is not a GitHub fork and it is not upstream-track.** Changes made here are not intended to be
+contributed back, and no PR will be opened against upstream. Do not write code, commit messages, or
+docs to upstream's contribution standards (DCO sign-off, semantic PR scopes, the CLA) — those apply
+to upstream, not here. Upstream's own guidance is preserved below because it remains accurate about
+*this codebase*; it is not a statement of this fork's process.
+
+## Fork point
+
+| | |
+|---|---|
+| Forked from | `basicmachines-co/basic-memory` @ `main` |
+| **Upstream SHA** | **`232f2c2fc4e91564d88bcc312ed3d8bd1e8e051b`** |
+| Upstream commit date | 2026-07-26 |
+| Upstream subject | `fix(core): fail loud on ambiguous strict identifier resolution (#1151)` |
+| Forked on | 2026-07-26 |
+
+That SHA is load-bearing. It is the merge base for every future rebase or cherry-pick from upstream.
+When you pull upstream changes in, update the row above to the new merge base.
+
+Note: upstream self-reports version `0.22.1` on `main` even though PyPI `0.22.1` is far behind this
+tree. `basic-memory --version` is not a reliable way to tell what code you are running — use the git
+SHA.
+
+## Remotes
+
+```
+origin     https://github.com/noahkiss/basic-memory.git       (fetch + push)
+upstream   https://github.com/basicmachines-co/basic-memory.git (fetch only; push URL set to DISABLED)
+```
+
+Inspect what upstream has done since the fork point:
+
+```sh
+git fetch upstream
+git log --oneline 232f2c2..upstream/main            # everything new upstream
+git diff 232f2c2..upstream/main -- src/basic_memory # what changed in the core
+git log --oneline main..upstream/main               # upstream commits we do not have
+git log --oneline upstream/main..main               # our divergence
+```
+
+Pull upstream work in deliberately and in small pieces (`git cherry-pick`, or a topic branch plus
+`git rebase --onto`). Do not merge `upstream/main` wholesale — divergence here is intentional.
+
+## License and redistribution
+
+Upstream is **AGPL-3.0**, and so is this fork. `LICENSE` is unchanged and **must stay unchanged**.
+Do not relicense, do not add a more permissive header to modified files, and do not strip upstream's
+copyright notices.
+
+Redistributing a modified build (including via a Homebrew tap) is explicitly permitted by AGPL-3.0,
+subject to:
+
+- **Source availability.** Recipients must be able to get the complete corresponding source of what
+  they run. The public `noahkiss/basic-memory` repo satisfies this, so it must stay public for as
+  long as builds are distributed from it.
+- **Same license.** Derived work ships under AGPL-3.0. It cannot be sublicensed under other terms.
+- **State changes.** Modified files should carry a notice that they were changed and when. This
+  FORK NOTICE plus git history covers that at the repo level.
+- **Section 13 (the network clause).** If a modified version is ever made available to users over a
+  network, those users must be offered the corresponding source. Local and personal use does not
+  trigger this; exposing a modified server to other people does.
+
+Upstream also ships a `CLA.md`. It governs contributions *to upstream* and has no bearing on this
+fork, since nothing here goes upstream.
+
+## What this fork is for
+
+Building a local work-tracking system — **`tend`** — directly into this codebase as first-class `bm`
+subcommands, **not** as a separate wrapper tool around a stock `basic-memory`. The wrapper approach
+was considered and rejected: the pieces below need to run inside the write path and the query layer,
+which a wrapper cannot reach without racing the indexer.
+
+Planned, in rough dependency order:
+
+1. **A gardener** (`bm tend gc` or similar) that keeps the note corpus from rotting. Strictly
+   lossless: it may move, index, dedupe, re-label, and flag — it may never summarize, merge, or
+   resolve. Ship the flag-only version first so the lossless constraint is structural rather than
+   aspirational.
+2. **Local git history on writes.** Every mutation commits into a local-only store repo so pruning is
+   recoverable. Two traps: set `core.excludesFile` and `core.hooksPath` to `/dev/null` inside that
+   repo (a global pre-commit hook will otherwise block automated commits), and never export `GIT_DIR`.
+3. **A closed record vocabulary.** Humans extend the vocabulary; agents may only select from it.
+   Upstream's frontmatter vocabulary is fully open and does not enforce this, so enforcement is ours
+   and has to live in the write path.
+4. **A decision-mining subcommand** over Claude Code transcripts, to recover decisions that were made
+   in conversation and never written down.
+
+The store is central and id-keyed (not one repo per project): a single plain git repo, with the id
+written once into a `.tend.yml` marker at each project root. The id is authoritative; any directory
+name in the store is a human-browsing label that nothing reads.
+
+## Measured baseline at the fork point
+
+Taken on Linux/x86-64, Python 3.13, semantic search enabled (the default when `fastembed` and
+`sqlite_vec` are importable), against a 67-file / 888 KB markdown corpus. Recorded because these
+numbers drive the design and should be re-measured after any rebase.
+
+| Path | Wall time | Resident memory |
+|---|---|---|
+| MCP server, idle | — | 184 MB |
+| MCP server, embeddings loaded | 40–80 ms per query | **~477 MB (stable over 31 queries)** |
+| CLI `bm tool search-notes` | 4.3–4.8 s | ~447 MB |
+| CLI native cmd (`project list`, `config get`) | ~0.55 s | ~73 MB |
+| CLI `--version` floor | 0.33 s | 59 MB |
+| Full reindex + embed, 67 files | 81 s | 762 MB peak |
+
+The decisive structural fact: **commands that avoid importing `basic_memory.mcp.tools` /
+`basic_memory.api.app` cost ~0.55 s; commands that touch them cost ~4 s.** Those two modules are
+~2.1 s and ~2.2 s of import time each, and upstream has already deferred them off the CLI entrypoint
+(importing `basic_memory.cli.main` is only 0.41 s). Any `tend` subcommand that needs to be fast must
+talk to the repository/service layer directly and must not reach through the MCP tool layer.
+
+Embedding model: `qdrant/bge-small-en-v1.5-onnx-q` (quantized ONNX), 64 MB on disk. It is cached
+**inside the Basic Memory data dir** (`$BASIC_MEMORY_CONFIG_DIR/fastembed_cache/`), not in a shared
+Hugging Face cache — so each config dir pays its own 64 MB download.
+
+---
+
+*Everything below this line is upstream's own project guide, preserved as-is. Where it describes the
+codebase it is accurate; where it describes contribution process, see the FORK NOTICE above.*
+
 # AGENTS.md - Basic Memory Project Guide
 
 ## Project Overview
