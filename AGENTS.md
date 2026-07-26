@@ -23,8 +23,12 @@ That SHA is load-bearing. It is the merge base for every future rebase or cherry
 When you pull upstream changes in, update the row above to the new merge base.
 
 Note: upstream self-reports version `0.22.1` on `main` even though PyPI `0.22.1` is far behind this
-tree. `basic-memory --version` is not a reliable way to tell what code you are running — use the git
-SHA.
+tree — `basic-memory --version` reads a hardcoded string from `src/basic_memory/__init__.py` that
+only moves on release. It is not a reliable way to tell what code you are running.
+
+The *package* version is reliable, because uv-dynamic-versioning derives it from git: a build from
+the fork point reports `0.22.2.dev118+232f2c2f`. To check what is actually installed, use
+`uv tool list` (or `pip show basic-memory`) and read the `+<sha>` suffix, not `--version`.
 
 ## Remotes
 
