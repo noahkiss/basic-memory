@@ -390,6 +390,22 @@ resolver glue, but it is a change to the resolution chain, not something a wrapp
 
 Found in: sweep-spike.md:1, sweep-decisions.md:1, sweep-status-agents.md:25.
 
+**Amended 2026-07-26 — the ~20-line estimate above is wrong, and B5 is not a fix.** Attempted as part
+of the registry cluster and deliberately abandoned as its own project. Three independent blockers:
+
+1. **The `.tend.yml` marker schema does not exist yet**, and it is owned by the store design, not by
+   this repo. Writing a resolver against an undefined marker means inventing the schema here.
+2. **The marker carries an opaque id, but `--project` resolution is name/permalink-based** through
+   `config_manager.get_project()`. So id → project needs a *new lookup layer*: `ProjectResolver` is a
+   pure frozen dataclass with no DB access, and the id lives nowhere it can reach.
+3. **Every construction site needs cwd wiring** — `index/repository_project_resolution.py`,
+   `index/storage_events.py`, `index/local_runtime.py`, plus the MCP and CLI entrypoints. cwd is not
+   currently threaded to any of them.
+
+Half of any implementation today would be speculative code written against an undecided schema.
+**Blocked on T9 / the store design settling the id-and-permalink question first** — do not start B5
+before that lands.
+
 ---
 
 ## WANT — capabilities to build in
