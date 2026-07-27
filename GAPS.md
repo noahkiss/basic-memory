@@ -585,6 +585,41 @@ is this?" hits it again.
 **Fix:** delete the tag locally and on the remote. **Not done deliberately** — deleting a remote tag
 changes published state, and `noahkiss/basic-memory` is public. Needs the user's explicit go-ahead.
 
+### T15 — auto-update can silently replace this fork with upstream from PyPI
+**Found:** 2026-07-27, while auditing runtime dependencies. **Severity: this is the worst trap in
+the file** — it is the only one whose failure mode is the fork uninstalling itself.
+
+`src/basic_memory/cli/auto_update.py` fetches `https://pypi.org/pypi/basic-memory/json` and, when
+the published version compares newer than the installed one, runs `uv tool upgrade basic-memory`
+(or the Homebrew/pip equivalent). `basic-memory` on PyPI is **upstream's** package. There is no
+check that the installed build and the PyPI project are the same project.
+
+It is not opt-in. Three separate call sites reach it, and none require the user to ask:
+
+```
+config_models.py:630     auto_update: bool = Field(default=True, ...)
+cli/app.py:117           maybe_run_periodic_auto_update(ctx.invoked_subcommand)
+cli/commands/mcp.py:86   run_auto_update(force=False, check_only=False, silent=True)  # daemon thread
+```
+
+`maybe_run_periodic_auto_update` skips only `mcp`, `update`, and non-interactive sessions, so every
+other interactive `bm <subcommand>` is a candidate once per `update_check_interval` (86400 s). And
+`check_only=False` in both automatic call sites means it **installs**, it does not merely notify.
+The MCP path runs it on a background daemon thread at server start, where the user sees nothing.
+
+**Why it has not fired yet is luck, not design.** `uv-dynamic-versioning` with `bump = true` gives
+this tree a dev version that currently sorts above upstream's latest release. That ordering is an
+accident of where the fork point sits; one upstream minor release inverts it.
+
+This is T13's failure mode ("a dependency reference naming `basic-memory` resolves to upstream")
+promoted from documentation to an executable code path. `pyproject.toml` `[project.urls]` still
+pointing at `basicmachines-co` is the same root cause, one layer out.
+
+**Fix:** delete the surface. A fork that publishes to no index has no upgrade source, so there is
+nothing here to repair — `auto_update.py`, `bm update`, both automatic call sites, and the
+`auto_update` / `update_check_interval` / `auto_update_last_checked_at` config fields all go.
+Decided with the user 2026-07-27; bundled with the W12/W13/W14 deletion passes.
+
 ---
 
 ## BLOCKERS / gaps in capability
