@@ -9,6 +9,20 @@ docs to upstream's contribution standards (DCO sign-off, semantic PR scopes, the
 to upstream, not here. Upstream's own guidance is preserved below because it remains accurate about
 *this codebase*; it is not a statement of this fork's process.
 
+## → `GAPS.md` is this fork's to-do list. Write to it as you work.
+
+**[`GAPS.md`](./GAPS.md)** holds every known defect, trap, and missing capability we intend to fix
+here, with reproductions. Read it before planning work in this repo.
+
+**If you find a gap during a session, record it there in that same session** — not in a design doc
+or a STATUS file with the intention of transferring it later. That transfer is a return visit, and
+return visits do not happen. Several figures in the design docs were inherited across sessions and
+never re-checked; the same rot applies to unrecorded gaps, except that a gap recorded elsewhere is
+also invisible to whoever is working *in this repo*, which is where it has to get fixed.
+
+The working order is **fix the gaps that block the next thing, then build** — not build now and
+clean up after.
+
 ## Fork point
 
 | | |
