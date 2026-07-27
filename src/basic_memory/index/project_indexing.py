@@ -10,13 +10,28 @@ from basic_memory.schemas.v2.project_index import ProjectIndexResponse
 
 @dataclass(frozen=True, slots=True)
 class ProjectIndexObservation:
-    """Files visible to the active project-index runtime."""
+    """Files visible to the active project-index runtime.
+
+    Observation is a filesystem scan; indexing is what makes a file reachable by search and
+    read. ``indexed_paths`` carries the second fact alongside the first so callers can tell
+    "on disk" from "queryable" instead of reporting a scanned file as if it were both.
+    """
 
     observed_files: tuple[RuntimeObservedIndexFile, ...]
+    indexed_paths: frozenset[str]
 
     @property
     def total_files(self) -> int:
         return len(self.observed_files)
+
+    @property
+    def unindexed_files(self) -> tuple[RuntimeObservedIndexFile, ...]:
+        """Observed files with no index row: present on disk, absent from every read path."""
+        return tuple(
+            observed_file
+            for observed_file in self.observed_files
+            if observed_file.path not in self.indexed_paths
+        )
 
 
 class ProjectIndexRunner(Protocol):

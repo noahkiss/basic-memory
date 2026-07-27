@@ -53,22 +53,26 @@ def _mock_config_manager():
 
 PROJECT_INDEX_STATUS_WITH_FILES = ProjectIndexStatusResponse(
     total_files=2,
+    unindexed_file_count=0,
     observed_files=(
         ProjectIndexObservedFileResponse(
             path="notes/new-file.md",
             checksum="abc12345",
             size=123,
+            indexed=True,
         ),
         ProjectIndexObservedFileResponse(
             path="notes/existing.md",
             checksum="def67890",
             size=456,
+            indexed=True,
         ),
     ),
 )
 
 PROJECT_INDEX_STATUS_EMPTY = ProjectIndexStatusResponse(
     total_files=0,
+    unindexed_file_count=0,
     observed_files=(),
 )
 

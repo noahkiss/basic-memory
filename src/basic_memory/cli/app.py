@@ -17,10 +17,14 @@ import logfire  # noqa: E402
 
 def version_callback(value: bool) -> None:
     """Show version and exit."""
-    if value:  # pragma: no cover
+    if value:
         import basic_memory
 
-        typer.echo(f"Basic Memory version: {basic_memory.__version__}")
+        # Trigger: no installed distribution, so the version is only the release fallback.
+        # Why: that number is identical across every build between releases, so printing it bare
+        # would claim a precision we do not have. Outcome: the reader is told to distrust it.
+        suffix = "" if basic_memory.__version_from_metadata__ else " (source tree; not installed)"
+        typer.echo(f"Basic Memory version: {basic_memory.__version__}{suffix}")
         raise typer.Exit()
 
 

@@ -15,12 +15,18 @@ class ProjectIndexObservedFileResponse(BaseModel):
     path: str = Field(description="Project-relative file path")
     checksum: str | None = Field(default=None, description="Observed storage checksum")
     size: int | None = Field(default=None, description="Observed storage object size in bytes")
+    indexed: bool = Field(
+        description="Whether the file has an index row; unindexed files are not queryable"
+    )
 
 
 class ProjectIndexStatusResponse(BaseModel):
     """Current project-index observation for a local project."""
 
     total_files: int = Field(description="Number of files observed for project indexing")
+    unindexed_file_count: int = Field(
+        description="Observed files with no index row, invisible to search and read until reindex"
+    )
     observed_files: tuple[ProjectIndexObservedFileResponse, ...] = Field(
         description="Files observed by the project-index runtime"
     )
@@ -30,13 +36,16 @@ class ProjectIndexStatusResponse(BaseModel):
         cls,
         observation: "ProjectIndexObservation",
     ) -> "ProjectIndexStatusResponse":
+        indexed_paths = observation.indexed_paths
         return cls(
             total_files=observation.total_files,
+            unindexed_file_count=len(observation.unindexed_files),
             observed_files=tuple(
                 ProjectIndexObservedFileResponse(
                     path=file.path,
                     checksum=file.checksum,
                     size=file.size,
+                    indexed=file.path in indexed_paths,
                 )
                 for file in observation.observed_files
             ),

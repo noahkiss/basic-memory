@@ -23,14 +23,14 @@ console = Console()
 
 def add_observed_files_to_tree(tree: Tree, status: ProjectIndexStatusResponse) -> None:
     """Add observed project-index files to the tree, grouped by directory."""
-    by_dir: dict[str, list[tuple[str, str, str | None]]] = {}
+    by_dir: dict[str, list[tuple[str, str, str | None, bool]]] = {}
     for observed_file in status.observed_files:
         path = observed_file.path
         parts = path.split("/", 1)
         dir_name = parts[0] if len(parts) > 1 else ""
         file_name = parts[1] if len(parts) > 1 else parts[0]
         checksum = observed_file.checksum[:8] if observed_file.checksum else None
-        by_dir.setdefault(dir_name, []).append((file_name, path, checksum))
+        by_dir.setdefault(dir_name, []).append((file_name, path, checksum, observed_file.indexed))
 
     for dir_name, files in sorted(by_dir.items()):
         if dir_name:
@@ -38,11 +38,12 @@ def add_observed_files_to_tree(tree: Tree, status: ProjectIndexStatusResponse) -
         else:
             branch = tree
 
-        for file_name, _, checksum in sorted(files):
-            if checksum:
-                branch.add(f"[cyan]{file_name}[/cyan] ({checksum})")
-            else:
-                branch.add(f"[cyan]{file_name}[/cyan]")
+        for file_name, _, checksum, indexed in sorted(files):
+            detail = f" ({checksum})" if checksum else ""
+            # An unindexed file is the one case where the listing would otherwise read as
+            # a clean bill of health for a note no query can reach, so mark it inline.
+            marker = "" if indexed else " [yellow]not indexed[/yellow]"
+            branch.add(f"[cyan]{file_name}[/cyan]{detail}{marker}")
 
 
 def display_project_index_status(
@@ -54,6 +55,19 @@ def display_project_index_status(
     """Display project-index observation status using Rich."""
     tree = Tree(f"{project_name}: {title}")
     tree.add(f"{status.total_files} observed file{'s' if status.total_files != 1 else ''}")
+
+    # Trigger: the scan saw files that have no index row.
+    # Why: observation is a filesystem walk, and only indexing makes a file reachable by
+    #      search or read. Folding both into one "observed" count is a silent wrong answer:
+    #      the total looks healthy while every query against those files returns nothing.
+    # Outcome: report the gap and name the command that closes it.
+    if status.unindexed_file_count:
+        plural = status.unindexed_file_count != 1
+        tree.add(
+            f"[bold yellow]{status.unindexed_file_count} observed file"
+            f"{'s are' if plural else ' is'} NOT indexed[/bold yellow] — "
+            "invisible to search and read until 'basic-memory reindex'"
+        )
 
     if verbose and status.observed_files:
         files_branch = tree.add("[cyan]Observed Files[/cyan]")

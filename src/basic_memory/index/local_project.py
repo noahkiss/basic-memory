@@ -691,7 +691,18 @@ class LocalProjectIndexRunner:
         dependencies = await self.runtime_factory.dependencies_for_project(project)
         runtime = self.runtime_factory.runtime_from_dependencies(dependencies)
         observed_files = await runtime.observed_file_source.list_observed_index_files()
-        return LocalProjectIndexObservation(observed_files=observed_files)
+        # An observed file only becomes queryable once it has an entity row, so the scan
+        # alone cannot answer "is this note findable?". Reading the indexed paths is the
+        # same projected three-column select the change detector already uses — it never
+        # enqueues index work, so observation keeps costing a scan and not a reindex.
+        indexed_file_stats = await RepositoryLocalProjectIndexedFileStatSource(
+            session_maker=dependencies.session_maker,
+            entity_repository=dependencies.entity_repository,
+        ).load_indexed_file_stats()
+        return LocalProjectIndexObservation(
+            observed_files=observed_files,
+            indexed_paths=frozenset(indexed_file_stats),
+        )
 
     async def index_project(
         self,

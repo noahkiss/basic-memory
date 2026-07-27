@@ -20,11 +20,13 @@ async def test_status_wait_returns_current_project_index_observation(monkeypatch
     )
     project_index_status = ProjectIndexStatusResponse(
         total_files=1,
+        unindexed_file_count=0,
         observed_files=(
             ProjectIndexObservedFileResponse(
                 path="notes/seed.md",
                 checksum="abc123",
                 size=12,
+                indexed=True,
             ),
         ),
     )
