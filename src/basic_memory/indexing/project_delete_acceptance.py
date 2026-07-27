@@ -50,8 +50,7 @@ class ProjectDeleteAcceptedResult:
             "file_delete_status": self.file_delete_status,
             "background": self.background,
             "job_id": str(self.job_id),
-            # ProjectItem also carries cloud-hosting metadata (display_name,
-            # is_private) that the accepted-delete response has never included;
+            # The accepted-delete response has never included optional metadata;
             # serialize only the persisted project fields so bytes stay stable.
             "old_project": self.old_project.model_dump(
                 include={"id", "external_id", "name", "path", "is_default"}

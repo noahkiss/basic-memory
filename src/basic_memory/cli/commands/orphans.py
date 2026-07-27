@@ -9,7 +9,6 @@ from rich.console import Console
 from rich.table import Table
 
 from basic_memory.cli.app import app
-from basic_memory.cli.commands.routing import force_routing, validate_routing_flags
 from basic_memory.config import ConfigManager
 from basic_memory.mcp.async_client import get_client
 from basic_memory.mcp.clients.knowledge import KnowledgeClient
@@ -23,7 +22,7 @@ async def run_orphans(project: Optional[str] = None) -> tuple[str, list[GraphNod
     """Fetch entities that have no relations in the knowledge graph."""
     project = project or ConfigManager().default_project
 
-    async with get_client(project_name=project) as client:
+    async with get_client() as client:
         project_item = await get_active_project(client, project, None)
         entities = await KnowledgeClient(client, project_item.external_id).get_orphans()
         return project_item.name, entities
@@ -36,10 +35,6 @@ def orphans(
         typer.Option(help="The project name."),
     ] = None,
     json_output: bool = typer.Option(False, "--json", help="Output in JSON format"),
-    local: bool = typer.Option(
-        False, "--local", help="Force local API routing (ignore cloud mode)"
-    ),
-    cloud: bool = typer.Option(False, "--cloud", help="Force cloud API routing"),
 ):
     """Show entities that have no relations in the knowledge graph.
 
@@ -53,9 +48,7 @@ def orphans(
     from mcp.server.fastmcp.exceptions import ToolError
 
     try:
-        validate_routing_flags(local, cloud)
-        with force_routing(local=local, cloud=cloud):
-            project_name, entities = run_with_cleanup(run_orphans(project))
+        project_name, entities = run_with_cleanup(run_orphans(project))
 
         if json_output:
             print(json.dumps([entity.model_dump(mode="json") for entity in entities], indent=2))

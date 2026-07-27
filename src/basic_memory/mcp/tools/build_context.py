@@ -185,7 +185,7 @@ async def build_context(
     a rich context graph of related information.
 
     Project Resolution:
-    Server resolves projects using a unified priority chain (same in local and cloud modes):
+    Server resolves projects using a unified priority chain:
     Single Project Mode → project parameter → default project.
     Uses default project automatically. Specify `project` parameter to target a different project.
 
@@ -193,8 +193,8 @@ async def build_context(
         project: Project name to build context from. Optional - server will resolve using hierarchy.
                 If unknown, use list_memory_projects() to discover available projects.
         project_id: Project external_id (UUID). Prefer this over `project` when known —
-                it routes to the exact project regardless of name collisions across cloud
-                workspaces. Takes precedence over `project`. Get from list_memory_projects().
+                it routes to the exact project regardless of name collisions. Takes
+                precedence over `project`. Get from list_memory_projects().
         url: memory:// URI pointing to discussion content (e.g. memory://specs/search)
         depth: How many relation hops to traverse (1-3 recommended for performance)
         timeframe: How far back to look. Supports natural language like "2 days ago", "last week"

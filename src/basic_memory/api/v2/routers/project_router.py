@@ -43,22 +43,10 @@ from basic_memory.schemas.v2 import (
     ProjectResolveRequest,
     ProjectResolveResponse,
 )
-from basic_memory.utils import normalize_project_path, generate_permalink
+from basic_memory.utils import generate_permalink
 
 router = APIRouter(prefix="/projects", tags=["project_management-v2"])
 ProjectResolveMethod = Literal["external_id", "name", "permalink"]
-
-
-def _split_qualified_project_identifier(identifier: str) -> tuple[str | None, str]:
-    """Split ``<workspace>/<project>`` identifiers while preserving plain project names."""
-    cleaned = identifier.strip()
-    if "/" not in cleaned:
-        return None, cleaned
-
-    workspace_identifier, project_identifier = cleaned.split("/", 1)
-    if not workspace_identifier or not project_identifier:
-        return None, cleaned
-    return workspace_identifier, project_identifier
 
 
 async def _resolve_project_identifier_candidate(
@@ -84,39 +72,6 @@ async def _resolve_project_identifier_candidate(
     return None, "name"
 
 
-async def _resolve_project_identifier(
-    session: SessionDep,
-    project_repository: ProjectRepository,
-    identifier: str,
-) -> tuple[Project | None, ProjectResolveMethod]:
-    """Resolve exact identifiers first, then accepted workspace-qualified forms."""
-    project, resolution_method = await _resolve_project_identifier_candidate(
-        session,
-        project_repository,
-        identifier,
-    )
-    if project:
-        return project, resolution_method
-
-    workspace_identifier, project_identifier = _split_qualified_project_identifier(identifier)
-    if workspace_identifier is None:
-        return None, resolution_method
-
-    # Trigger: an MCP disambiguation error suggested ``workspace/project``.
-    # Why: request routing already selected the workspace/tenant; this endpoint
-    #   only needs the project segment to validate the active project.
-    # Outcome: models can follow the hint verbatim instead of looping on a 404.
-    project, resolution_method = await _resolve_project_identifier_candidate(
-        session,
-        project_repository,
-        project_identifier,
-    )
-    if project:
-        return project, resolution_method
-
-    return None, resolution_method
-
-
 @router.get("/", response_model=ProjectList)
 async def list_projects(
     project_service: ProjectServiceDep,
@@ -134,7 +89,7 @@ async def list_projects(
             id=project.id,
             external_id=project.external_id,
             name=project.name,
-            path=normalize_project_path(project.path),
+            path=project.path,
             is_default=project.is_default or False,
         )
         for project in projects
@@ -192,7 +147,7 @@ async def add_project(
             )
 
     try:  # pragma: no cover
-        # The service layer handles cloud mode validation and path sanitization
+        # The service layer handles path sanitization
         await project_service.add_project(
             project_data.name, project_data.path, set_default=project_data.set_default
         )
@@ -311,7 +266,7 @@ async def resolve_project_identifier(
     """
     logger.info(f"API v2 request: resolve_project_identifier for '{data.identifier}'")
 
-    project, resolution_method = await _resolve_project_identifier(
+    project, resolution_method = await _resolve_project_identifier_candidate(
         session,
         project_repository,
         data.identifier,
@@ -338,7 +293,7 @@ async def resolve_project_identifier(
         project_id=project.id,
         name=project.name,
         permalink=generate_permalink(project.name),
-        path=normalize_project_path(project.path),
+        path=project.path,
         is_active=project.is_active if hasattr(project, "is_active") else True,
         is_default=project.is_default or False,
         resolution_method=resolution_method,
@@ -380,7 +335,7 @@ async def get_project_by_id(
         id=project.id,
         external_id=project.external_id,
         name=project.name,
-        path=normalize_project_path(project.path),
+        path=project.path,
         is_default=project.is_default or False,
     )
 
@@ -522,7 +477,7 @@ async def delete_project_by_id(
             )
 
         # Check if trying to delete the default project
-        # Use is_default from database, not ConfigManager (which doesn't work in cloud mode)
+        # Use is_default from the database rather than ConfigManager
         if old_project.is_default:
             available_projects = await project_service.list_projects()
             other_projects = [p.name for p in available_projects if p.external_id != project_id]

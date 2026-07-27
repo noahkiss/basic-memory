@@ -136,8 +136,8 @@ def test_write_note_json_output(mock_mcp_write):
 def test_write_note_project_id_passthrough(mock_mcp_write):
     """--project-id forwards to the MCP tool's project_id parameter.
 
-    Regression: removing --workspace without exposing --project-id left CLI
-    callers unable to disambiguate same-named projects across cloud workspaces.
+    The external id is the only unambiguous project handle: names collide and
+    are re-usable, so a caller that knows the id must be able to pass it.
     """
     uuid = "11111111-1111-1111-1111-111111111111"
     result = runner.invoke(
@@ -680,24 +680,6 @@ def test_search_notes_string_error(mock_mcp_search):
     assert result.exit_code == 1
 
 
-# --- Routing flags ---
-
-
-def test_routing_both_flags_error():
-    """Commands exit with error when both --local and --cloud are specified."""
-    result = runner.invoke(
-        cli_app,
-        [
-            "tool",
-            "recent-activity",
-            "--local",
-            "--cloud",
-        ],
-    )
-
-    assert result.exit_code == 1
-
-
 # --- schema-validate ---
 
 SCHEMA_VALIDATE_RESULT = {
@@ -927,59 +909,3 @@ def test_list_projects_accepts_json_flag(mock_mcp):
 
     assert result.exit_code == 0, f"CLI failed: {result.output}"
     assert json.loads(result.output)["count"] == 2
-
-
-# --- list-workspaces ---
-
-LIST_WORKSPACES_RESULT = {
-    "workspaces": [
-        {
-            "tenant_id": "tenant-abc",
-            "name": "My Workspace",
-            "workspace_type": "personal",
-            "role": "owner",
-            "organization_id": None,
-            "has_active_subscription": True,
-        },
-    ],
-    "count": 1,
-}
-
-
-@patch(
-    "basic_memory.mcp.tools.list_workspaces",
-    new_callable=AsyncMock,
-    return_value=LIST_WORKSPACES_RESULT,
-)
-def test_list_workspaces_json_output(mock_mcp):
-    """list-workspaces outputs valid JSON from MCP tool."""
-    result = runner.invoke(
-        cli_app,
-        ["tool", "list-workspaces"],
-    )
-
-    assert result.exit_code == 0, f"CLI failed: {result.output}"
-    data = json.loads(result.output)
-    assert data["count"] == 1
-    assert data["workspaces"][0]["tenant_id"] == "tenant-abc"
-    assert data["workspaces"][0]["name"] == "My Workspace"
-    mock_mcp.assert_called_once()
-    assert mock_mcp.call_args.kwargs["output_format"] == "json"
-
-
-@patch(
-    "basic_memory.mcp.tools.list_workspaces",
-    new_callable=AsyncMock,
-    return_value={"workspaces": [], "count": 0},
-)
-def test_list_workspaces_empty(mock_mcp):
-    """list-workspaces handles empty workspace list."""
-    result = runner.invoke(
-        cli_app,
-        ["tool", "list-workspaces"],
-    )
-
-    assert result.exit_code == 0, f"CLI failed: {result.output}"
-    data = json.loads(result.output)
-    assert data["workspaces"] == []
-    assert data["count"] == 0

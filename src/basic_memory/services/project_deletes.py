@@ -62,8 +62,8 @@ async def select_replacement_default(
 ) -> Project | None:
     """Pick the active project that should inherit the default flag.
 
-    Deleting the default project can't simply drop the flag: a workspace must
-    always resolve a default for project-less writes. The oldest remaining
+    Deleting the default project can't simply drop the flag: something must
+    always resolve as the default for project-less writes. The oldest remaining
     active project wins so the promotion is deterministic.
     """
     result = await session.execute(
@@ -110,12 +110,9 @@ class ProjectDeleteAcceptanceService:
                     404,
                     f"Project with external_id '{request.project_external_id}' not found",
                 )
-            # A workspace must always resolve a default project for project-less
-            # writes, so the flag can't just vanish on delete. Cloud team
-            # workspaces hide the "set default" control (basic-memory-cloud
-            # #968), which previously left the default project undeletable there.
-            # Promote another active project instead of refusing; only block when
-            # nothing remains to inherit the flag.
+            # A default project must always resolve for project-less writes, so the
+            # flag can't just vanish on delete. Promote another active project
+            # instead of refusing; only block when nothing remains to inherit it.
             replacement_default: Project | None = None
             if project.is_default:
                 replacement_default = await select_replacement_default(
@@ -125,8 +122,7 @@ class ProjectDeleteAcceptanceService:
                 if replacement_default is None:
                     raise ProjectDeleteAcceptanceError(
                         400,
-                        f"Cannot delete '{project.name}' because it is the only "
-                        "project in the workspace.",
+                        f"Cannot delete '{project.name}' because it is the only project remaining.",
                     )
 
             runtime_request = RuntimeProjectDeleteJobRequest(

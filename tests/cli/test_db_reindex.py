@@ -21,7 +21,6 @@ def _stub_app_config(*, semantic_search_enabled: bool = True) -> SimpleNamespace
     return SimpleNamespace(
         semantic_search_enabled=semantic_search_enabled,
         database_path=Path("/tmp/basic-memory.db"),
-        get_project_mode=lambda project_name: None,
         # app_callback reads this to decide whether to install the uvloop policy.
         database_backend=DatabaseBackend.SQLITE,
     )
@@ -30,12 +29,10 @@ def _stub_app_config(*, semantic_search_enabled: bool = True) -> SimpleNamespace
 def _configure_reindex_cli(monkeypatch, app_config: SimpleNamespace) -> None:
     """Keep CLI tests focused on reindex wiring instead of full app startup."""
     monkeypatch.setattr("basic_memory.cli.app.init_cli_logging", lambda: None)
-    monkeypatch.setattr("basic_memory.cli.app.maybe_show_init_line", lambda *_args: None)
-    monkeypatch.setattr("basic_memory.cli.app.maybe_show_cloud_promo", lambda *_args: None)
     monkeypatch.setattr("basic_memory.cli.app.maybe_run_periodic_auto_update", lambda *_args: None)
     monkeypatch.setattr(
         "basic_memory.cli.app.CliContainer.create",
-        lambda: SimpleNamespace(config=app_config, mode=SimpleNamespace(is_cloud=False)),
+        lambda: SimpleNamespace(config=app_config),
     )
     monkeypatch.setattr(
         db_cmd,

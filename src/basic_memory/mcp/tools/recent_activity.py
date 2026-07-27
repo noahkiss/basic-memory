@@ -112,8 +112,8 @@ async def recent_activity(
                 hierarchy above. If unknown, use list_memory_projects() to discover
                 available projects.
         project_id: Project external_id (UUID). Prefer this over `project` when known —
-                it routes to the exact project regardless of name collisions across cloud
-                workspaces. Takes precedence over `project`. Get from list_memory_projects().
+                it routes to the exact project regardless of name collisions. Takes
+                precedence over `project`. Get from list_memory_projects().
         output_format: "text" returns human-readable summary text. "json" returns
             a flat list of recent items.
         context: Optional FastMCP context for performance caching.
@@ -306,7 +306,7 @@ async def recent_activity(
 
     else:
         # Project-Specific Mode: Get activity for specific project
-        # Uses get_project_client() for per-project routing (local vs cloud)
+        # Uses get_project_client() for per-project routing
         async with get_project_client(resolved_project, context=context, project_id=project_id) as (
             client,
             active_project,

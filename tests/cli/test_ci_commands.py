@@ -99,11 +99,9 @@ def test_setup_writes_workflow_config_and_prompt(
         tmp_path / ".github/basic-memory/SOUL.md"
     ).read_text(encoding="utf-8")
     assert "OPENAI_API_KEY" in result.output
-    assert "BASIC_MEMORY_API_KEY" in result.output
     mock_seed.assert_awaited_once_with(
         project="team-memory",
         project_id=None,
-        workspace=None,
         refresh=False,
     )
 
@@ -139,7 +137,6 @@ def test_setup_refreshes_or_updates_existing_schema_notes_when_requested(
         assert seed_call.kwargs == {
             "project": "team-memory",
             "project_id": None,
-            "workspace": None,
             "refresh": True,
         }
 
@@ -184,7 +181,6 @@ def test_setup_refreshes_schema_notes_when_generated_files_already_exist(
     mock_seed.assert_awaited_once_with(
         project="team-memory",
         project_id=None,
-        workspace=None,
         refresh=True,
     )
 
@@ -289,7 +285,7 @@ def test_setup_rejects_non_github_repo(tmp_path: Path) -> None:
 def test_collect_command_writes_context_and_github_outputs(tmp_path: Path) -> None:
     event_path = _write_pr_event(tmp_path / "event.json")
     config_path = tmp_path / "config.yml"
-    config_path.write_text("project: team-memory\nworkspace: product\n", encoding="utf-8")
+    config_path.write_text("project: team-memory\n", encoding="utf-8")
     output_path = tmp_path / "context.json"
     github_output = tmp_path / "github-output.txt"
 
@@ -344,7 +340,7 @@ def test_publish_command_upserts_project_update_note(
     context_path = tmp_path / "context.json"
     config_path = tmp_path / "config.yml"
     synthesis_path = tmp_path / "synthesis.json"
-    config_path.write_text("project: team-memory\nworkspace: product\n", encoding="utf-8")
+    config_path.write_text("project: team-memory\n", encoding="utf-8")
 
     collect_result = runner.invoke(
         cli_app,
@@ -388,9 +384,9 @@ def test_publish_command_upserts_project_update_note(
     assert result.exit_code == 0, result.output
     mock_search.assert_awaited_once()
     mock_write.assert_awaited_once()
-    assert mock_search.call_args.kwargs["project"] == "product/team-memory"
+    assert mock_search.call_args.kwargs["project"] == "team-memory"
     kwargs = mock_write.call_args.kwargs
-    assert kwargs["project"] == "product/team-memory"
+    assert kwargs["project"] == "team-memory"
     assert kwargs["note_type"] == "project_update"
     assert kwargs["overwrite"] is True
     assert kwargs["metadata"]["repo"] == "basicmachines-co/demo"
@@ -466,7 +462,7 @@ def test_publish_command_preserves_existing_note_path_for_idempotency_match(
 
 @patch("basic_memory.mcp.tools.search_notes", new_callable=AsyncMock)
 @patch("basic_memory.mcp.tools.write_note", new_callable=AsyncMock)
-def test_publish_command_uses_project_id_without_workspace_qualifying_project(
+def test_publish_command_forwards_project_id(
     mock_write: AsyncMock,
     mock_search: AsyncMock,
     tmp_path: Path,
@@ -478,7 +474,7 @@ def test_publish_command_uses_project_id_without_workspace_qualifying_project(
     config_path = tmp_path / "config.yml"
     synthesis_path = tmp_path / "synthesis.json"
     config_path.write_text(
-        "project: team-memory\nproject_id: project-uuid\nworkspace: product\n",
+        "project: team-memory\nproject_id: project-uuid\n",
         encoding="utf-8",
     )
 

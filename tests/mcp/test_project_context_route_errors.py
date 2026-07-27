@@ -1,4 +1,4 @@
-"""Project-context regressions for project-scoped cloud credentials."""
+"""Project-context regressions for memory:// project-route resolution."""
 
 from typing import Any, cast
 
@@ -23,51 +23,11 @@ class ContextState:
 
 
 @pytest.mark.asyncio
-async def test_read_route_falls_back_when_project_prefix_is_hidden_by_scope(
+async def test_mutating_route_keeps_resolve_failure_fail_closed(
     config_manager,
     monkeypatch,
 ) -> None:
-    """A note directory must not become a forbidden cross-project lookup."""
-    config = config_manager.load_config()
-    config.permalinks_include_project = True
-    config_manager.save_config(config)
-
-    context = ContextState()
-    active_project = ProjectItem(
-        id=1,
-        external_id="11111111-1111-1111-1111-111111111111",
-        name="ci-acceptance",
-        path="/tmp/ci-acceptance",
-        is_default=False,
-    )
-    await context.set_state("active_project", active_project.model_dump())
-
-    async def reject_directory_as_project(*args: object, **kwargs: object) -> None:
-        raise ToolError("This API key does not have access to this project")
-
-    monkeypatch.setattr(
-        "basic_memory.mcp.tools.utils.call_post",
-        reject_directory_as_project,
-    )
-
-    resolved_project, resolved_path, is_memory_url = await resolve_project_and_path(
-        client=cast(Any, None),
-        identifier="memory://acceptance/mcp/cloud-smoke",
-        project="ci-acceptance",
-        context=cast(Any, context),
-    )
-
-    assert resolved_project == active_project
-    assert resolved_path == "ci-acceptance/acceptance/mcp/cloud-smoke"
-    assert is_memory_url is True
-
-
-@pytest.mark.asyncio
-async def test_mutating_route_keeps_scope_rejection_fail_closed(
-    config_manager,
-    monkeypatch,
-) -> None:
-    """Strict mutation routing must not reinterpret a forbidden route as a path."""
+    """Strict mutation routing must not reinterpret an unresolvable route as a path."""
     context = ContextState()
     active_project = ProjectItem(
         id=1,
@@ -79,14 +39,14 @@ async def test_mutating_route_keeps_scope_rejection_fail_closed(
     await context.set_state("active_project", active_project.model_dump())
 
     async def reject_project_route(*args: object, **kwargs: object) -> None:
-        raise ToolError("This API key does not have access to this project")
+        raise ToolError("Internal server error resolving project")
 
     monkeypatch.setattr("basic_memory.mcp.tools.utils.call_post", reject_project_route)
 
-    with pytest.raises(ToolError, match="does not have access"):
+    with pytest.raises(ToolError, match="Internal server error"):
         await resolve_project_and_path(
             client=cast(Any, None),
-            identifier="memory://other-project/cloud-smoke",
+            identifier="memory://other-project/note",
             project="ci-acceptance",
             context=cast(Any, context),
             strict_project_routing=True,
@@ -178,25 +138,3 @@ async def test_validation_only_route_preserves_cached_active_project(
 
     assert resolved_project.name == "other-project"
     assert context.state["active_project"] == active_project.model_dump()
-
-
-@pytest.mark.asyncio
-async def test_read_route_requires_an_authorized_cached_project(
-    config_manager,
-    monkeypatch,
-) -> None:
-    """An access denial without an established project must still propagate."""
-    context = ContextState()
-
-    async def reject_project_route(*args: object, **kwargs: object) -> None:
-        raise ToolError("This API key does not have access to this project")
-
-    monkeypatch.setattr("basic_memory.mcp.tools.utils.call_post", reject_project_route)
-
-    with pytest.raises(ToolError, match="does not have access"):
-        await resolve_project_and_path(
-            client=cast(Any, None),
-            identifier="memory://other-project/cloud-smoke",
-            project="ci-acceptance",
-            context=cast(Any, context),
-        )

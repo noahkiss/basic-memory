@@ -115,7 +115,7 @@ async def read_note(
     returning the raw markdown content including observations, relations, and metadata.
 
     Project Resolution:
-    Server resolves projects using a unified priority chain (same in local and cloud modes):
+    Server resolves projects using a unified priority chain:
     Single Project Mode → project parameter → default project.
     Uses default project automatically. Specify `project` parameter to target a different project.
 
@@ -129,8 +129,8 @@ async def read_note(
                 hierarchy above. If unknown, use list_memory_projects() to discover
                 available projects.
         project_id: Project external_id (UUID). Prefer this over `project` when known —
-                it routes to the exact project regardless of name collisions across cloud
-                workspaces. Takes precedence over `project`. Get from list_memory_projects().
+                it routes to the exact project regardless of name collisions. Takes
+                precedence over `project`. Get from list_memory_projects().
         identifier: The title or permalink of the note to read
                    Can be a full memory:// URL, a permalink, a title, or search text
         page: Page of fallback-search results to use when the identifier does not
@@ -307,10 +307,8 @@ async def read_note(
                 # Why: search_notes applies the same memory:// normalization and tool-level
                 #      query handling as the rest of MCP routing, which raw client calls skip.
                 # Outcome: unresolved memory URLs still fall back through normalized search.
-                # Pass project_id (external_id UUID) so the workspace selection from the
-                # outer get_project_client() is preserved across the inner re-resolution.
-                # Without this, project names that collide across workspaces could re-resolve
-                # to a different tenant via the default-workspace fallback (CLI/context=None).
+                # Pass project_id (external_id UUID) so the project selected by the outer
+                # get_project_client() is preserved across the inner re-resolution.
                 search_type = "title" if title_only else "text"
                 # Trigger: title_only — the title search exists to find THE note by
                 #          exact title, not to page through suggestions.

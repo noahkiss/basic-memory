@@ -24,7 +24,6 @@ class SetupLogging(Protocol):
         log_level: str = "INFO",
         log_to_file: bool = False,
         log_to_stdout: bool = False,
-        structured_context: bool = False,
     ) -> None: ...
 
 
@@ -52,16 +51,3 @@ def initialize_file_logging(
 ) -> None:
     """Initialize an entrypoint that must keep stdout protocol-clean."""
     setup_logging(log_level=log_level, log_to_file=True)
-
-
-def initialize_api_logging(
-    *,
-    log_level: str,
-    cloud_mode: bool,
-    setup_logging: SetupLogging,
-) -> None:
-    """Initialize API file logging locally or structured stderr in Cloud."""
-    if cloud_mode:
-        setup_logging(log_level=log_level, log_to_stdout=True, structured_context=True)
-    else:
-        setup_logging(log_level=log_level, log_to_file=True)

@@ -170,27 +170,25 @@ results = await search_notes(query="topic", project=active_project)
 
 Every project has two identifiers:
 
-- **`project`** — human-readable name (e.g., `"main"`). Easy to use, but can collide across cloud workspaces.
+- **`project`** — human-readable name (e.g., `"main"`). Easy to use, but changes if the user renames the project.
 - **`project_id`** — stable `external_id` UUID. Always unambiguous; takes precedence over `project` when both are passed.
 
 **When to prefer `project_id`:**
 
-1. **Cloud multi-workspace setups.** If the user belongs to more than one workspace (personal + organization, or several organizations) and the same project name might exist in more than one of them, pass `project_id` to route to the exact project. Without it, name resolution falls back to the default workspace, which may not be the one the user means.
-2. **After `list_memory_projects()`.** Once you have the `external_id`, prefer using it — it's the same number of characters in JSON and saves a name-resolution round-trip.
-3. **When persisting a project choice across a long session.** UUIDs are stable; names can be renamed.
+1. **After `list_memory_projects()`.** Once you have the `external_id`, prefer using it — it's the same number of characters in JSON and saves a name-resolution round-trip.
+2. **When persisting a project choice across a long session.** UUIDs are stable; names can be renamed.
 
 **When `project` (name) is fine:**
 
-- Local single-workspace setups (no collision risk).
 - One-off operations where the name is clearly visible to the user (e.g., quick `search_notes(project="main", ...)`).
 - The user explicitly references a project by name in their message.
 
-**Example — cloud multi-workspace pattern:**
+**Example — resolve once, then use the UUID:**
 
 ```python
 # Discover and pick the right project for this user
 projects = await list_memory_projects()
-target = next(p for p in projects if p["name"] == "research" and p["workspace"]["slug"] == "acme")
+target = next(p for p in projects if p["name"] == "research")
 
 # Use the UUID for all subsequent operations — no ambiguity
 await write_note(
@@ -3031,15 +3029,6 @@ await delete_project(project_name="old-project")
 - Example:
 ```python
 status = await sync_status(project="main")
-```
-
-**list_workspaces()**
-- List available workspaces (cloud)
-- Parameters: None
-- Returns: List of workspaces with metadata
-- Example:
-```python
-workspaces = await list_workspaces()
 ```
 
 ---

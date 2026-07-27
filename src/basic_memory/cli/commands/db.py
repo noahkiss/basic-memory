@@ -17,7 +17,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskPr
 
 from basic_memory.cli.app import app
 from basic_memory.cli.commands.command_utils import run_with_cleanup
-from basic_memory.config import ConfigManager, ProjectMode
+from basic_memory.config import ConfigManager
 
 console = Console()
 
@@ -352,16 +352,7 @@ async def _reindex(
         if project:
             projects = [p for p in projects if p.name == project]
             if not projects:
-                # Check if it's a cloud-only project — those can't be reindexed locally
-                project_mode = app_config.get_project_mode(project)
-                if project_mode == ProjectMode.CLOUD:
-                    console.print(
-                        f"[yellow]Project '{project}' is a cloud project.[/yellow]\n"
-                        "Reindexing is a local operation — cloud projects are "
-                        "indexed on the server."
-                    )
-                else:
-                    console.print(f"[red]Project '{project}' not found.[/red]")
+                console.print(f"[red]Project '{project}' not found.[/red]")
                 raise typer.Exit(1)
 
         for proj in projects:

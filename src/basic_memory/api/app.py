@@ -4,7 +4,6 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exception_handlers import http_exception_handler
-from fastapi.responses import JSONResponse
 from loguru import logger
 
 from basic_memory import __version__ as version
@@ -26,19 +25,13 @@ from basic_memory.config import init_api_logging
 from basic_memory.index.local_schedulers import drain_background_tasks
 from basic_memory.services.exceptions import EntityAlreadyExistsError
 from basic_memory.services.initialization import initialize_app
-from basic_memory.workspace_context import (
-    WORKSPACE_SLUG_HEADER,
-    WORKSPACE_TYPE_HEADER,
-    workspace_permalink_context_validation_error,
-    workspace_permalink_context,
-)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # pragma: no cover
     """Lifecycle manager for the FastAPI app. Not called in stdio mcp mode"""
 
-    # Initialize logging for API (stdout in cloud mode, file otherwise)
+    # Initialize logging for API (file only)
     init_api_logging()
 
     # --- Composition Root ---
@@ -95,31 +88,6 @@ app = FastAPI(
     version=version,
     lifespan=lifespan,
 )
-
-
-@app.middleware("http")
-async def workspace_permalink_context_middleware(request: Request, call_next):
-    """Populate workspace permalink context from request headers."""
-    workspace_slug = request.headers.get(WORKSPACE_SLUG_HEADER)
-    workspace_type = request.headers.get(WORKSPACE_TYPE_HEADER)
-
-    validation_error = workspace_permalink_context_validation_error(workspace_slug, workspace_type)
-    if validation_error is not None:
-        return JSONResponse(
-            status_code=400,
-            content={"detail": validation_error},
-        )
-
-    if not workspace_slug:
-        return await call_next(request)
-
-    # ContextVar state remains active across the awaited downstream handler while
-    # this context manager is open, so entity creation can see request metadata.
-    with workspace_permalink_context(
-        workspace_slug=workspace_slug,
-        workspace_type=workspace_type,
-    ):
-        return await call_next(request)
 
 
 # Include v2 routers FIRST (more specific paths must match before /{project} catch-all)

@@ -80,13 +80,8 @@ The `RuntimeMode` enum centralizes mode detection:
 
 ```python
 class RuntimeMode(Enum):
-    LOCAL = "local"
-    CLOUD = "cloud"
-    TEST = "test"
-
-    @property
-    def is_cloud(self) -> bool:
-        return self == RuntimeMode.CLOUD
+    LOCAL = auto()  # Local standalone mode (default)
+    TEST = auto()  # Test environment
 
     @property
     def is_local(self) -> bool:
@@ -97,7 +92,7 @@ class RuntimeMode(Enum):
         return self == RuntimeMode.TEST
 ```
 
-Resolution follows this precedence in local app flows: **TEST > LOCAL**
+Resolution follows this precedence: **TEST > LOCAL**
 
 ```python
 def resolve_runtime_mode(is_test_env: bool) -> RuntimeMode:
@@ -107,9 +102,6 @@ def resolve_runtime_mode(is_test_env: bool) -> RuntimeMode:
 ```
 
 **Note**: `RuntimeMode` determines global behavior (e.g., whether to start file sync).
-Per-project routing is orthogonal: individual projects can be set to `cloud` mode via `ProjectMode`,
-which affects client routing in `get_client(project_name=...)` without changing global runtime mode.
-`RuntimeMode.CLOUD` may remain for compatibility, but standard local runtime resolution does not select it.
 
 ## Dependencies Package
 
@@ -272,21 +264,22 @@ async def search_notes(
         return await search_client.search(search_query.model_dump())
 ```
 
-### Per-Project Client Routing
+### Per-Project Client Sessions
 
 `get_project_client()` from `mcp/project_context.py` is an async context manager that:
 1. Resolves the project name from config (no network call)
-2. Creates the correctly-routed client based on the project's mode (local ASGI or cloud HTTP with API key)
+2. Opens the client via `get_client()` — always the in-process local ASGI transport
 3. Validates the project via the API
 4. Yields `(client, active_project)` tuple
 
-This solves the bootstrap problem: you need the project name to choose the right client (local vs cloud), but you need the client to validate the project exists.
+There is no routing decision to make: `get_client()` always serves requests in-process
+through the local FastAPI app over `ASGITransport`.
 
 ```python
 from basic_memory.mcp.project_context import get_project_client
 
 async with get_project_client(project, context) as (client, active_project):
-    # client is routed based on project's mode (local or cloud)
+    # client serves every request in-process over ASGI
     # active_project is validated via the API
     ...
 ```
@@ -297,7 +290,8 @@ The `WatchCoordinator` (`index/watch_coordinator.py`) owns the local event-index
 watcher lifecycle. The API composition root creates it
 (`ApiContainer.create_watch_coordinator()`), the lifespan starts and stops it, and
 `should_watch`/`skip_reason` come from the container's runtime-mode logic — watching
-is skipped in test and cloud modes and when `index_changes` is disabled.
+is skipped in test mode (tests manage their own watcher lifecycle) and when
+`index_changes` is disabled.
 
 ```python
 @dataclass

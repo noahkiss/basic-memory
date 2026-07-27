@@ -40,8 +40,6 @@ def test_app_callback_registers_command_operation(monkeypatch) -> None:
     # app_callback installs the uvloop policy for the Postgres backend; stub the
     # helper so this telemetry test does not depend on event-loop policy state.
     monkeypatch.setattr("basic_memory.db.maybe_install_uvloop", lambda config: False)
-    monkeypatch.setattr(cli_app, "maybe_show_init_line", lambda command_name: None)
-    monkeypatch.setattr(cli_app, "maybe_show_cloud_promo", lambda command_name: None)
     monkeypatch.setattr(cli_app, "maybe_run_periodic_auto_update", lambda command_name: None)
 
     def fake_span(name: str, **attrs):

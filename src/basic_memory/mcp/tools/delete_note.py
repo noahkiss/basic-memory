@@ -14,8 +14,7 @@ from basic_memory.mcp.project_context import (
 )
 from basic_memory.mcp.server import mcp
 from basic_memory.schemas.project_info import ProjectItem
-from basic_memory.utils import generate_permalink, normalize_project_reference
-from basic_memory.workspace_context import current_workspace_permalink_context
+from basic_memory.utils import normalize_project_reference
 
 
 def _format_delete_error_response(project: str, error_message: str, identifier: str) -> str:
@@ -163,20 +162,10 @@ def _directory_path_for_delete(
 ) -> str:
     """Return the project-relative directory path expected by the delete API."""
     directory = normalize_project_reference(target_identifier).strip("/")
-    project_permalink = active_project.permalink
+    project_prefix = f"{active_project.permalink}/"
 
-    route_prefixes: list[str] = []
-    workspace_context = current_workspace_permalink_context()
-    if workspace_context and workspace_context.should_prefix_permalinks:
-        route_prefixes.append(
-            f"{generate_permalink(workspace_context.workspace_slug)}/{project_permalink}"
-        )
-    if include_project_prefix:
-        route_prefixes.append(project_permalink)
-
-    for route_prefix in route_prefixes:
-        if directory.startswith(f"{route_prefix}/"):
-            return directory.removeprefix(f"{route_prefix}/")
+    if include_project_prefix and directory.startswith(project_prefix):
+        return directory.removeprefix(project_prefix)
 
     return directory
 
@@ -224,8 +213,8 @@ async def delete_note(
         project: Project name to delete from. Optional - server will resolve using hierarchy.
                 If unknown, use list_memory_projects() to discover available projects.
         project_id: Project external_id (UUID). Prefer this over `project` when known —
-                it routes to the exact project regardless of name collisions across cloud
-                workspaces. Takes precedence over `project`. Get from list_memory_projects().
+                it routes to the exact project regardless of name collisions. Takes
+                precedence over `project`. Get from list_memory_projects().
         output_format: "text" preserves existing behavior (bool/string). "json"
             returns machine-readable deletion metadata.
         context: Optional FastMCP context for performance caching.

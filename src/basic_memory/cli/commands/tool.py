@@ -37,7 +37,6 @@ from basic_memory.cli.app import app
 from basic_memory.cli.commands.command_utils import run_with_cleanup
 from basic_memory.config import ConfigManager
 from basic_memory.file_utils import has_frontmatter, remove_frontmatter
-from basic_memory.cli.commands.routing import force_routing, validate_routing_flags
 
 # MCP tool functions are imported inside each command: importing
 # basic_memory.mcp.tools loads the entire tool stack (fastmcp, mcp SDK,
@@ -613,7 +612,7 @@ def write_note(
         Optional[str],
         typer.Option(
             "--project-id",
-            help="Project external_id (UUID). Takes precedence over --project; use to disambiguate same-named projects across cloud workspaces.",
+            help="Project external_id (UUID). Takes precedence over --project; use to disambiguate same-named projects.",
         ),
     ] = None,
     overwrite: bool = typer.Option(
@@ -621,10 +620,6 @@ def write_note(
         "--overwrite",
         help="Replace an existing note on conflict (matches MCP write_note overwrite=True)",
     ),
-    local: bool = typer.Option(
-        False, "--local", help="Force local API routing (ignore cloud mode)"
-    ),
-    cloud: bool = typer.Option(False, "--cloud", help="Force cloud API routing"),
 ):
     """Create or update a markdown note. Content can be provided via --content or stdin.
 
@@ -634,14 +629,11 @@ def write_note(
     bm tool write-note --title "My Guide" --folder "notes" --content "..." --type guide
     echo "content" | bm tool write-note --title "My Note" --folder "notes"
     bm tool write-note --title "My Note" --folder "notes" --overwrite
-    bm tool write-note --title "My Note" --folder "notes" --local
     """
     # Deferred: loading the MCP tool stack at module import slows CLI startup (#886).
     from basic_memory.mcp.tools import write_note as mcp_write_note
 
     try:
-        validate_routing_flags(local, cloud)
-
         # If content is not provided, read from stdin
         if content is None:
             if not sys.stdin.isatty():
@@ -659,20 +651,19 @@ def write_note(
 
         assert content is not None
 
-        with force_routing(local=local, cloud=cloud):
-            result = run_with_cleanup(
-                mcp_write_note(
-                    title=title,
-                    content=content,
-                    directory=folder,
-                    project=project,
-                    project_id=project_id,
-                    tags=tags,
-                    note_type=note_type,
-                    overwrite=overwrite,
-                    output_format="json",
-                )
+        result = run_with_cleanup(
+            mcp_write_note(
+                title=title,
+                content=content,
+                directory=folder,
+                project=project,
+                project_id=project_id,
+                tags=tags,
+                note_type=note_type,
+                overwrite=overwrite,
+                output_format="json",
             )
+        )
 
         # MCP tool returns an error field on failure in JSON mode (e.g.
         # NOTE_ALREADY_EXISTS on a blocked overwrite, SECURITY_VALIDATION_ERROR).
@@ -719,13 +710,9 @@ def read_note(
         Optional[str],
         typer.Option(
             "--project-id",
-            help="Project external_id (UUID). Takes precedence over --project; use to disambiguate same-named projects across cloud workspaces.",
+            help="Project external_id (UUID). Takes precedence over --project; use to disambiguate same-named projects.",
         ),
     ] = None,
-    local: bool = typer.Option(
-        False, "--local", help="Force local API routing (ignore cloud mode)"
-    ),
-    cloud: bool = typer.Option(False, "--cloud", help="Force cloud API routing"),
 ):
     """Read a markdown note from the knowledge base.
 
@@ -745,19 +732,17 @@ def read_note(
     from basic_memory.mcp.tools import read_note as mcp_read_note
 
     try:
-        validate_routing_flags(local, cloud)
         _validate_output_flags(json_output, plain)
 
-        with force_routing(local=local, cloud=cloud):
-            result = run_with_cleanup(
-                mcp_read_note(
-                    identifier=identifier,
-                    project=project,
-                    project_id=project_id,
-                    include_frontmatter=include_frontmatter,
-                    output_format="json",
-                )
+        result = run_with_cleanup(
+            mcp_read_note(
+                identifier=identifier,
+                project=project,
+                project_id=project_id,
+                include_frontmatter=include_frontmatter,
+                output_format="json",
             )
+        )
 
         # MCP tool returns an error field on failure in JSON mode (e.g.
         # SECURITY_VALIDATION_ERROR on a path-traversal identifier). A genuine
@@ -804,13 +789,9 @@ def delete_note(
         Optional[str],
         typer.Option(
             "--project-id",
-            help="Project external_id (UUID). Takes precedence over --project; use to disambiguate same-named projects across cloud workspaces.",
+            help="Project external_id (UUID). Takes precedence over --project; use to disambiguate same-named projects.",
         ),
     ] = None,
-    local: bool = typer.Option(
-        False, "--local", help="Force local API routing (ignore cloud mode)"
-    ),
-    cloud: bool = typer.Option(False, "--cloud", help="Force cloud API routing"),
 ) -> None:
     """Delete a note or directory from the knowledge base.
 
@@ -823,18 +804,15 @@ def delete_note(
     from basic_memory.mcp.tools import delete_note as mcp_delete_note
 
     try:
-        validate_routing_flags(local, cloud)
-
-        with force_routing(local=local, cloud=cloud):
-            result = run_with_cleanup(
-                mcp_delete_note(
-                    identifier=identifier,
-                    is_directory=is_directory,
-                    project=project,
-                    project_id=project_id,
-                    output_format="json",
-                )
+        result = run_with_cleanup(
+            mcp_delete_note(
+                identifier=identifier,
+                is_directory=is_directory,
+                project=project,
+                project_id=project_id,
+                output_format="json",
             )
+        )
 
         if isinstance(result, dict):
             failure_message = _delete_note_failure_message(result)
@@ -888,13 +866,9 @@ def edit_note(
         Optional[str],
         typer.Option(
             "--project-id",
-            help="Project external_id (UUID). Takes precedence over --project; use to disambiguate same-named projects across cloud workspaces.",
+            help="Project external_id (UUID). Takes precedence over --project; use to disambiguate same-named projects.",
         ),
     ] = None,
-    local: bool = typer.Option(
-        False, "--local", help="Force local API routing (ignore cloud mode)"
-    ),
-    cloud: bool = typer.Option(False, "--cloud", help="Force cloud API routing"),
 ):
     """Edit an existing markdown note using append/prepend/find_replace/replace_section.
 
@@ -909,23 +883,20 @@ def edit_note(
     from basic_memory.mcp.tools import edit_note as mcp_edit_note
 
     try:
-        validate_routing_flags(local, cloud)
-
-        with force_routing(local=local, cloud=cloud):
-            result = run_with_cleanup(
-                mcp_edit_note(
-                    identifier=identifier,
-                    operation=operation,
-                    content=content,
-                    project=project,
-                    project_id=project_id,
-                    section=section,
-                    find_text=find_text,
-                    expected_replacements=expected_replacements,
-                    replace_subsections=replace_subsections,
-                    output_format="json",
-                )
+        result = run_with_cleanup(
+            mcp_edit_note(
+                identifier=identifier,
+                operation=operation,
+                content=content,
+                project=project,
+                project_id=project_id,
+                section=section,
+                find_text=find_text,
+                expected_replacements=expected_replacements,
+                replace_subsections=replace_subsections,
+                output_format="json",
             )
+        )
 
         # MCP tool returns error field on failure in JSON mode
         if isinstance(result, dict) and result.get("error"):
@@ -967,13 +938,9 @@ def build_context(
         Optional[str],
         typer.Option(
             "--project-id",
-            help="Project external_id (UUID). Takes precedence over --project; use to disambiguate same-named projects across cloud workspaces.",
+            help="Project external_id (UUID). Takes precedence over --project; use to disambiguate same-named projects.",
         ),
     ] = None,
-    local: bool = typer.Option(
-        False, "--local", help="Force local API routing (ignore cloud mode)"
-    ),
-    cloud: bool = typer.Option(False, "--cloud", help="Force cloud API routing"),
 ):
     """Get context needed to continue a discussion.
 
@@ -993,23 +960,21 @@ def build_context(
     from basic_memory.mcp.tools import build_context as mcp_build_context
 
     try:
-        validate_routing_flags(local, cloud)
         _validate_output_flags(json_output, plain)
 
-        with force_routing(local=local, cloud=cloud):
-            result = run_with_cleanup(
-                mcp_build_context(
-                    url=url,
-                    project=project,
-                    project_id=project_id,
-                    depth=depth,
-                    timeframe=timeframe,
-                    page=page,
-                    page_size=page_size,
-                    max_related=max_related,
-                    output_format="json",
-                )
+        result = run_with_cleanup(
+            mcp_build_context(
+                url=url,
+                project=project,
+                project_id=project_id,
+                depth=depth,
+                timeframe=timeframe,
+                page=page,
+                page_size=page_size,
+                max_related=max_related,
+                output_format="json",
             )
+        )
 
         # A string result has no structured shape to format, so fall back to JSON.
         mode = _resolve_output_mode(json_output, plain)
@@ -1054,13 +1019,9 @@ def recent_activity(
         Optional[str],
         typer.Option(
             "--project-id",
-            help="Project external_id (UUID). Takes precedence over --project; use to disambiguate same-named projects across cloud workspaces.",
+            help="Project external_id (UUID). Takes precedence over --project; use to disambiguate same-named projects.",
         ),
     ] = None,
-    local: bool = typer.Option(
-        False, "--local", help="Force local API routing (ignore cloud mode)"
-    ),
-    cloud: bool = typer.Option(False, "--cloud", help="Force cloud API routing"),
 ):
     """Get recent activity across the knowledge base.
 
@@ -1081,22 +1042,20 @@ def recent_activity(
     from basic_memory.mcp.tools import recent_activity as mcp_recent_activity
 
     try:
-        validate_routing_flags(local, cloud)
         _validate_output_flags(json_output, plain)
 
-        with force_routing(local=local, cloud=cloud):
-            result = run_with_cleanup(
-                mcp_recent_activity(
-                    type=type or "",
-                    depth=depth if depth is not None else 1,
-                    timeframe=timeframe if timeframe is not None else "7d",
-                    page=page,
-                    page_size=page_size,
-                    project=project,
-                    project_id=project_id,
-                    output_format="json",
-                )
+        result = run_with_cleanup(
+            mcp_recent_activity(
+                type=type or "",
+                depth=depth if depth is not None else 1,
+                timeframe=timeframe if timeframe is not None else "7d",
+                page=page,
+                page_size=page_size,
+                project=project,
+                project_id=project_id,
+                output_format="json",
             )
+        )
 
         # A string result has no structured shape to format, so fall back to JSON.
         mode = _resolve_output_mode(json_output, plain)
@@ -1183,13 +1142,9 @@ def search_notes(
         Optional[str],
         typer.Option(
             "--project-id",
-            help="Project external_id (UUID). Takes precedence over --project; use to disambiguate same-named projects across cloud workspaces.",
+            help="Project external_id (UUID). Takes precedence over --project; use to disambiguate same-named projects.",
         ),
     ] = None,
-    local: bool = typer.Option(
-        False, "--local", help="Force local API routing (ignore cloud mode)"
-    ),
-    cloud: bool = typer.Option(False, "--cloud", help="Force cloud API routing"),
 ):
     """Search across all content in the knowledge base.
 
@@ -1212,7 +1167,6 @@ def search_notes(
     from basic_memory.mcp.tools import search_notes as mcp_search
 
     try:
-        validate_routing_flags(local, cloud)
         _validate_output_flags(json_output, plain)
 
         mode_flags = [permalink, title, vector, hybrid]
@@ -1263,25 +1217,24 @@ def search_notes(
         if hybrid:
             search_type = "hybrid"
 
-        with force_routing(local=local, cloud=cloud):
-            result = run_with_cleanup(
-                mcp_search(
-                    query=query or None,
-                    project=project,
-                    project_id=project_id,
-                    search_type=search_type,
-                    output_format="json",
-                    page=page,
-                    after_date=after_date,
-                    page_size=page_size,
-                    note_types=note_types,
-                    entity_types=entity_types,
-                    categories=categories,
-                    metadata_filters=metadata_filters,
-                    tags=tags,
-                    status=status,
-                )
+        result = run_with_cleanup(
+            mcp_search(
+                query=query or None,
+                project=project,
+                project_id=project_id,
+                search_type=search_type,
+                output_format="json",
+                page=page,
+                after_date=after_date,
+                page_size=page_size,
+                note_types=note_types,
+                entity_types=entity_types,
+                categories=categories,
+                metadata_filters=metadata_filters,
+                tags=tags,
+                status=status,
             )
+        )
 
         # MCP tool may return a string error message
         if isinstance(result, str):
@@ -1311,10 +1264,6 @@ def search_notes(
 
 @tool_app.command("list-projects")
 def list_projects(
-    local: bool = typer.Option(
-        False, "--local", help="Force local API routing (ignore cloud mode)"
-    ),
-    cloud: bool = typer.Option(False, "--cloud", help="Force cloud API routing"),
     json_output: bool = typer.Option(
         False, "--json", help="Output in JSON format (this command always emits JSON)"
     ),
@@ -1325,7 +1274,6 @@ def list_projects(
 
     bm tool list-projects
     bm tool list-projects --json
-    bm tool list-projects --local
     """
     # --json is accepted but unused: this command has only ever emitted JSON, while
     # every other `bm tool` subcommand gates JSON behind the flag. Scripts reaching
@@ -1337,10 +1285,7 @@ def list_projects(
     from basic_memory.mcp.tools import list_memory_projects as mcp_list_projects
 
     try:
-        validate_routing_flags(local, cloud)
-
-        with force_routing(local=local, cloud=cloud):
-            result = run_with_cleanup(mcp_list_projects(output_format="json"))
+        result = run_with_cleanup(mcp_list_projects(output_format="json"))
         _print_json(result)
     except ValueError as e:
         typer.echo(f"Error: {e}", err=True)
@@ -1348,42 +1293,6 @@ def list_projects(
     except Exception as e:  # pragma: no cover
         if not isinstance(e, typer.Exit):
             typer.echo(f"Error during list_projects: {e}", err=True)
-            raise typer.Exit(1)
-        raise
-
-
-# --- list-workspaces ---
-
-
-@tool_app.command("list-workspaces")
-def list_workspaces(
-    local: bool = typer.Option(
-        False, "--local", help="Force local API routing (ignore cloud mode)"
-    ),
-    cloud: bool = typer.Option(False, "--cloud", help="Force cloud API routing"),
-):
-    """List available cloud workspaces (JSON output).
-
-    Examples:
-
-    bm tool list-workspaces
-    bm tool list-workspaces --cloud
-    """
-    # Deferred: loading the MCP tool stack at module import slows CLI startup (#886).
-    from basic_memory.mcp.tools import list_workspaces as mcp_list_workspaces
-
-    try:
-        validate_routing_flags(local, cloud)
-
-        with force_routing(local=local, cloud=cloud):
-            result = run_with_cleanup(mcp_list_workspaces(output_format="json"))
-        _print_json(result)
-    except ValueError as e:
-        typer.echo(f"Error: {e}", err=True)
-        raise typer.Exit(1)
-    except Exception as e:  # pragma: no cover
-        if not isinstance(e, typer.Exit):
-            typer.echo(f"Error during list_workspaces: {e}", err=True)
             raise typer.Exit(1)
         raise
 
@@ -1405,13 +1314,9 @@ def schema_validate(
         Optional[str],
         typer.Option(
             "--project-id",
-            help="Project external_id (UUID). Takes precedence over --project; use to disambiguate same-named projects across cloud workspaces.",
+            help="Project external_id (UUID). Takes precedence over --project; use to disambiguate same-named projects.",
         ),
     ] = None,
-    local: bool = typer.Option(
-        False, "--local", help="Force local API routing (ignore cloud mode)"
-    ),
-    cloud: bool = typer.Option(False, "--cloud", help="Force cloud API routing"),
 ):
     """Validate notes against their schemas (JSON output).
 
@@ -1428,8 +1333,6 @@ def schema_validate(
     from basic_memory.mcp.tools import schema_validate as mcp_schema_validate
 
     try:
-        validate_routing_flags(local, cloud)
-
         # Heuristic: if target contains / or ., treat as identifier; otherwise as note type
         note_type, identifier = None, None
         if target:
@@ -1438,16 +1341,15 @@ def schema_validate(
             else:
                 note_type = target
 
-        with force_routing(local=local, cloud=cloud):
-            result = run_with_cleanup(
-                mcp_schema_validate(
-                    note_type=note_type,
-                    identifier=identifier,
-                    project=project,
-                    project_id=project_id,
-                    output_format="json",
-                )
+        result = run_with_cleanup(
+            mcp_schema_validate(
+                note_type=note_type,
+                identifier=identifier,
+                project=project,
+                project_id=project_id,
+                output_format="json",
             )
+        )
         _print_json(result)
     except ValueError as e:
         typer.echo(f"Error: {e}", err=True)
@@ -1479,13 +1381,9 @@ def schema_infer(
         Optional[str],
         typer.Option(
             "--project-id",
-            help="Project external_id (UUID). Takes precedence over --project; use to disambiguate same-named projects across cloud workspaces.",
+            help="Project external_id (UUID). Takes precedence over --project; use to disambiguate same-named projects.",
         ),
     ] = None,
-    local: bool = typer.Option(
-        False, "--local", help="Force local API routing (ignore cloud mode)"
-    ),
-    cloud: bool = typer.Option(False, "--cloud", help="Force cloud API routing"),
 ):
     """Infer schema from existing notes of a type (JSON output).
 
@@ -1499,18 +1397,15 @@ def schema_infer(
     from basic_memory.mcp.tools import schema_infer as mcp_schema_infer
 
     try:
-        validate_routing_flags(local, cloud)
-
-        with force_routing(local=local, cloud=cloud):
-            result = run_with_cleanup(
-                mcp_schema_infer(
-                    note_type=note_type,
-                    threshold=threshold,
-                    project=project,
-                    project_id=project_id,
-                    output_format="json",
-                )
+        result = run_with_cleanup(
+            mcp_schema_infer(
+                note_type=note_type,
+                threshold=threshold,
+                project=project,
+                project_id=project_id,
+                output_format="json",
             )
+        )
         _print_json(result)
     except ValueError as e:
         typer.echo(f"Error: {e}", err=True)
@@ -1539,13 +1434,9 @@ def schema_diff(
         Optional[str],
         typer.Option(
             "--project-id",
-            help="Project external_id (UUID). Takes precedence over --project; use to disambiguate same-named projects across cloud workspaces.",
+            help="Project external_id (UUID). Takes precedence over --project; use to disambiguate same-named projects.",
         ),
     ] = None,
-    local: bool = typer.Option(
-        False, "--local", help="Force local API routing (ignore cloud mode)"
-    ),
-    cloud: bool = typer.Option(False, "--cloud", help="Force cloud API routing"),
 ):
     """Show drift between schema and actual usage (JSON output).
 
@@ -1558,17 +1449,14 @@ def schema_diff(
     from basic_memory.mcp.tools import schema_diff as mcp_schema_diff
 
     try:
-        validate_routing_flags(local, cloud)
-
-        with force_routing(local=local, cloud=cloud):
-            result = run_with_cleanup(
-                mcp_schema_diff(
-                    note_type=note_type,
-                    project=project,
-                    project_id=project_id,
-                    output_format="json",
-                )
+        result = run_with_cleanup(
+            mcp_schema_diff(
+                note_type=note_type,
+                project=project,
+                project_id=project_id,
+                output_format="json",
             )
+        )
         _print_json(result)
     except ValueError as e:
         typer.echo(f"Error: {e}", err=True)

@@ -38,8 +38,8 @@ async def view_note(
         project: Project name to read from. Optional - server will resolve using hierarchy.
                 If unknown, use list_memory_projects() to discover available projects.
         project_id: Project external_id (UUID). Prefer this over `project` when known —
-                it routes to the exact project regardless of name collisions across cloud
-                workspaces. Takes precedence over `project`. Get from list_memory_projects().
+                it routes to the exact project regardless of name collisions. Takes
+                precedence over `project`. Get from list_memory_projects().
         context: Optional FastMCP context for performance caching.
 
     Returns:

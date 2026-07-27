@@ -24,13 +24,39 @@ def migrate_legacy_sync_fields(
     return data
 
 
+# Keys that older releases wrote into config.json for the retired cloud/routing
+# surface. They are dropped rather than translated: nothing reads them now, and
+# leaving them in would fail validation or resurrect a routing concept that no
+# longer exists.
+RETIRED_TOP_LEVEL_KEYS = frozenset(
+    {
+        "default_project_mode",
+        "cloud_mode",
+        "project_modes",
+        "cloud_projects",
+    }
+)
+
+RETIRED_PROJECT_KEYS = frozenset(
+    {
+        "mode",
+        "workspace_id",
+        "local_sync_path",
+        "cloud_sync_path",
+        "bisync_initialized",
+        "last_sync",
+    }
+)
+
+
 def migrate_legacy_projects(data: Any) -> Any:
     """Convert legacy project dictionaries into unified project entries."""
     if not isinstance(data, dict):
         return data
 
-    data.pop("default_project_mode", None)
-    data.pop("cloud_mode", None)
+    legacy_cloud_projects = data.get("cloud_projects", {})
+    for key in RETIRED_TOP_LEVEL_KEYS:
+        data.pop(key, None)
 
     projects = data.get("projects", {})
     if not projects:
@@ -38,53 +64,19 @@ def migrate_legacy_projects(data: Any) -> Any:
 
     first_value = next(iter(projects.values()), None)
     if isinstance(first_value, str):
-        project_modes = data.pop("project_modes", {})
-        cloud_projects = data.pop("cloud_projects", {})
-        new_projects: dict[str, Any] = {}
-        for name, path in projects.items():
-            entry: dict[str, Any] = {"path": path}
-            if name in project_modes:
-                entry["mode"] = project_modes[name]
-            if name in cloud_projects:
-                cloud_project = cloud_projects[name]
-                if isinstance(cloud_project, dict):
-                    entry["local_sync_path"] = cloud_project.get("local_path")
-                    entry["bisync_initialized"] = cloud_project.get("bisync_initialized", False)
-                    entry["last_sync"] = cloud_project.get("last_sync")
-                else:
-                    entry["local_sync_path"] = getattr(cloud_project, "local_path", None)
-                    entry["bisync_initialized"] = getattr(
-                        cloud_project, "bisync_initialized", False
-                    )
-                    entry["last_sync"] = getattr(cloud_project, "last_sync", None)
-            new_projects[name] = entry
+        data["projects"] = {name: {"path": path} for name, path in projects.items()}
 
-        # A cloud-only legacy entry still needs a unified project record even
-        # when the old projects mapping did not contain it.
-        for name, cloud_project in cloud_projects.items():
-            if name not in new_projects and isinstance(cloud_project, dict):
-                local_path = cloud_project.get("local_path", "")
-                new_projects[name] = {
-                    "path": local_path or "",
-                    "mode": project_modes.get(name, "cloud"),
-                    "local_sync_path": local_path,
-                    "bisync_initialized": cloud_project.get("bisync_initialized", False),
-                    "last_sync": cloud_project.get("last_sync"),
-                }
-
-        data["projects"] = new_projects
-    else:
-        data.pop("project_modes", None)
-        data.pop("cloud_projects", None)
-
-    # Cloud project paths from old releases were remote slugs. A configured
-    # local sync path is the canonical local filesystem path in the new model.
-    projects = data.get("projects", {})
-    for entry in projects.values():
-        if isinstance(entry, dict):
-            local_sync_path = entry.get("local_sync_path")
-            path = entry.get("path", "")
-            if local_sync_path and not os.path.isabs(path):
-                entry["path"] = local_sync_path
+    projects = data["projects"]
+    for name, entry in projects.items():
+        if not isinstance(entry, dict):
+            continue
+        # A remote-only project recorded a slug in ``path`` and the real
+        # directory in the cloud entry's ``local_path``. Only that local
+        # directory is meaningful now.
+        legacy_entry = legacy_cloud_projects.get(name)
+        if isinstance(legacy_entry, dict) and not os.path.isabs(entry.get("path", "")):
+            entry["path"] = legacy_entry.get("local_path") or entry.get("path", "")
+        for key in RETIRED_PROJECT_KEYS:
+            entry.pop(key, None)
 
     return data

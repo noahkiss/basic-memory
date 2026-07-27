@@ -268,7 +268,7 @@ project-index-cli-test:
 # Focused project-wide indexing orchestration surface tests.
 project-index-contract-test: project-index-surface-test project-index-workflow-test project-index-runner-test change-planning-test local-project-index-test local-project-index-scan-test local-project-index-markdown-move-conflict-test local-project-index-new-permalink-conflict-test local-project-index-path-conflict-test local-project-index-thematic-break-test local-project-index-observation-category-test local-project-index-wikilink-stability-test local-project-index-startup-test project-index-cli-test
 
-# Focused event-based indexing contract tests for the cloud/core extraction loop.
+# Focused local event-index regular-file parity tests.
 local-event-index-regular-file-test:
     BASIC_MEMORY_ENV=test uv run pytest -p pytest_mock -q --no-cov \
         tests/index/test_local_watch_regular_file_parity.py
@@ -293,7 +293,8 @@ local-event-index-stress-test:
     BASIC_MEMORY_ENV=test uv run pytest -p pytest_mock -q --no-cov \
         tests/index/test_local_watch_stress_parity.py
 
-# Focused event-based indexing contract tests for the cloud/core extraction loop.
+# Focused event-based indexing contract tests: storage events, filesystem events,
+# watch parity, and event-index startup wiring.
 event-index-contract-test: storage-event-contract-test filesystem-event-temp-file-test local-event-index-atomic-write-test local-event-index-stress-test
     BASIC_MEMORY_ENV=test uv run pytest -p pytest_mock -q --no-cov \
         tests/indexing/test_external_file_delete_runner.py \
@@ -315,10 +316,10 @@ event-index-parity-test:
         tests/index/test_storage_event_operation_processor.py \
         tests/index/test_storage_event_orchestration.py
 
-# Focused indexing contract suite for the cloud/core extraction loop.
+# Full indexing contract suite: per-file, project-wide, and event-based indexing.
 index-contract-test: file-index-runner-test file-index-batch-test file-index-semantic-dependency-test project-index-contract-test event-index-contract-test
 
-# Focused core contract suite used by the basic-memory-cloud runtime refactor loop.
+# Run pytest in the test environment with arbitrary arguments passed through.
 runtime-core-pytest *args:
     BASIC_MEMORY_ENV=test uv run pytest -p pytest_mock -q --no-cov {{args}}
 

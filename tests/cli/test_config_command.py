@@ -43,7 +43,10 @@ def write_config(tmp_path, monkeypatch):
 def _base_config(**overrides) -> dict:
     data = {
         "env": "dev",
-        "projects": {"main": {"path": "/tmp/main", "mode": "local"}},
+        # No retired project keys (`mode`, `local_sync_path`, …): their presence
+        # triggers ConfigManager's migrate-and-resave path, which rewrites
+        # config.json out from under these tests and logs to a closed stream.
+        "projects": {"main": {"path": "/tmp/main"}},
         "default_project": "main",
     }
     data.update(overrides)
@@ -225,29 +228,29 @@ def test_config_unset_unknown_key(runner, write_config):
 
 
 # ---------------------------------------------------------------------------
-# Redaction: cloud_api_key must never print, database_url credentials masked
+# Redaction: secrets must never print, database_url credentials masked
 # ---------------------------------------------------------------------------
 
 
-def test_config_get_never_prints_cloud_api_key(runner, write_config):
-    write_config(_base_config(cloud_api_key="bmc_super_secret_token"))
+def test_config_get_never_prints_secret_field(runner, write_config):
+    write_config(_base_config(semantic_embedding_api_key="sk_super_secret_token"))
 
-    result = runner.invoke(app, ["config", "get", "cloud_api_key"])
+    result = runner.invoke(app, ["config", "get", "semantic_embedding_api_key"])
 
     assert result.exit_code == 0, result.output
-    assert "bmc_super_secret_token" not in result.output
-    assert "cloud_api_key = ********" in result.output
+    assert "sk_super_secret_token" not in result.output
+    assert "semantic_embedding_api_key = ********" in result.output
 
 
-def test_config_list_never_prints_cloud_api_key(runner, write_config):
-    write_config(_base_config(cloud_api_key="bmc_super_secret_token"))
+def test_config_list_never_prints_secret_field(runner, write_config):
+    write_config(_base_config(semantic_embedding_api_key="sk_super_secret_token"))
 
     result = runner.invoke(app, ["config", "list", "--json"])
 
     assert result.exit_code == 0, result.output
-    assert "bmc_super_secret_token" not in result.output
+    assert "sk_super_secret_token" not in result.output
     rows = {row["key"]: row for row in json.loads(result.output)}
-    assert rows["cloud_api_key"]["value"] == "********"
+    assert rows["semantic_embedding_api_key"]["value"] == "********"
 
 
 def test_config_get_masks_database_url_credentials(runner, write_config):
@@ -267,10 +270,10 @@ def test_config_get_masks_database_url_credentials(runner, write_config):
 def test_config_get_shows_not_set_for_unset_secret(runner, write_config):
     write_config(_base_config())
 
-    result = runner.invoke(app, ["config", "get", "cloud_api_key"])
+    result = runner.invoke(app, ["config", "get", "semantic_embedding_api_key"])
 
     assert result.exit_code == 0, result.output
-    assert "cloud_api_key = (not set)" in result.output
+    assert "semantic_embedding_api_key = (not set)" in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -291,12 +294,12 @@ def test_config_get_shows_env_override(runner, write_config, monkeypatch):
 
 def test_config_get_masks_secret_env_override(runner, write_config, monkeypatch):
     write_config(_base_config())
-    monkeypatch.setenv("BASIC_MEMORY_CLOUD_API_KEY", "bmc_env_secret_token")
+    monkeypatch.setenv("BASIC_MEMORY_SEMANTIC_EMBEDDING_API_KEY", "sk_env_secret_token")
 
-    result = runner.invoke(app, ["config", "get", "cloud_api_key"])
+    result = runner.invoke(app, ["config", "get", "semantic_embedding_api_key"])
 
     assert result.exit_code == 0, result.output
-    assert "bmc_env_secret_token" not in result.output
+    assert "sk_env_secret_token" not in result.output
     assert "********" in result.output
 
 

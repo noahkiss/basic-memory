@@ -14,11 +14,9 @@ from basic_memory.mcp.server import mcp
 from basic_memory.mcp.project_context import get_project_client, resolve_project_and_path
 from basic_memory.schemas.project_info import ProjectItem
 from basic_memory.utils import (
-    generate_permalink,
     normalize_project_reference,
     validate_project_path,
 )
-from basic_memory.workspace_context import current_workspace_permalink_context
 
 
 def _directory_path_for_move(
@@ -29,20 +27,10 @@ def _directory_path_for_move(
 ) -> str:
     """Return the project-relative source directory expected by the move API."""
     directory = normalize_project_reference(resolved_identifier).strip("/")
-    project_permalink = active_project.permalink
+    project_prefix = f"{active_project.permalink}/"
 
-    route_prefixes: list[str] = []
-    workspace_context = current_workspace_permalink_context()
-    if workspace_context and workspace_context.should_prefix_permalinks:
-        route_prefixes.append(
-            f"{generate_permalink(workspace_context.workspace_slug)}/{project_permalink}"
-        )
-    if include_project_prefix:
-        route_prefixes.append(project_permalink)
-
-    for route_prefix in route_prefixes:
-        if directory.startswith(f"{route_prefix}/"):
-            return directory.removeprefix(f"{route_prefix}/")
+    if include_project_prefix and directory.startswith(project_prefix):
+        return directory.removeprefix(project_prefix)
 
     return directory
 
@@ -91,12 +79,12 @@ async def _detect_cross_project_move_attempt(
 
         # NOTE: a "<seg>/projects/<seg>/..." structural heuristic was removed here.
         # Why: matching any destination whose 2nd segment is literally "projects" is
-        #      fundamentally ambiguous — it cannot distinguish the cloud workspace
-        #      routing shape from a legitimate same-project nested folder like
+        #      fundamentally ambiguous — it cannot distinguish a project-routing shape
+        #      from a legitimate same-project nested folder like
         #      "notes/projects/2025/file.md" or "work/projects/q1/report.md". The
         #      heuristic produced false CROSS_PROJECT_MOVE_NOT_SUPPORTED rejections for
         #      those common layouts.
-        # Outcome: cross-workspace routing that does not match a known project name (above)
+        # Outcome: routing that does not match a known project name (above)
         #      now falls through to the move and is caught honestly by the MOVE_OUTCOME_MISMATCH
         #      backstop if the result lands somewhere other than the requested path.
 
@@ -407,8 +395,8 @@ async def move_note(
         project: Project name to move within. Optional - server will resolve using hierarchy.
                 If unknown, use list_memory_projects() to discover available projects.
         project_id: Project external_id (UUID). Prefer this over `project` when known —
-                it routes to the exact project regardless of name collisions across cloud
-                workspaces. Takes precedence over `project`. Get from list_memory_projects().
+                it routes to the exact project regardless of name collisions. Takes
+                precedence over `project`. Get from list_memory_projects().
         output_format: "text" returns existing markdown guidance/success text. "json"
             returns machine-readable move metadata.
         context: Optional FastMCP context for performance caching.
@@ -802,7 +790,7 @@ move_note("{identifier}", destination_folder="notes")
         # Why: detection must run AFTER folder resolution — running it earlier (when a
         #      caller used destination_folder) saw an empty destination_path and skipped
         #      entirely (#881 Gap 3).
-        # Outcome: a cross-workspace/cross-project routing destination is rejected with
+        # Outcome: a cross-project routing destination is rejected with
         #          guidance instead of silently degrading to a same-project nested folder.
         cross_project_error = await _detect_cross_project_move_attempt(
             client, identifier, destination_path, active_project.name
@@ -973,7 +961,7 @@ move_note("{identifier}", destination_folder="notes")
                     **Actual:** `{result.file_path}`
 
                     This usually means the destination referenced a different
-                    workspace/project, which move_note cannot do — notes can only be
+                    project, which move_note cannot do — notes can only be
                     moved within the same project. To move content between projects:
 
                     ```

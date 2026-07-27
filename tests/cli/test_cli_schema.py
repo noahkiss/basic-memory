@@ -287,16 +287,3 @@ def test_diff_error_response(mock_mcp, mock_config_cls):
 
     assert result.exit_code == 0
     assert "No schema found" in result.output
-
-
-# --- Routing flags ---
-
-
-def test_schema_routing_both_flags_error():
-    """Schema commands exit with error when both --local and --cloud are specified."""
-    result = runner.invoke(
-        cli_app,
-        ["schema", "validate", "person", "--local", "--cloud"],
-    )
-
-    assert result.exit_code == 1

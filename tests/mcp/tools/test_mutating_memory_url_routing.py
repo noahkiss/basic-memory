@@ -55,7 +55,7 @@ async def test_mutating_tools_require_strict_project_routing(
         assert kwargs["allow_missing_project_fallback"] is True
         if tool_name == "move_note":
             assert kwargs["cache_resolved_project"] is False
-        raise ToolError("This API key does not have access to this project")
+        raise ToolError("Internal server error resolving project")
 
     monkeypatch.setattr(
         tool_module,
@@ -64,7 +64,7 @@ async def test_mutating_tools_require_strict_project_routing(
     )
 
     tool = getattr(tool_module, tool_name)
-    with pytest.raises(ToolError, match="does not have access"):
+    with pytest.raises(ToolError, match="Internal server error"):
         await tool(project=test_project.name, **tool_args)
 
 

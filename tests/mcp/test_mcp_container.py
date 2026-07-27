@@ -37,12 +37,6 @@ class TestMcpContainer:
         container = McpContainer(config=app_config, mode=RuntimeMode.TEST)
         assert container.should_watch_files is False
 
-    def test_should_not_watch_files_in_cloud_mode(self, app_config):
-        """Local watching should be disabled in cloud mode."""
-        app_config.index_changes = True
-        container = McpContainer(config=app_config, mode=RuntimeMode.CLOUD)
-        assert container.should_watch_files is False
-
 
 class TestWatchSkipReason:
     """Tests for watch_skip_reason property."""
@@ -51,11 +45,6 @@ class TestWatchSkipReason:
         """Returns test message when in test mode."""
         container = McpContainer(config=app_config, mode=RuntimeMode.TEST)
         assert container.watch_skip_reason == "Test environment detected"
-
-    def test_skip_reason_in_cloud_mode(self, app_config):
-        """Returns cloud message when in cloud mode."""
-        container = McpContainer(config=app_config, mode=RuntimeMode.CLOUD)
-        assert container.watch_skip_reason == "Cloud mode enabled"
 
     def test_skip_reason_when_watch_disabled(self, app_config):
         """Returns disabled message when local watching is disabled."""

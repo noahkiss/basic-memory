@@ -6,7 +6,7 @@ rather than reading globals.
 
 Design principles:
 - Only this module reads ConfigManager directly
-- Runtime mode (cloud/local/test) is resolved here
+- Runtime mode (local/test) is resolved here
 - Different CLI commands may need different initialization
 """
 
@@ -38,13 +38,6 @@ class CliContainer:
             is_test_env=config.is_test_env,
         )
         return cls(config=config, mode=mode)
-
-    # --- Runtime Mode Properties ---
-
-    @property
-    def is_cloud_mode(self) -> bool:
-        """Whether running in cloud mode."""
-        return self.mode.is_cloud
 
 
 # Module-level container instance (set by app callback)

@@ -39,7 +39,6 @@ from basic_memory.schemas.base import Permalink
 from basic_memory.services.exceptions import EntityAlreadyExistsError
 from basic_memory.services.file_service import FileService
 from basic_memory.utils import build_canonical_permalink
-from basic_memory.workspace_context import workspace_slug_for_canonical_permalinks
 
 
 @dataclass(frozen=True, slots=True)
@@ -225,15 +224,13 @@ async def resolve_permalink(
                 if dependencies.app_config is not None
                 else True
             )
-            workspace_permalink = workspace_slug_for_canonical_permalinks()
-            project_permalink = None
-            if include_project or workspace_permalink:
-                project_permalink = await _project_permalink(dependencies, active_session)
+            project_permalink = (
+                await _project_permalink(dependencies, active_session) if include_project else None
+            )
             desired_permalink = build_canonical_permalink(
                 project_permalink,
                 file_path_str,
                 include_project=include_project,
-                workspace_permalink=workspace_permalink,
             )
 
         permalink = desired_permalink

@@ -8,23 +8,6 @@
 ![](https://badge.mcpx.dev?type=dev 'MCP Dev')
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/basicmachines-co/basic-memory)
 
-## Skip the install — try Basic Memory in the cloud
-
-Claude, Codex, or Cursor connected in 30 seconds. No Python, no JSON, no
-terminal. **$15.00/mo locked in for life** (12.50/mo yearly pricing). 7-day free
-trial — cancel any time before day 7 if it's not for you. Beta pricing —
-sign up now and your rate never goes up. OSS users: code `BMFOSS` takes
-another 20% off for 3 months.
-
-[Start free trial →](https://basicmemory.com?utm_source=github&utm_medium=referral&utm_campaign=readme&utm_content=banner)
-
-### Basic Memory Teams is now available!
-
-Give your team a single, shared cloud workspace. Knowledge isn't confined to one person — anything a teammate writes is immediately available to everyone else and to their AI assistants. 
-Edit a note together in real time, hand work off between humans and agents, and build one connected knowledge base instead of scattered copies. Same pricing - start with one user and add more as needed. 
-
----
-
 # Basic Memory
 
 ### Your AI never forgets again.
@@ -42,33 +25,8 @@ search.
 - **Progressive tool discovery.** Every tool is tagged with behavior hints
   (read-only, destructive, idempotent) so agents pick the right tool on
   demand — no wasted context trying things to see what they do.
-- **Cloud, optional.** Sync across devices when you want — never required.
 
 ## Get started
-
-Pick the path that fits you. Both run the same product on the same Markdown.
-
-<table>
-<tr>
-<th width="50%">☁️ &nbsp; Cloud</th>
-<th width="50%">💻 &nbsp; Local install</th>
-</tr>
-<tr>
-<td valign="top">
-
-**30 seconds.** Sign up, connect your AI client, done.
-
-- Works in any browser
-- Mobile, web, desktop
-- Cross-device sync built in
-- We handle hosting, backups, snapshots
-
-**$15.00/mo locked for life** · 7-day free trial · cancel any time
-
-[**Start free trial →**](https://basicmemory.com?utm_source=github&utm_medium=referral&utm_campaign=readme&utm_content=quickstart)
-
-</td>
-<td valign="top">
 
 **2 minutes.** Install, configure your AI client, run.
 
@@ -82,10 +40,6 @@ uv tool install basic-memory
 ```
 
 [**Configure your client ↓**](#connect-your-ai-client)
-
-</td>
-</tr>
-</table>
 
 ## What people are saying
 
@@ -107,65 +61,10 @@ uv tool install basic-memory
 >
 > — **@groksrc**, Developer
 
-More on [basicmemory.com](https://basicmemory.com?utm_source=github&utm_medium=referral&utm_campaign=readme).
-
-## Basic Memory Cloud
-
-The hosted version of Basic Memory. Same product, same Markdown files, same
-MCP tools — we just host the database, run the sync, and put it on your
-phone.
-
-### What you get
-
-- **Every device, same brain.** Your knowledge graph on web, mobile, and
-  desktop. No copy-paste between machines.
-- **Connect any MCP client.** Claude Desktop, Claude Code, Codex, Cursor,
-  ChatGPT (Custom GPTs), VS Code — one-click connect from the web app.
-- **Bidirectional sync to local.** Edit on your phone, see it in Obsidian on
-  your laptop. rclone-powered with conflict resolution.
-- **Snapshots and backups.** Point-in-time restore. Browse history. Never
-  lose a note.
-- **No lock-in.** Your notes are plain Markdown. Export to local Markdown any
-  time — same files, same format, same wikilinks. Cancel anytime, your data
-  stays yours.
-
-Built on WorkOS AuthKit, Neon Postgres, and Tigris S3.
-
-### Pricing
-
-**$15.00/mo, locked in for the life of your subscription** (regular price
-$19). Sign up during beta and the rate never goes up — as long as you stay
-subscribed, you keep the price. One plan, no tiers, no surprise upgrades.
-Unlimited notes, unlimited projects, every feature.
-
-- 7-day free trial. Cancel any time before day 7 if it's not for you.
-- Cancel anytime after that too — export your notes whenever you want.
-- OSS users: code `BMFOSS` for another 20% off for 3 months (~$11.40/mo).
-
-[**Start your 7-day free trial →**](https://basicmemory.com?utm_source=github&utm_medium=referral&utm_campaign=readme&utm_content=cloud-section)
-
-## Cloud vs. local
-
-|  | Cloud | Local |
-|---|---|---|
-| **Setup time** | 30 seconds | 2 minutes (requires Python) |
-| **Cost** | $15.00/mo, locked for life (7-day trial) | Free |
-| **Storage** | We host (Tigris S3) | Your disk |
-| **Cross-device sync** | Built in | Manual (Git, Syncthing, etc.) |
-| **Mobile access** | Yes (web + app) | No |
-| **Air-gapped** | No | Yes |
-| **Your data stays yours** | Yes — export anytime | Yes — already there |
-| **Source code** | AGPL-3.0 | AGPL-3.0 |
-| **Snapshots & backups** | Built in | Roll your own |
-
-Both paths use the same OSS engine and the same Markdown files. There's no
-lock-in either way — flip between them when your needs change.
-
 ## Works with the tools you already use
 
 | Client | Transport | Notes |
 |---|---|---|
-| Cloud web app | https | Sign in at basicmemory.com — no install |
 | [Claude Desktop](#claude-desktop) | stdio/https | macOS / Windows / Linux |
 | [Claude Code](#claude-code) | stdio/https | `claude mcp add` |
 | [Codex](#codex-cli) | stdio/https | OpenAI's coding agent |
@@ -187,9 +86,6 @@ package. For Claude Code, add it as a `SessionStart` hook in
 https://github.com/user-attachments/assets/a55d8238-8dd0-454a-be4c-8860dbbd0ddc
 
 ## Connect your AI client
-
-If you went the [Cloud](#get-started) route, the web app walks you through
-client connect. The snippets below are for local installs.
 
 ### Claude Desktop
 
@@ -307,8 +203,6 @@ Try a prompt:
   Postgres.
 - **Schema system.** Infer, validate, and diff the structure of your
   knowledge base with `schema_infer`, `schema_validate`, `schema_diff`.
-- **Per-project cloud routing.** Route individual projects through the cloud
-  while others stay local, via API key (`bm project set-cloud`).
 - **Smarter editing.** `edit_note` append/prepend auto-creates notes when
   missing; `write_note` guards against accidental overwrites.
 - **Richer search results.** Matched chunk text is included so the LLM gets
@@ -317,8 +211,8 @@ Try a prompt:
   hints (`readOnlyHint`, `destructiveHint`, `idempotentHint`,
   `openWorldHint`) so agents can discover capabilities progressively at
   runtime instead of guessing or burning tokens.
-- **CLI overhaul.** `--json` output for scripting, workspace-aware commands,
-  and an htop-inspired project dashboard.
+- **CLI overhaul.** `--json` output for scripting and an htop-inspired
+  project dashboard.
 
 ## Why Basic Memory
 
@@ -441,7 +335,6 @@ agents can pick the right one without trial-and-error:
 - **Projects:** `list_memory_projects`, `create_memory_project`,
   `get_current_project`, `sync_status`
 - **Schema:** `schema_infer`, `schema_validate`, `schema_diff`
-- **Cloud:** `cloud_info`, `release_notes`
 
 All MCP tools default to text output; pass `output_format="json"` for
 structured responses. Full tool reference in the
@@ -453,8 +346,6 @@ structured responses. Full tool reference in the
 # Projects
 basic-memory project list
 basic-memory project add research ~/research
-basic-memory project set-cloud research   # route through cloud
-basic-memory project set-local research   # revert
 
 # Config
 basic-memory config list                        # all settings, effective values, env overrides
@@ -473,8 +364,7 @@ basic-memory import chatgpt
 basic-memory import memory-json
 ```
 
-Routing flags (`--local` / `--cloud`) force a target when you're in mixed
-mode. Full CLI reference in the
+Full CLI reference in the
 [docs](https://docs.basicmemory.com/reference/cli-reference?utm_source=github&utm_medium=referral&utm_campaign=readme).
 
 ## Auto-updates
@@ -492,27 +382,6 @@ Disable in `~/.basic-memory/config.json`:
 { "auto_update": false }
 ```
 
-## Telemetry
-
-Minimal, anonymous events to understand the CLI-to-cloud conversion funnel.
-
-**What we collect:** cloud promo impressions, cloud login attempts and
-outcomes, promo opt-out events.
-
-**What we don't:** file contents, note titles, knowledge base data, PII, IP
-addresses, per-command or per-tool tracking.
-
-Events go to our [Umami Cloud](https://umami.is) instance (open-source,
-privacy-focused) on a background thread — never blocks the CLI.
-
-Opt out:
-
-```bash
-export BASIC_MEMORY_NO_PROMOS=1
-```
-
-This disables promos and all telemetry.
-
 ## Logging
 
 Basic Memory uses [Loguru](https://github.com/Delgan/loguru). Defaults vary
@@ -522,7 +391,7 @@ by entry point:
 |---|---|---|
 | CLI commands | File only | Doesn't interfere with command output |
 | MCP server | File only | Stdout would corrupt JSON-RPC |
-| API server | File (local) or stdout (cloud) | Docker/cloud uses stdout |
+| API server | File only | Same sink as the CLI |
 
 Log file: `~/.basic-memory/basic-memory.log` (10MB rotation, 10 days
 retention).
@@ -532,12 +401,7 @@ retention).
 | Variable | Default | Description |
 |---|---|---|
 | `BASIC_MEMORY_LOG_LEVEL` | `INFO` | DEBUG / INFO / WARNING / ERROR |
-| `BASIC_MEMORY_CLOUD_MODE` | `false` | API logs to stdout with structured context |
-| `BASIC_MEMORY_FORCE_LOCAL` | `false` | Force local API routing |
-| `BASIC_MEMORY_FORCE_CLOUD` | `false` | Force cloud API routing |
-| `BASIC_MEMORY_EXPLICIT_ROUTING` | `false` | Mark route selection as explicit |
 | `BASIC_MEMORY_ENV` | `dev` | Set to `test` for test mode (stderr only) |
-| `BASIC_MEMORY_NO_PROMOS` | `false` | Disable cloud promos and telemetry |
 | `BASIC_MEMORY_IMPORT_UPLOAD_MAX_BYTES` | `104857600` | Max uploaded import size |
 
 ```bash

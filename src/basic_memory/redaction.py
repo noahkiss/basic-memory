@@ -9,7 +9,7 @@ from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 # Fields in BasicMemoryConfig that contain secrets and must never be surfaced.
-SECRET_FIELDS = frozenset({"cloud_api_key", "semantic_embedding_api_key"})
+SECRET_FIELDS = frozenset({"semantic_embedding_api_key"})
 
 # Fields whose values are URLs that may embed user:password credentials.
 # The userinfo component is stripped before surfacing.

@@ -10,7 +10,7 @@ Basic Memory's search supports both full-text search (FTS) and semantic retrieva
 - **Conceptual queries**: Search for "ways to improve performance" and find notes about caching, indexing, and optimization
 - **Hybrid retrieval**: Combine the precision of keyword search with the recall of semantic similarity
 
-Semantic search is enabled by default when semantic dependencies are available at runtime. It works on both SQLite (local) and Postgres (cloud) backends.
+Semantic search is enabled by default when semantic dependencies are available at runtime. It works on both SQLite (local) and Postgres backends.
 
 ## Installation
 
@@ -403,7 +403,7 @@ Vector and hybrid modes return individual observations and relations as first-cl
 
 The sqlite-vec extension is loaded per-connection. Vector tables are created lazily on first use.
 
-### Postgres (cloud)
+### Postgres
 
 - **Vector storage**: [pgvector](https://github.com/pgvector/pgvector) with HNSW indexing
 - **Local Docker**: use `docker-compose-postgres.yml` (`pgvector/pgvector:pg17`). Plain `postgres:17` lacks the extension; run `CREATE EXTENSION IF NOT EXISTS vector;` on any external instance before first migration.

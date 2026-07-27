@@ -10,18 +10,12 @@ from loguru import logger
 from fastmcp import Context
 from pydantic import AliasChoices, BeforeValidator, Field
 
-from basic_memory.config import ConfigManager, has_cloud_credentials
+from basic_memory.config import ConfigManager
 from basic_memory.utils import (
-    build_canonical_permalink,
     coerce_dict,
     parse_str_list,
     parse_tags,
     strict_search_tags,
-)
-from basic_memory.mcp.async_client import (
-    _explicit_routing,
-    _force_local_mode,
-    is_factory_mode,
 )
 from basic_memory.mcp.container import get_container
 from basic_memory.mcp.project_context import (
@@ -374,7 +368,6 @@ def _matches_constrained_project(project: dict[str, Any], constrained_project: o
         value
         for value in (
             project.get("name"),
-            project.get("qualified_name"),
             project.get("external_id"),
         )
         if isinstance(value, str)
@@ -401,7 +394,7 @@ def _search_project_refs(projects_payload: object) -> list[dict[str, str | None]
         ):
             continue
 
-        project = item.get("qualified_name") or item.get("name")
+        project = item.get("name")
         project_name = project if isinstance(project, str) and project.strip() else None
         project_id = _valid_project_id(item.get("external_id"))
         if project_name is None and project_id is None:
@@ -446,46 +439,12 @@ def _result_score(result: SearchResult | dict[str, Any]) -> float:
     return float(score) if isinstance(score, int | float) else 0.0
 
 
-def _qualify_permalink_for_project(permalink: object, project: str | None) -> object:
-    """Return a workspace-qualified permalink when the project ref supplies one."""
-    if not isinstance(permalink, str) or not permalink.strip():
-        return permalink
-    if not isinstance(project, str) or "/" not in project.strip("/"):
-        return permalink
-
-    normalized_permalink = permalink.strip("/")
-    qualified_project = project.strip("/")
-    if normalized_permalink == qualified_project or normalized_permalink.startswith(
-        f"{qualified_project}/"
-    ):
-        return normalized_permalink
-
-    workspace_slug, project_permalink = qualified_project.split("/", 1)
-    return build_canonical_permalink(
-        project_permalink,
-        normalized_permalink,
-        include_project=True,
-        workspace_permalink=workspace_slug,
-    )
-
-
-def _qualify_results_for_project(
-    results: list[SearchResult | dict[str, Any]],
-    project_ref: dict[str, str | None],
-) -> list[dict[str, Any]]:
-    """Attach the searched workspace/project prefix to each result permalink."""
-    qualified: list[dict[str, Any]] = []
-    for result in results:
-        if isinstance(result, SearchResult):
-            result_data = result.model_dump()
-        else:
-            result_data = dict(result)
-        result_data["permalink"] = _qualify_permalink_for_project(
-            result_data.get("permalink"),
-            project_ref.get("project"),
-        )
-        qualified.append(result_data)
-    return qualified
+def _result_dicts(results: list[SearchResult | dict[str, Any]]) -> list[dict[str, Any]]:
+    """Normalize a per-project result list to plain dicts so pages can be merged."""
+    return [
+        result.model_dump() if isinstance(result, SearchResult) else dict(result)
+        for result in results
+    ]
 
 
 def _result_total(results: dict[str, Any], raw_results: list[SearchResult | dict[str, Any]]) -> int:
@@ -546,30 +505,14 @@ async def _search_all_projects(
     total_is_exact = True
     any_project_has_more = False
 
-    # Trigger: caller asked for an account-wide search.
-    # Why: project_id (external UUID) routes through the cloud v2 API path,
-    #      which 401s on local installs because there's no JWT to present.
-    #      Project names route through the local-ASGI path and work for both
-    #      backends — cloud disambiguates names via the workspace/project
-    #      qualified_name already baked into project_ref["project"].
-    # Outcome: forward project_id only when the same signals get_project_client
-    #          uses to pick a cloud route are present. Mirrors the cloud_available
-    #          composite in project_context.get_project_client (single source of
-    #          truth for "can we route to cloud?").
-    config = ConfigManager().config
-    use_cloud_routing = (
-        is_factory_mode()
-        or (_explicit_routing() and not _force_local_mode())
-        or has_cloud_credentials(config)
-    )
-
     for project_ref in project_refs:
-        recursive_project_id = project_ref["project_id"] if use_cloud_routing else None
         try:
             results = await search_notes(
                 query=query,
                 project=project_ref["project"],
-                project_id=recursive_project_id,
+                # external_id is unambiguous; the name is only the fallback when a
+                # project row somehow lacks one.
+                project_id=project_ref["project_id"],
                 page=1,
                 page_size=per_project_page_size,
                 search_type=search_type,
@@ -606,7 +549,7 @@ async def _search_all_projects(
         total += _result_total(results, raw_results)
         total_is_exact = total_is_exact and _result_total_is_exact(results)
         any_project_has_more = any_project_has_more or results.get("has_more") is True
-        merged_results.extend(_qualify_results_for_project(raw_results, project_ref))
+        merged_results.extend(_result_dicts(raw_results))
 
     sorted_results = sorted(merged_results, key=_result_score, reverse=True)
     start = (requested_page - 1) * requested_page_size
@@ -822,8 +765,8 @@ async def search_notes(
         project: Project name to search in. Optional - server will resolve using hierarchy.
                 If unknown, use list_memory_projects() to discover available projects.
         project_id: Project external_id (UUID). Prefer this over `project` when known —
-                it routes to the exact project regardless of name collisions across cloud
-                workspaces. Takes precedence over `project`. Get from list_memory_projects().
+                it routes to the exact project regardless of name collisions. Takes
+                precedence over `project`. Get from list_memory_projects().
         search_all_projects: Optional opt-in to search every accessible project. Ignored when
                 `project` or `project_id` is supplied.
         page: The page number of results to return (default 1)
@@ -986,7 +929,7 @@ async def search_notes(
         if detected:
             project = detected
 
-    # Trigger: caller explicitly requests account/workspace-wide search and did not
+    # Trigger: caller explicitly requests a search across every project and did not
     # already provide a concrete project route.
     # Why: multi-project fan-out can be slow, so default search remains project-scoped.
     # Outcome: run one normal search per accessible project and merge ranked results.

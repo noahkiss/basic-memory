@@ -10,7 +10,6 @@ from rich.panel import Panel
 from rich.tree import Tree
 
 from basic_memory.cli.app import app
-from basic_memory.cli.commands.routing import force_routing, validate_routing_flags
 from basic_memory.config import ConfigManager
 from basic_memory.mcp.async_client import get_client
 from basic_memory.mcp.clients import ProjectClient
@@ -92,11 +91,10 @@ async def run_status(
     Returns (project_name, project_index_status) for the caller to render.
 
     """
-    # Resolve default project so get_client() can route per-project
     project = project or ConfigManager().default_project
 
     # Reuse a single client/context across polls so we don't reconnect each loop.
-    async with get_client(project_name=project) as client:
+    async with get_client() as client:
         project_item = await get_active_project(client, project, None)
         project_client = ProjectClient(client)
 
@@ -130,18 +128,12 @@ def status(
         help="Compatibility flag; returns the current project-index observation",
     ),
     timeout: float = typer.Option(30.0, "--timeout", help="Compatibility option for --wait"),
-    local: bool = typer.Option(
-        False, "--local", help="Force local API routing (ignore cloud mode)"
-    ),
-    cloud: bool = typer.Option(False, "--cloud", help="Force cloud API routing"),
 ):
     """Show current project-index observation status.
 
     Use --json for machine-readable output.
     The --wait flag is accepted for compatibility and returns the current
     project-index observation immediately.
-    Use --local to force local routing when cloud mode is enabled.
-    Use --cloud to force cloud routing when cloud mode is disabled.
     """
     from basic_memory.cli.commands.command_utils import run_with_cleanup
 
@@ -157,18 +149,9 @@ def status(
         raise typer.BadParameter("--timeout must be >= 0", param_hint="'--timeout'")
 
     try:
-        validate_routing_flags(local, cloud)
-        # Trigger: no explicit routing flag provided
-        # Why: status scans the local filesystem — cloud routing would use the
-        #      Docker-internal path stored in the cloud database, which doesn't
-        #      exist locally.
-        # Outcome: default to local routing unless --cloud was explicitly requested.
-        if not local and not cloud:
-            local = True
-        with force_routing(local=local, cloud=cloud):
-            project_name, project_index_status = run_with_cleanup(
-                run_status(project, wait=wait, timeout=timeout)
-            )
+        project_name, project_index_status = run_with_cleanup(
+            run_status(project, wait=wait, timeout=timeout)
+        )
 
         if json_output:
             print(

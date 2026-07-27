@@ -9,9 +9,10 @@ documents the tools; the tools verify the manual.
 
 ## Where it lives
 
-The canonical manual is the **`manual` project in the Basic Memory team
-workspace** (cloud, shared). Anyone can build their own: write pages against
-the layout below in any project's folder.
+The manual is an ordinary Basic Memory project — conventionally one named
+`manual` — so it lives wherever you point it: `bm project add manual
+~/notes/manual`. Every command below assumes `--project manual`. There is no
+shared copy to pull; build yours against the layout below.
 
 > The `manpage.md` seed schema this section used to point at lived in the
 > Claude Code plugin package, which this fork deleted along with the rest of
@@ -58,8 +59,9 @@ analog:
 - **man3/** — MCP tools, our equivalent of the "library API" section → `write-note(3)`
 - **man5/** — file formats: note syntax, observations, relations, schemas → `bm-note(5)`
 - **man7/** — concepts → `basic-memory(7)`, `semantic-memory(7)`
-- **8** is reserved for admin/cloud operations but has no pages yet; 2, 4,
-  and 6 have no analog (no system calls, no devices, and no games — yet)
+- **8** is reserved for administration (store maintenance, migrations) but
+  has no pages yet; 2, 4, and 6 have no analog (no system calls, no devices,
+  and no games — yet)
 
 When a page says `see_also [[bm-note(5)]]`, the `(5)` reads "the
 file-format page," exactly the way a Unix manual cross-references — except

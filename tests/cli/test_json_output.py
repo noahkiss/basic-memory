@@ -443,21 +443,21 @@ def mock_client(monkeypatch):
     """Mock get_client with a no-op async context manager."""
 
     @asynccontextmanager
-    async def fake_get_client(workspace=None):
+    async def fake_get_client():
         yield object()
 
     monkeypatch.setattr(project_cmd, "get_client", fake_get_client)
 
 
 def test_project_list_json_outputs_projects(write_config, mock_client, tmp_path, monkeypatch):
-    """project list --json --local outputs structured JSON with project data."""
+    """project list --json outputs structured JSON with project data."""
     alpha_local = (tmp_path / "alpha-local").as_posix()
 
     write_config(
         {
             "env": "dev",
             "projects": {
-                "alpha": {"path": alpha_local, "mode": "local"},
+                "alpha": {"path": alpha_local},
             },
             "default_project": "alpha",
         }
@@ -481,15 +481,17 @@ def test_project_list_json_outputs_projects(write_config, mock_client, tmp_path,
 
     monkeypatch.setattr(ProjectClient, "list_projects", fake_list_projects)
 
-    result = runner.invoke(cli_app, ["project", "list", "--json", "--local"])
+    result = runner.invoke(cli_app, ["project", "list", "--json"])
 
     assert result.exit_code == 0, f"CLI failed: {result.output}"
     data = _parse_json_output(result.output)
     assert "projects" in data
     assert len(data["projects"]) == 1
     proj = data["projects"][0]
-    assert proj["name"] == "alpha"
-    assert proj["is_default"] is True
-    assert "local_path" in proj
-    assert "cli_route" in proj
-    assert "mcp_stdio" in proj
+    # HOME is tmp_path here, so the display path collapses to ~ (format_path).
+    assert proj == {
+        "name": "alpha",
+        "permalink": "alpha",
+        "path": "~/alpha-local",
+        "is_default": True,
+    }

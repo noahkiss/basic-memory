@@ -21,9 +21,7 @@ database table, queue message, or UI state redefine the product concept it repre
 A project is the core knowledge and isolation boundary. Every entity, observation, relation, and
 search record belongs to exactly one project.
 
-- A local project maps to a configured directory.
-- A hosted workspace or tenant may provide routing, authorization, and storage around a project,
-  but `workspace`, `tenant`, and `project` are not interchangeable domain terms.
+- A project maps to a configured directory.
 - Project selection must be explicit or resolved once at an entrypoint. Lower layers receive the
   resolved project context rather than rediscovering global state.
 
@@ -123,7 +121,7 @@ The Markdown file is the durable authority. Direct human edits, CLI writes, and 
 writes converge on the file. Entity, graph, and search state are reconciled from the bytes that
 landed on disk.
 
-### Accepted DB-First Or Cloud-Style Flow
+### Accepted DB-First Flow
 
 The service derives the final Markdown once and records that exact accepted version in
 `NoteContent`. Until materialization finishes, that version is the operational authority for what
@@ -135,10 +133,9 @@ Markdown, and materialization produces the portable file representation.
 
 ### Project Registry Authority
 
-Project discovery differs by runtime. Local flows reconcile configured projects with the local
-database; hosted flows may receive project and workspace context from the database or control
-plane. Resolve that authority at the composition root or project service. Do not make repositories
-or leaf helpers guess which registry wins.
+Project discovery reconciles configured projects with the local database. Resolve that authority at
+the composition root or project service. Do not make repositories or leaf helpers guess which
+registry wins.
 
 ## Write And Reconciliation Flows
 
@@ -200,7 +197,7 @@ Before adding a model, abstraction, or workflow, answer:
 2. What is the canonical representation at this point in the lifecycle?
 3. Which identifier is stable, and which locations or labels may change?
 4. Is this value a domain concept, a boundary schema, persistence state, or a derived projection?
-5. Which project, workspace, or tenant boundary constrains it?
+5. Which project boundary constrains it?
 6. Can the code express the operation with functions and typed values before introducing another
    service, hierarchy, or registry?
 7. Which test proves the invariant across file, database, graph, search, and API surfaces?

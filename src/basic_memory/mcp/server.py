@@ -2,7 +2,6 @@
 Basic Memory FastMCP server.
 """
 
-import time
 from contextlib import asynccontextmanager
 
 from fastmcp import FastMCP
@@ -11,7 +10,6 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
 
 from basic_memory import db
-from basic_memory.cli.auth import CLIAuth
 from basic_memory.index.note_content_materialization import drain_pending_materializations
 from basic_memory.db import scoped_session
 from basic_memory.index.local_schedulers import drain_background_tasks
@@ -57,7 +55,7 @@ async def lifespan(app: FastMCP):
 
     Handles:
     - Database initialization and migrations
-    - Local file watching via WatchCoordinator (if enabled and not in cloud mode)
+    - Local file watching via WatchCoordinator (if enabled)
     - Proper cleanup on shutdown
     """
     # --- Composition Root ---
@@ -88,26 +86,10 @@ async def lifespan(app: FastMCP):
                 f"query_prefix_set={bool(config.semantic_embedding_query_prefix)}"
             )
 
-        # Log configured projects with their routing mode
+        # Log configured projects
         for name, entry in config.projects.items():
             default = " (default)" if name == config.default_project else ""
-            logger.info(f"Project: {name} -> {entry.path} [mode={entry.mode.value}]{default}")
-
-        # Check cloud auth status (local file check, no network call)
-        auth = CLIAuth(client_id=config.cloud_client_id, authkit_domain=config.cloud_domain)
-        tokens = auth.load_tokens()
-        if tokens is not None:
-            if not auth.is_token_valid(tokens):
-                expires_at = tokens.get("expires_at", 0)
-                expired_ago = int(time.time() - expires_at)
-                logger.warning(
-                    f"Cloud token expired {expired_ago}s ago - may need 'bm cloud login'"
-                )
-            else:
-                logger.info("Cloud: authenticated (OAuth token valid)")
-
-        if config.cloud_api_key:
-            logger.info("Cloud: API key configured")
+            logger.info(f"Project: {name} -> {entry.path}{default}")
 
         # Track if we created the engine (vs test fixtures providing it)
         # This prevents disposing an engine provided by test fixtures when

@@ -247,31 +247,3 @@ async def test_delete_directory_memory_url_keeps_real_project_prefix_when_prefix
     assert "Delete target content" not in deleted
     decoy = await read_note("Keep Directory Decoy", project=test_project.name)
     assert "Decoy content" in decoy
-
-
-@pytest.mark.asyncio
-async def test_delete_directory_workspace_memory_url_strips_route_prefix(client, test_project):
-    """Workspace-qualified memory:// directory deletes still hit project-relative files."""
-    from basic_memory.workspace_context import workspace_permalink_context
-
-    directory = "workspace-memory-url-dir"
-    with workspace_permalink_context(workspace_slug="team-paul", workspace_type="organization"):
-        await write_note(
-            project=test_project.name,
-            title="Delete Workspace Directory Memory URL",
-            directory=directory,
-            content="# Delete Workspace Directory Memory URL\nDelete via workspace memory URL.",
-        )
-
-        result = await delete_note(
-            identifier=f"memory://team-paul/{test_project.name}/{directory}",
-            is_directory=True,
-            project=test_project.name,
-            output_format="json",
-        )
-
-    assert isinstance(result, dict)
-    assert result["deleted"] is True
-    assert result["total_files"] == 1
-    assert result["successful_deletes"] == 1
-    assert result["failed_deletes"] == 0

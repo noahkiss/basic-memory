@@ -238,7 +238,7 @@ layers implement.
 **Composition Roots:**
 Each entrypoint (API, MCP, CLI) has a composition root that:
 - Reads `ConfigManager` (the only place that reads global config)
-- Resolves runtime mode via `RuntimeMode` enum (TEST > CLOUD > LOCAL)
+- Resolves runtime mode via `RuntimeMode` enum (TEST > LOCAL)
 - Provides dependencies to downstream code explicitly
 
 **Typed API Clients (MCP):**
@@ -321,9 +321,6 @@ separate `get_client()` + `get_active_project()` pair inside an MCP tool.
   layer and costs ~4 s; see the measured baseline above.
 - Importers: `import claude conversations` / `import chatgpt` / `import memory-json` — all strip
   candidates.
-
-Cloud commands (`cloud login`, `cloud sync`, `cloud bisync`, `project set-cloud`, …) exist upstream
-and are scheduled for deletion here. Don't build on them.
 
 ### MCP Capabilities
 

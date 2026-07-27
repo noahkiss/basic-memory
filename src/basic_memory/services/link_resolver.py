@@ -1,7 +1,7 @@
 """Service and helpers for resolving markdown links and permalink-like identifiers."""
 
 import uuid as uuid_mod
-from typing import Any, Optional, Tuple, Dict
+from typing import Optional, Tuple, Dict
 
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -20,55 +20,6 @@ from basic_memory.utils import (
     generate_permalink,
     normalize_project_reference,
 )
-from basic_memory.workspace_context import current_workspace_permalink_context
-
-
-def is_workspace_qualified_plain_identifier(identifier: str) -> bool:
-    """Return True for plain ``<workspace>/<project>/<path>`` identifiers."""
-    stripped = identifier.strip()
-    if stripped.startswith("memory://"):
-        return False
-
-    normalized = normalize_project_reference(stripped).strip("/")
-    return len(normalized.split("/", 2)) == 3
-
-
-async def detect_project_from_workspace_identifier_prefix(
-    identifier: str,
-    config: BasicMemoryConfig,
-    context: Any | None = None,
-) -> Optional[str]:
-    """Resolve a project route from a plain workspace-qualified identifier."""
-    if not is_workspace_qualified_plain_identifier(identifier):
-        return None
-
-    from basic_memory.mcp.project_context import (
-        _workspace_identifier_discovery_available,
-        resolve_workspace_qualified_identifier,
-    )
-
-    if not _workspace_identifier_discovery_available(identifier, config):
-        return None
-
-    workspace_discovery_fallback_errors = (
-        "not found",
-        "no accessible workspaces",
-        "unable to discover",
-    )
-    try:
-        workspace_resolution = await resolve_workspace_qualified_identifier(
-            identifier,
-            context=context,
-        )
-    except ValueError as exc:
-        message = str(exc).lower()
-        if any(error in message for error in workspace_discovery_fallback_errors):
-            return None
-        raise
-
-    if workspace_resolution is None:
-        return None
-    return workspace_resolution.project_identifier
 
 
 class LinkResolver:
@@ -262,24 +213,17 @@ class LinkResolver:
         """Resolve a link within a specific project scope."""
         clean_text = link_text
         include_project = self._include_project_permalinks()
-        workspace_context = current_workspace_permalink_context()
-        workspace_permalink = (
-            workspace_context.workspace_slug
-            if workspace_context and workspace_context.should_prefix_permalinks
-            else None
-        )
 
-        # Trigger: callers can pass title, short permalink, project/path, or
-        #   workspace/project/path identifiers to the same resolver.
+        # Trigger: callers can pass a title, a short permalink, or project/path
+        #   identifiers to the same resolver.
         # Why: search results and memory:// URLs should stay usable across read,
         #   edit, delete, move, and API-level entity resolution.
-        # Outcome: resolve canonical workspace IDs and legacy project-prefixed rows
-        #   through one shared candidate builder.
+        # Outcome: resolve canonical and legacy project-prefixed rows through one
+        #   shared candidate builder.
         permalink_candidates = build_permalink_resolution_candidates(
             clean_text,
             project_permalink,
             include_project=include_project,
-            workspace_permalink=workspace_permalink,
         )
 
         # --- Path Resolution ---

@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Dict, Literal, Optional, List
 
 from loguru import logger
-from pydantic import AliasChoices, BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from basic_memory.config_migrations import (
@@ -37,16 +37,9 @@ def _secure_config_dir(path: Path) -> None:
 
 
 def _secure_config_file(path: Path) -> None:
-    """Restrict config file permissions because config can contain cloud credentials."""
+    """Restrict config file permissions because config can contain API credentials."""
     if os.name != "nt":
         path.chmod(CONFIG_FILE_MODE)
-
-
-class ProjectMode(str, Enum):
-    """Per-project routing mode."""
-
-    LOCAL = "local"
-    CLOUD = "cloud"
 
 
 class DatabaseBackend(str, Enum):
@@ -144,7 +137,6 @@ class ProjectConfig:
 
     name: str
     home: Path
-    mode: ProjectMode = ProjectMode.LOCAL
 
     @property
     def project(self):
@@ -155,56 +147,14 @@ class ProjectConfig:
         return f"/{generate_permalink(self.name)}"
 
 
-class CloudProjectConfig(BaseModel):
-    """Sync configuration for a cloud project.
-
-    This tracks the local working directory and sync state for a project
-    that is synced with Basic Memory Cloud.
-
-    DEPRECATED: Kept for backward-compatible migration only. New code should
-    use ProjectEntry fields (cloud_sync_path, bisync_initialized, last_sync).
-    """
-
-    local_path: str = Field(description="Local working directory path for this cloud project")
-    last_sync: Optional[datetime] = Field(
-        default=None, description="Timestamp of last successful sync operation"
-    )
-    bisync_initialized: bool = Field(
-        default=False, description="Whether rclone bisync baseline has been established"
-    )
-
-
 class ProjectEntry(BaseModel):
     """Unified project configuration entry.
 
-    Replaces the old triple of projects (Dict[str, str]), project_modes
-    (Dict[str, ProjectMode]), and cloud_projects (Dict[str, CloudProjectConfig])
-    with a single structure per project.
+    Replaces the old pair of projects (Dict[str, str]) and project_modes with a
+    single structure per project.
     """
 
     path: str = Field(description="Local filesystem path for the project")
-    mode: ProjectMode = Field(
-        default=ProjectMode.LOCAL,
-        description="Routing mode: local (in-process ASGI) or cloud (remote API)",
-    )
-    workspace_id: Optional[str] = Field(
-        default=None,
-        description="Cloud workspace tenant_id. Set by 'bm project set-cloud --workspace'.",
-    )
-    # Cloud sync state (replaces CloudProjectConfig)
-    local_sync_path: Optional[str] = Field(
-        default=None,
-        description="Local working directory for bisync",
-        validation_alias=AliasChoices("local_sync_path", "cloud_sync_path"),
-    )
-    bisync_initialized: bool = Field(
-        default=False,
-        description="Whether rclone bisync baseline has been established",
-    )
-    last_sync: Optional[datetime] = Field(
-        default=None,
-        description="Timestamp of last successful sync operation",
-    )
 
 
 class BasicMemoryConfig(BaseSettings):
@@ -314,7 +264,7 @@ class BasicMemoryConfig(BaseSettings):
     # embed flushes, not constructing vectors themselves.
     # Why: smaller FastEmbed batches cut queue wait far more than they increase
     # write overhead on real-world projects, which makes full reindex materially faster.
-    # Outcome: default to the smaller local/cloud-safe batch size we benchmarked as
+    # Outcome: default to the smaller batch size we benchmarked as
     # the current best end-to-end setting in the shared vector sync pipeline.
     semantic_embedding_batch_size: int = Field(
         default=2,
@@ -433,7 +383,7 @@ class BasicMemoryConfig(BaseSettings):
         description="Number of in-process workers that materialize accepted note "
         "writes (write the markdown file + index it) off the accept path. Bounds "
         "concurrent materializations so they don't contend en masse for the DB "
-        "writer under high write load (local runtime; cloud uses queue workers).",
+        "writer under high write load.",
         gt=0,
     )
 
@@ -561,11 +511,6 @@ class BasicMemoryConfig(BaseSettings):
         description="When True, generated permalinks are prefixed with the project slug (e.g., 'specs/search'). Existing permalinks remain unchanged unless explicitly updated.",
     )
 
-    skip_initialization_sync: bool = Field(
-        default=False,
-        description="Skip expensive initialization synchronization. Useful for cloud/stateless deployments where project reconciliation is not needed.",
-    )
-
     # File formatting configuration
     format_on_save: bool = Field(
         default=False,
@@ -594,39 +539,6 @@ class BasicMemoryConfig(BaseSettings):
         description="If set, all projects must be created underneath this directory. Paths will be sanitized and constrained to this root. If not set, projects can be created anywhere (default behavior).",
     )
 
-    # Cloud configuration
-    cloud_client_id: str = Field(
-        default="client_01K6KWQPW6J1M8VV7R3TZP5A6M",
-        description="OAuth client ID for Basic Memory Cloud",
-    )
-
-    cloud_domain: str = Field(
-        default="https://eloquent-lotus-05.authkit.app",
-        description="AuthKit domain for Basic Memory Cloud",
-    )
-
-    cloud_host: str = Field(
-        default_factory=lambda: os.getenv(
-            "BASIC_MEMORY_CLOUD_HOST", "https://cloud.basicmemory.com"
-        ),
-        description="Basic Memory Cloud host URL",
-    )
-
-    cloud_promo_opt_out: bool = Field(
-        default=False,
-        description="Disable CLI cloud promo messages when true.",
-    )
-
-    cloud_promo_first_run_shown: bool = Field(
-        default=False,
-        description="Tracks whether the first-run cloud promo message has been shown.",
-    )
-
-    cloud_promo_last_version_shown: Optional[str] = Field(
-        default=None,
-        description="Most recent cloud promo version shown in CLI.",
-    )
-
     auto_update: bool = Field(
         default=True,
         description="Enable automatic CLI update checks and installs when supported.",
@@ -641,16 +553,6 @@ class BasicMemoryConfig(BaseSettings):
     auto_update_last_checked_at: Optional[datetime] = Field(
         default=None,
         description="Timestamp of the last attempted automatic update check.",
-    )
-
-    cloud_api_key: Optional[str] = Field(
-        default=None,
-        description="API key for cloud access (bmc_ prefixed). Account-level, not per-project.",
-    )
-
-    default_workspace: Optional[str] = Field(
-        default=None,
-        description="Default cloud workspace tenant_id. Set by 'bm cloud workspace set-default'.",
     )
 
     # Legacy config keys / env vars mapped to their renamed fields.
@@ -691,16 +593,14 @@ class BasicMemoryConfig(BaseSettings):
     def migrate_legacy_projects(cls, data: Any) -> Any:
         """Migrate old-format config (Dict[str, str]) to new ProjectEntry format.
 
-        Old format stored projects as three separate dicts:
-          projects:      {"name": "/path"}
-          project_modes: {"name": "cloud"}
-          cloud_projects: {"name": {"local_path": "...", ...}}
+        Old format stored projects as a bare path map:
+          projects: {"name": "/path"}
 
-        New format unifies them into:
-          projects: {"name": {"path": "/path", "mode": "cloud", ...}}
+        New format wraps each in a ProjectEntry:
+          projects: {"name": {"path": "/path"}}
 
-        Also removes stale keys (default_project_mode, permalinks_include_project)
-        that are no longer part of the config model.
+        Also drops stale keys (default_project_mode, permalinks_include_project,
+        and the retired cloud/routing keys) that are no longer part of the model.
         """
         return migrate_legacy_projects(data)
 
@@ -721,40 +621,6 @@ class BasicMemoryConfig(BaseSettings):
             or os.getenv("PYTEST_CURRENT_TEST") is not None
         )
 
-    @property
-    def cloud_mode(self) -> bool:
-        """Whether this process runs as a cloud deployment.
-
-        In-repo cloud containers build BasicMemoryConfig via ConfigManager (not
-        for_cloud_tenant), so they signal cloud mode through the environment
-        rather than skip_initialization_sync. Mirrors the detection in setup_logging.
-        """
-        return os.getenv("BASIC_MEMORY_CLOUD_MODE", "").lower() in ("1", "true")
-
-    @property
-    def skip_local_initialization(self) -> bool:
-        """Whether to skip local project seeding / reconciliation / path creation.
-
-        True for any cloud or stateless deployment: for_cloud_tenant sets
-        skip_initialization_sync, while in-repo cloud containers set
-        BASIC_MEMORY_CLOUD_MODE. A LOCAL Postgres install matches neither, so it
-        still initializes like SQLite. Gating these paths on the Postgres *backend*
-        caught local Postgres (wrong); gating only on skip_initialization_sync
-        missed BASIC_MEMORY_CLOUD_MODE deployments, letting reconcile delete tenant
-        project rows (also wrong).
-        """
-        return self.skip_initialization_sync or self.cloud_mode
-
-    def get_project_mode(self, project_name: str) -> ProjectMode:
-        """Get the routing mode for a project.
-
-        Returns the per-project mode if set.
-        Unknown projects (not in local config) default to CLOUD —
-        local projects are always registered in config.
-        """
-        entry = self.projects.get(project_name)
-        return entry.mode if entry else ProjectMode.CLOUD
-
     def is_locally_syncable(self, project_name: str, project_path: str) -> bool:
         """Whether a project should be synced/watched on the local filesystem.
 
@@ -768,53 +634,12 @@ class BasicMemoryConfig(BaseSettings):
             process cwd, so syncing it would adopt whatever directory the server
             was launched from as the project root and mutate unrelated files.
 
-        Cloud-only projects (empty/slug path) and cloud projects with a real
-        local bisync copy (absolute path) are handled correctly by these two
-        conditions, so no separate mode check is needed.
+        A project entry whose path is a bare slug rather than a directory is
+        still rejected by the absolute-path condition, so no separate check is
+        needed.
         """
         entry = self.projects.get(project_name)
         return entry is not None and Path(project_path).is_absolute()
-
-    def set_project_mode(self, project_name: str, mode: ProjectMode) -> None:
-        """Set the routing mode for a project.
-
-        Creates a minimal ProjectEntry if the project doesn't already exist,
-        preserving backward compatibility with code that sets mode before
-        adding a full project entry.
-        """
-        if project_name in self.projects:
-            self.projects[project_name].mode = mode
-        else:
-            self.projects[project_name] = ProjectEntry(path="", mode=mode)
-
-    @classmethod
-    def for_cloud_tenant(
-        cls,
-        database_url: str,
-        projects: Optional[Dict[str, "ProjectEntry"]] = None,
-    ) -> "BasicMemoryConfig":
-        """Create config for cloud tenant - no config.json, database is source of truth.
-
-        This factory method creates a BasicMemoryConfig suitable for cloud deployments
-        where:
-        - Database is Postgres (Neon), not SQLite
-        - Projects are discovered from the database, not config file
-        - Path validation is skipped (no local filesystem in cloud)
-        - Initialization sync is skipped (stateless deployment)
-
-        Args:
-            database_url: Postgres connection URL for tenant database
-            projects: Optional project mapping (usually empty, discovered from DB)
-
-        Returns:
-            BasicMemoryConfig configured for cloud mode
-        """
-        return cls(  # pragma: no cover
-            database_backend=DatabaseBackend.POSTGRES,
-            database_url=database_url,
-            projects=projects or {},
-            skip_initialization_sync=True,
-        )
 
     model_config = SettingsConfigDict(
         env_prefix="BASIC_MEMORY_",
@@ -832,14 +657,6 @@ class BasicMemoryConfig(BaseSettings):
 
     def model_post_init(self, __context: Any) -> None:
         """Ensure configuration is valid after initialization."""
-        # Skip default-project seeding only for cloud/stateless deployments, where
-        # projects are discovered from the database per tenant. See
-        # skip_local_initialization for why this is not gated on the Postgres
-        # backend (caught local Postgres) nor on skip_initialization_sync alone
-        # (missed BASIC_MEMORY_CLOUD_MODE deployments).
-        if self.skip_local_initialization:
-            return
-
         # Trigger: no projects configured (fresh install or empty config)
         # Why: every config needs at least one project to be functional
         # Outcome: creates "main" project using BASIC_MEMORY_HOME or ~/basic-memory
@@ -896,27 +713,15 @@ class BasicMemoryConfig(BaseSettings):
     def project_list(self) -> List[ProjectConfig]:  # pragma: no cover
         """Get all configured projects as ProjectConfig objects."""
         return [
-            ProjectConfig(name=name, home=Path(entry.path), mode=entry.mode)
-            for name, entry in self.projects.items()
+            ProjectConfig(name=name, home=Path(entry.path)) for name, entry in self.projects.items()
         ]
 
     @model_validator(mode="after")
     def ensure_project_paths_exists(self) -> "BasicMemoryConfig":  # pragma: no cover
-        """Ensure project paths exist.
-
-        Skips path creation for cloud/stateless deployments, whose tenants don't
-        use local filesystem paths. A local Postgres install still needs its
-        project directories created like SQLite, so gate on
-        skip_local_initialization, not the backend — otherwise the seeded default's
-        directory is never created and the sync/watch path hits a non-existent
-        directory.
-        """
-        if self.skip_local_initialization:
-            return self
-
+        """Ensure project paths exist."""
         for name, entry in self.projects.items():
             path = Path(entry.path)
-            # Skip cloud-only projects whose path is a slug, not a local directory
+            # A relative path is a stale/slug entry, not a directory we own.
             if not path.is_absolute():
                 continue
             if not path.exists():

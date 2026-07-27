@@ -14,44 +14,13 @@ from basic_memory.mcp.server import mcp
 from fastmcp import Context
 from basic_memory.schemas.base import Entity
 from basic_memory.utils import (
-    build_qualified_permalink_reference,
     coerce_dict,
     parse_tags,
     validate_project_path,
 )
-from basic_memory.workspace_context import current_workspace_permalink_context
 
 # Define TagType as a Union that can accept either a string or a list of strings or None
 TagType = Union[List[str], str, None]
-
-
-def _compose_workspace_project_route(
-    *,
-    workspace: Optional[str],
-    project: Optional[str],
-    project_id: Optional[str],
-) -> Optional[str]:
-    """Return the explicit project route requested by workspace/project args."""
-    if workspace is None:
-        return project
-
-    cleaned_workspace = workspace.strip().strip("/")
-    if not cleaned_workspace:
-        raise ValueError("workspace must not be empty when provided")
-    if "/" in cleaned_workspace:
-        raise ValueError("workspace must be a single workspace slug, name, or tenant_id")
-    if project_id is not None:
-        raise ValueError("workspace cannot be combined with project_id; use project_id alone")
-    if project is None or not project.strip().strip("/"):
-        raise ValueError("workspace requires an explicit project argument")
-
-    cleaned_project = project.strip().strip("/")
-    if "/" in cleaned_project:
-        raise ValueError(
-            "Use either workspace='workspace' with project='project', "
-            "or project='workspace/project', not both"
-        )
-    return f"{cleaned_workspace}/{cleaned_project}"
 
 
 @mcp.tool(
@@ -75,7 +44,6 @@ async def write_note(
         Field(validation_alias=AliasChoices("directory", "folder", "dir", "path")),
     ],
     project: Optional[str] = None,
-    workspace: Optional[str] = None,
     project_id: Optional[str] = None,
     tags: list[str] | str | None = None,
     note_type: str = "note",
@@ -91,7 +59,7 @@ async def write_note(
     to replace the existing note. For incremental updates, use edit_note instead.
 
     Project Resolution:
-    Server resolves projects using a unified priority chain (same in local and cloud modes):
+    Server resolves projects using a unified priority chain:
     Single Project Mode → project parameter → default project.
     Uses default project automatically. Specify `project` parameter to target a different project.
 
@@ -125,17 +93,11 @@ async def write_note(
                    Use forward slashes (/) as separators. Use "/" or "" to write to project root.
                    Examples: "notes", "projects/2025", "research/ml", "/" (root)
         project: Project name to write to. Optional - server will resolve using the
-                hierarchy above. Use "workspace/project" to route to a project in a
-                specific cloud workspace. A bare name that exists in multiple
-                workspaces resolves to the default workspace, so use the qualified
-                form (or project_id) to disambiguate. If unknown, use
-                list_memory_projects() to discover available projects and their
-                qualified names.
-        workspace: Workspace slug, name, or tenant_id. When provided with `project`,
-                routes as `workspace/project`. Cannot be combined with `project_id`.
+                hierarchy above. If unknown, use list_memory_projects() to discover
+                available projects.
         project_id: Project external_id (UUID). Prefer this over `project` when known —
-                it routes to the exact project regardless of name collisions across cloud
-                workspaces. Takes precedence over `project`. Get from list_memory_projects().
+                it routes to the exact project regardless of name collisions. Takes
+                precedence over `project`. Get from list_memory_projects().
         tags: Tags to categorize the note. Can be a list of strings, a comma-separated string, or None.
               Note: If passing from external MCP clients, use a string format (e.g. "tag1,tag2,tag3")
         note_type: Type of note to create (stored in frontmatter). Defaults to "note".
@@ -209,11 +171,6 @@ async def write_note(
     # Why: lets users set a global default without breaking per-call overrides
     effective_overwrite = (
         overwrite if overwrite is not None else ConfigManager().config.write_note_overwrite_default
-    )
-    project = _compose_workspace_project_route(
-        workspace=workspace,
-        project=project,
-        project_id=project_id,
     )
 
     with logfire.span(
@@ -323,10 +280,9 @@ async def write_note(
                         # The 409 came from a file_service.exists(file_path) check, so this
                         # file_path is the authoritative key for the canonical row. Resolving
                         # by permalink with fuzzy fallback (the previous behavior) could pick
-                        # an orphan with a similar permalink — especially in workspace-prefixed
-                        # palaces where the client-built permalink omits the workspace slug —
-                        # causing the update to write to the wrong row and the next call to
-                        # mint a -1/-2 suffix on the canonical entity.
+                        # an orphan with a similar permalink, causing the update to write to
+                        # the wrong row and the next call to mint a -1/-2 suffix on the
+                        # canonical entity.
                         # POSIX-normalize so Windows clients send the same form the server stores.
                         file_path_identifier = Path(entity.file_path).as_posix()
                         entity_id = await knowledge_client.resolve_entity(
@@ -343,13 +299,6 @@ async def write_note(
                     # Re-raise if it's not a conflict error
                     raise  # pragma: no cover
             response_permalink = result.permalink
-            workspace_context = current_workspace_permalink_context()
-            if response_permalink and workspace_context is not None:
-                response_permalink = build_qualified_permalink_reference(
-                    active_project.permalink,
-                    response_permalink,
-                    workspace_permalink=workspace_context.workspace_slug,
-                )
 
             summary = [
                 f"# {action} note",

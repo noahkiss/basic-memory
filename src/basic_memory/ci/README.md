@@ -40,30 +40,22 @@ Basic Memory API key.
 Use `bm ci setup` from the GitHub repository root. The command installs the
 workflow/config/prompt/soul files and seeds the Basic Memory schema notes.
 
-For the common cloud path:
-
 ```bash
-bm cloud api-key save bmc_...
-bm cloud workspace list
-bm ci setup --project <project-name> --workspace <workspace-slug-or-id> --cloud --yes
+bm ci setup --project <project-name> --yes
 ```
 
-Use the `Slug` column from `bm cloud workspace list` for `--workspace`; the
-`Workspace ID` column also works when a slug is unavailable or ambiguous.
-
-Prefer `--project-id <external_id>` when the same project name exists in more
-than one workspace:
+Prefer `--project-id <external_id>` when a project name is ambiguous:
 
 ```bash
-bm ci setup --project <project-name> --project-id <project-external-id> --cloud --yes
+bm ci setup --project <project-name> --project-id <project-external-id> --yes
 ```
 
 Setup does not overwrite existing schema notes by default. After upgrading Auto
 BM, refresh the installed schema guidance with either spelling:
 
 ```bash
-bm ci setup --project <project-name> --workspace <workspace-slug-or-id> --cloud --yes --refresh-schemas
-bm ci setup --project <project-name> --workspace <workspace-slug-or-id> --cloud --yes --update-schemas
+bm ci setup --project <project-name> --yes --refresh-schemas
+bm ci setup --project <project-name> --yes --update-schemas
 ```
 
 The shorter aliases `--refresh` and `--update` are also accepted. Refresh keeps
@@ -81,22 +73,14 @@ Then review and commit the generated files:
 .github/basic-memory/SOUL.md
 ```
 
-Add these GitHub repository secrets:
+Add this GitHub repository secret:
 
 - `OPENAI_API_KEY`: used only by `openai/codex-action`.
-- `BASIC_MEMORY_API_KEY`: mapped to `BASIC_MEMORY_CLOUD_API_KEY` only for
-  `bm ci publish`.
-
-Add this optional GitHub repository variable only when using a non-default cloud
-host:
-
-- `BASIC_MEMORY_CLOUD_HOST`
 
 Configure production deploy capture in `.github/basic-memory/config.yml`:
 
 ```yaml
 project: <project-name>
-workspace: <workspace-slug-or-id>
 deploy_workflows:
   - Deploy Production
 production_environments:
@@ -182,19 +166,12 @@ source identity comes from `ProjectUpdateContext`.
 
 ## Auth Boundary
 
-The generated workflow needs these secrets:
+The generated workflow needs one secret:
 
 - `OPENAI_API_KEY`
-- `BASIC_MEMORY_API_KEY`
 
-`OPENAI_API_KEY` is passed only to the Codex Action. `BASIC_MEMORY_API_KEY` is
-mapped to `BASIC_MEMORY_CLOUD_API_KEY` only for the publish step, where the
-Basic Memory client uses it as `cloud_api_key`. The publish step also passes
-`--cloud` so CI writes to the configured cloud project.
-
-When `.github/basic-memory/config.yml` includes `workspace` and no `project_id`,
-CI routes the project as `<workspace>/<project>`. Use a workspace slug there, or
-prefer `project_id` when project names collide across workspaces.
+It is passed only to the Codex Action. `bm ci publish` writes to the local
+project and needs no credentials.
 
 ## Idempotency
 

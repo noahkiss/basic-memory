@@ -18,7 +18,6 @@ if not _version_only_invocation(sys.argv[1:]):
     from basic_memory.cli.commands import (  # noqa: F401  # pragma: no cover
         brief,
         ci,
-        cloud,
         db,
         doctor,
         import_chatgpt,
@@ -33,7 +32,6 @@ if not _version_only_invocation(sys.argv[1:]):
         status,
         tool,
         update,
-        workspace,
     )
 
 warnings.filterwarnings("ignore")  # pragma: no cover

@@ -16,49 +16,6 @@ from unidecode import unidecode
 from basic_memory import telemetry
 
 
-def normalize_project_path(path: str) -> str:
-    """Normalize project path by stripping mount point prefix.
-
-    In cloud deployments, the S3 bucket is mounted at /app/data. We strip this
-    prefix from project paths to avoid leaking implementation details and to
-    ensure paths match the actual S3 bucket structure.
-
-    For local paths (including Windows paths), returns the path unchanged.
-
-    Args:
-        path: Project path (e.g., "/app/data/basic-memory-llc" or "C:\\Users\\...")
-
-    Returns:
-        Normalized path (e.g., "/basic-memory-llc" or "C:\\Users\\...")
-
-    Examples:
-        >>> normalize_project_path("/app/data/my-project")
-        '/my-project'
-        >>> normalize_project_path("/my-project")
-        '/my-project'
-        >>> normalize_project_path("app/data/my-project")
-        '/my-project'
-        >>> normalize_project_path("C:\\\\Users\\\\project")
-        'C:\\\\Users\\\\project'
-    """
-    # Check if this is a Windows absolute path (e.g., C:\Users\...)
-    # Windows paths have a drive letter followed by a colon
-    if len(path) >= 2 and path[1] == ":":
-        # Windows absolute path - return unchanged
-        return path  # pragma: no cover
-
-    # Handle both absolute and relative Unix paths
-    normalized = path.lstrip("/")
-    if normalized.startswith("app/data/"):
-        normalized = normalized.removeprefix("app/data/")
-
-    # Ensure leading slash for Unix absolute paths
-    if not normalized.startswith("/"):
-        normalized = "/" + normalized
-
-    return normalized
-
-
 @runtime_checkable
 class PathLike(Protocol):
     """Protocol for objects that can be used as paths."""
@@ -224,43 +181,18 @@ def build_canonical_permalink(
     project_permalink: Optional[str],
     file_path: Union[Path, str, PathLike],
     include_project: bool = True,
-    *,
-    workspace_permalink: Optional[str] = None,
 ) -> str:
-    """Build a canonical permalink, optionally prefixed with workspace/project slugs.
+    """Build a canonical permalink, optionally prefixed with the project slug.
 
     Args:
         project_permalink: URL-friendly project identifier (slug). If None, no prefix is added.
         file_path: Original file path or permalink-like string.
         include_project: When True, prefix with project slug.
-        workspace_permalink: Optional URL-friendly workspace identifier. When provided,
-            prefix the project-qualified permalink with this workspace slug.
 
     Returns:
         Canonical permalink string.
     """
     normalized_path = generate_permalink(file_path)
-    normalized_workspace = generate_permalink(workspace_permalink) if workspace_permalink else None
-
-    if normalized_workspace:
-        if not project_permalink:
-            raise ValueError("workspace_permalink requires project_permalink")
-
-        normalized_project = generate_permalink(project_permalink)
-        workspace_project_prefix = f"{normalized_workspace}/{normalized_project}"
-        if normalized_path == workspace_project_prefix or normalized_path.startswith(
-            f"{workspace_project_prefix}/"
-        ):
-            return normalized_path
-
-        if normalized_path == normalized_project or normalized_path.startswith(
-            f"{normalized_project}/"
-        ):
-            project_path = normalized_path
-        else:
-            project_path = f"{normalized_project}/{normalized_path}"
-
-        return f"{normalized_workspace}/{project_path}"
 
     if not include_project or not project_permalink:
         return normalized_path
@@ -280,35 +212,15 @@ def build_qualified_permalink_reference(
     project_permalink: Optional[str],
     identifier: Union[Path, str, PathLike],
     include_project: bool = True,
-    *,
-    workspace_permalink: Optional[str] = None,
 ) -> str:
-    """Add workspace/project route prefixes while preserving lookup syntax.
+    """Add the project route prefix while preserving lookup syntax.
 
     Unlike ``build_canonical_permalink()``, this helper does not run the identifier
     through permalink generation. It is for inbound references that may contain
     lookup-only syntax such as ``.md`` extensions or ``*`` glob patterns.
     """
     normalized_path = normalize_project_reference(str(identifier)).strip("/")
-    normalized_workspace = generate_permalink(workspace_permalink) if workspace_permalink else None
     normalized_project = generate_permalink(project_permalink) if project_permalink else None
-
-    if normalized_workspace:
-        if not normalized_project:
-            raise ValueError("workspace_permalink requires project_permalink")
-
-        workspace_project_prefix = f"{normalized_workspace}/{normalized_project}"
-        if not normalized_path:
-            return workspace_project_prefix
-        if normalized_path == workspace_project_prefix or normalized_path.startswith(
-            f"{workspace_project_prefix}/"
-        ):
-            return normalized_path
-        if normalized_path == normalized_project or normalized_path.startswith(
-            f"{normalized_project}/"
-        ):
-            return f"{normalized_workspace}/{normalized_path}"
-        return f"{workspace_project_prefix}/{normalized_path}"
 
     if not include_project or not normalized_project:
         return normalized_path
@@ -326,19 +238,16 @@ def build_permalink_resolution_candidates(
     identifier: Union[Path, str, PathLike],
     project_permalink: Optional[str],
     include_project: bool = True,
-    *,
-    workspace_permalink: Optional[str] = None,
 ) -> list[str]:
     """Return permalink candidates from most caller-specific to broadest legacy form.
 
     The first candidate preserves the normalized identifier the caller supplied. Follow-up
-    candidates add the active workspace/project route and legacy project/path forms so
-    all resolver callers share the same compatibility behavior.
+    candidates add the active project route and legacy project/path forms so all resolver
+    callers share the same compatibility behavior.
     """
     exact_path = normalize_project_reference(str(identifier)).strip("/")
     normalized_path = generate_permalink(exact_path).strip("/")
     normalized_project = generate_permalink(project_permalink) if project_permalink else None
-    normalized_workspace = generate_permalink(workspace_permalink) if workspace_permalink else None
     candidates: list[str] = []
 
     def add_candidate(value: str | None) -> None:
@@ -350,41 +259,7 @@ def build_permalink_resolution_candidates(
     if not normalized_project:
         return candidates
 
-    workspace_project_prefix = (
-        f"{normalized_workspace}/{normalized_project}" if normalized_workspace else None
-    )
-    workspace_qualified = False
-    if workspace_project_prefix:
-        add_candidate(
-            build_canonical_permalink(
-                normalized_project,
-                normalized_path,
-                include_project=include_project,
-                workspace_permalink=normalized_workspace,
-            )
-        )
-        if normalized_path == workspace_project_prefix:
-            workspace_qualified = True
-            add_candidate(normalized_project)
-        elif normalized_path.startswith(f"{workspace_project_prefix}/"):
-            workspace_qualified = True
-            remainder = normalized_path.removeprefix(f"{workspace_project_prefix}/")
-            add_candidate(f"{normalized_project}/{remainder}")
-            add_candidate(remainder)
-
-    if workspace_project_prefix and not include_project and not workspace_qualified:
-        # Trigger: short lookup in a workspace where new canonical links omit project prefixes.
-        # Why: older rows in that same workspace may still be stored as `project/path`.
-        # Outcome: try the project-prefixed legacy form after the workspace-qualified form.
-        add_candidate(
-            build_canonical_permalink(
-                normalized_project,
-                normalized_path,
-                include_project=True,
-            )
-        )
-
-    if include_project and not workspace_qualified:
+    if include_project:
         add_candidate(
             build_canonical_permalink(
                 normalized_project,
@@ -411,7 +286,6 @@ def setup_logging(
     log_level: str = "INFO",
     log_to_file: bool = False,
     log_to_stdout: bool = False,
-    structured_context: bool = False,
 ) -> None:
     """Configure logging with explicit settings.
 
@@ -422,8 +296,7 @@ def setup_logging(
         log_level: DEBUG, INFO, WARNING, ERROR
         log_to_file: Write to <basic-memory data dir>/basic-memory.log with rotation
             (honors BASIC_MEMORY_CONFIG_DIR)
-        log_to_stdout: Write to stderr (for Docker/cloud deployments)
-        structured_context: Bind tenant_id, fly_region, etc. for cloud observability
+        log_to_stdout: Write to stderr (for containerized deployments)
     """
     # Remove default handler and any existing handlers
     logger.remove()
@@ -461,7 +334,7 @@ def setup_logging(
             colorize=False,
         )
 
-    # Add stdout handler (for Docker/cloud)
+    # Add stdout handler (for containerized deployments)
     if log_to_stdout:
         logger.add(sys.stderr, level=log_level, backtrace=True, diagnose=True, colorize=True)
 
@@ -469,17 +342,6 @@ def setup_logging(
     logfire_handler = telemetry.get_logfire_handler()
     if logfire_handler is not None:
         logger.add(**logfire_handler)
-
-    # Bind structured context for cloud observability
-    if structured_context:
-        logger.configure(
-            extra={
-                "tenant_id": os.getenv("BASIC_MEMORY_TENANT_ID", "local"),
-                "fly_app_name": os.getenv("FLY_APP_NAME", "local"),
-                "fly_machine_id": os.getenv("FLY_MACHINE_ID", "local"),
-                "fly_region": os.getenv("FLY_REGION", "local"),
-            }
-        )
 
     # Reduce noise from third-party libraries
     logging.getLogger("httpx").setLevel(logging.WARNING)

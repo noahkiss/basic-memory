@@ -18,7 +18,6 @@ from rich.table import Table
 
 from basic_memory.cli.app import app
 from basic_memory.cli.commands.command_utils import run_with_cleanup
-from basic_memory.cli.commands.routing import force_routing, validate_routing_flags
 from basic_memory.config import ConfigManager
 
 # MCP tool functions are imported inside each command: importing
@@ -175,10 +174,6 @@ def validate(
     ] = None,
     strict: bool = typer.Option(False, "--strict", help="Exit with error on validation failures"),
     json_output: bool = typer.Option(False, "--json", help="Output in JSON format"),
-    local: bool = typer.Option(
-        False, "--local", help="Force local API routing (ignore cloud mode)"
-    ),
-    cloud: bool = typer.Option(False, "--cloud", help="Force cloud API routing"),
 ):
     """Validate notes against their schemas.
 
@@ -187,14 +182,11 @@ def validate(
 
     Use --json for machine-readable output.
     Use --strict to exit with error code 1 if any validation errors are found.
-    Use --local to force local routing when cloud mode is enabled.
-    Use --cloud to force cloud routing when cloud mode is disabled.
     """
     # Deferred: loading the MCP tool stack at module import slows CLI startup (#886).
     from basic_memory.mcp.tools import schema_validate as mcp_schema_validate
 
     try:
-        validate_routing_flags(local, cloud)
         project_name = _resolve_project_name(project)
 
         # Heuristic: if target contains / or ., treat as identifier; otherwise as note type
@@ -205,15 +197,14 @@ def validate(
             else:
                 note_type = target
 
-        with force_routing(local=local, cloud=cloud):
-            result = run_with_cleanup(
-                mcp_schema_validate(
-                    note_type=note_type,
-                    identifier=identifier,
-                    project=project_name,
-                    output_format="json",
-                )
+        result = run_with_cleanup(
+            mcp_schema_validate(
+                note_type=note_type,
+                identifier=identifier,
+                project=project_name,
+                output_format="json",
             )
+        )
 
         # Handle error responses
         if isinstance(result, dict) and "error" in result:
@@ -259,10 +250,6 @@ def infer(
     ),
     save: bool = typer.Option(False, "--save", help="Save inferred schema to schema/ directory"),
     json_output: bool = typer.Option(False, "--json", help="Output in JSON format"),
-    local: bool = typer.Option(
-        False, "--local", help="Force local API routing (ignore cloud mode)"
-    ),
-    cloud: bool = typer.Option(False, "--cloud", help="Force cloud API routing"),
 ):
     """Infer schema from existing notes of a type.
 
@@ -273,25 +260,21 @@ def infer(
     threshold (default 25%) become optional. Fields below threshold are excluded.
 
     Use --json for machine-readable output.
-    Use --local to force local routing when cloud mode is enabled.
-    Use --cloud to force cloud routing when cloud mode is disabled.
     """
     # Deferred: loading the MCP tool stack at module import slows CLI startup (#886).
     from basic_memory.mcp.tools import schema_infer as mcp_schema_infer
 
     try:
-        validate_routing_flags(local, cloud)
         project_name = _resolve_project_name(project)
 
-        with force_routing(local=local, cloud=cloud):
-            result = run_with_cleanup(
-                mcp_schema_infer(
-                    note_type=note_type,
-                    threshold=threshold,
-                    project=project_name,
-                    output_format="json",
-                )
+        result = run_with_cleanup(
+            mcp_schema_infer(
+                note_type=note_type,
+                threshold=threshold,
+                project=project_name,
+                output_format="json",
             )
+        )
 
         # Handle error responses
         if isinstance(result, dict) and "error" in result:
@@ -344,10 +327,6 @@ def diff(
         typer.Option(help="The project name."),
     ] = None,
     json_output: bool = typer.Option(False, "--json", help="Output in JSON format"),
-    local: bool = typer.Option(
-        False, "--local", help="Force local API routing (ignore cloud mode)"
-    ),
-    cloud: bool = typer.Option(False, "--cloud", help="Force cloud API routing"),
 ):
     """Show drift between schema and actual usage.
 
@@ -356,24 +335,20 @@ def diff(
     dropped fields, and cardinality changes.
 
     Use --json for machine-readable output.
-    Use --local to force local routing when cloud mode is enabled.
-    Use --cloud to force cloud routing when cloud mode is disabled.
     """
     # Deferred: loading the MCP tool stack at module import slows CLI startup (#886).
     from basic_memory.mcp.tools import schema_diff as mcp_schema_diff
 
     try:
-        validate_routing_flags(local, cloud)
         project_name = _resolve_project_name(project)
 
-        with force_routing(local=local, cloud=cloud):
-            result = run_with_cleanup(
-                mcp_schema_diff(
-                    note_type=note_type,
-                    project=project_name,
-                    output_format="json",
-                )
+        result = run_with_cleanup(
+            mcp_schema_diff(
+                note_type=note_type,
+                project=project_name,
+                output_format="json",
             )
+        )
 
         # Handle error responses
         if isinstance(result, dict) and "error" in result:

@@ -25,10 +25,14 @@ def isolate_config_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_redact_config_removes_cloud_api_key():
-    raw = {"cloud_api_key": "bmc_secret", "default_project": "main", "projects": {}}
+def test_redact_config_drops_secret_field_without_dropping_neighbours():
+    raw = {
+        "semantic_embedding_api_key": "provider-secret",
+        "default_project": "main",
+        "projects": {},
+    }
     result = _redact_config(raw)
-    assert "cloud_api_key" not in result
+    assert "semantic_embedding_api_key" not in result
     assert result["default_project"] == "main"
     assert "projects" in result
 
@@ -123,22 +127,6 @@ def test_diagnostics_config_exists_with_valid_json(tmp_path):
 
     assert "research" in result
     assert "```json" in result
-
-
-def test_diagnostics_redacts_cloud_api_key(tmp_path):
-    """cloud_api_key must never appear in diagnostic output."""
-    config_data = {
-        "default_project": "main",
-        "cloud_api_key": "bmc_super_secret_token",
-        "projects": {},
-    }
-    config_file = tmp_path / "config.json"
-    config_file.write_text(json.dumps(config_data))
-
-    result = basic_memory_diagnostics()
-
-    assert "bmc_super_secret_token" not in result
-    assert "cloud_api_key" not in result
 
 
 def test_diagnostics_redacts_semantic_embedding_api_key(tmp_path):
@@ -337,12 +325,12 @@ def test_redact_config_leaves_database_url_without_credentials():
 
 def test_redact_config_drops_secret_fields_independently():
     raw = {
-        "cloud_api_key": "bmc_top_secret",
+        "semantic_embedding_api_key": "provider-top-secret",
         "database_url": "postgresql://dbuser:dbpassword@host/db",
         "default_project": "main",
     }
     result = _redact_config(raw)
-    assert "cloud_api_key" not in result
+    assert "semantic_embedding_api_key" not in result
     assert "dbpassword" not in result["database_url"]
     assert "dbuser" not in result["database_url"]
     assert "main" == result["default_project"]

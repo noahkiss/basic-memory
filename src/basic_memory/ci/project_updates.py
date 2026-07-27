@@ -34,7 +34,6 @@ class ProjectUpdateConfig(BaseModel):
 
     project: str | None = None
     project_id: str | None = None
-    workspace: str | None = None
     deploy_workflows: list[str] = Field(default_factory=lambda: ["Deploy Production"])
     production_environments: list[str] = Field(default_factory=lambda: ["production"])
     note_folder: str = DEFAULT_NOTE_FOLDER_TEMPLATE
@@ -863,15 +862,8 @@ jobs:
 {model_line}{effort_line}
       - name: Publish project update
         if: steps.collect.outputs.eligible == 'true'
-        env:
-          BASIC_MEMORY_CLOUD_API_KEY: ${{{{ secrets.BASIC_MEMORY_API_KEY }}}}
-          BASIC_MEMORY_CI_CLOUD_HOST: ${{{{ vars.BASIC_MEMORY_CLOUD_HOST }}}}
         run: |
-          if [ -n "$BASIC_MEMORY_CI_CLOUD_HOST" ]; then
-            export BASIC_MEMORY_CLOUD_HOST="$BASIC_MEMORY_CI_CLOUD_HOST"
-          fi
           bm ci publish \\
-            --cloud \\
             --config {DEFAULT_CONFIG_PATH} \\
             --context {DEFAULT_CONTEXT_PATH} \\
             --synthesis "${{{{ runner.temp }}}}/agent-synthesis.json"

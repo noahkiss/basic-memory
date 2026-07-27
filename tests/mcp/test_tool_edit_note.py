@@ -16,68 +16,6 @@ from basic_memory.mcp.tools.write_note import write_note
 from basic_memory.schemas.v2.entity import EntityResolveResponse
 
 
-def test_edit_note_workspace_project_route_helper():
-    """workspace/project routing should be explicit and deterministic."""
-    import importlib
-
-    edit_note_module = importlib.import_module("basic_memory.mcp.tools.edit_note")
-
-    assert (
-        edit_note_module._compose_workspace_project_route(
-            workspace=None,
-            project="docs/setup",
-            project_id=None,
-        )
-        == "docs/setup"
-    )
-    assert (
-        edit_note_module._compose_workspace_project_route(
-            workspace="docs",
-            project="setup",
-            project_id=None,
-        )
-        == "docs/setup"
-    )
-
-
-@pytest.mark.parametrize(
-    ("route_kwargs", "message"),
-    [
-        (
-            {"workspace": " ", "project": "setup", "project_id": None},
-            "workspace must not be empty",
-        ),
-        (
-            {"workspace": "docs/setup", "project": "setup", "project_id": None},
-            "workspace must be a single workspace",
-        ),
-        (
-            {"workspace": "docs", "project": "setup", "project_id": "project-id"},
-            "workspace cannot be combined with project_id",
-        ),
-        (
-            {"workspace": "docs", "project": None, "project_id": None},
-            "workspace requires an explicit project",
-        ),
-        (
-            {"workspace": "docs", "project": "setup/install", "project_id": None},
-            "not both",
-        ),
-    ],
-)
-def test_edit_note_workspace_project_route_helper_rejects_invalid_inputs(
-    route_kwargs,
-    message,
-):
-    """Ambiguous workspace/project argument combinations should fail before routing."""
-    import importlib
-
-    edit_note_module = importlib.import_module("basic_memory.mcp.tools.edit_note")
-
-    with pytest.raises(ValueError, match=message):
-        edit_note_module._compose_workspace_project_route(**route_kwargs)
-
-
 @pytest.mark.asyncio
 async def test_edit_note_append_operation(client, test_project):
     """Test appending content to an existing note."""

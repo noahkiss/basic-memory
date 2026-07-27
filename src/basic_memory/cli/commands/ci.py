@@ -33,7 +33,6 @@ from basic_memory.ci.project_updates import (
 )
 from basic_memory.cli.app import app
 from basic_memory.cli.commands.command_utils import run_with_cleanup
-from basic_memory.cli.commands.routing import force_routing, validate_routing_flags
 
 # MCP tool functions are imported inside the async helpers below: importing
 # basic_memory.mcp.tools loads the entire tool stack (fastmcp, mcp SDK,
@@ -56,10 +55,6 @@ def setup(
         Optional[str],
         typer.Option("--project-id", help="Basic Memory project external_id"),
     ] = None,
-    workspace: Annotated[
-        Optional[str],
-        typer.Option("--workspace", help="Cloud workspace slug for generated config"),
-    ] = None,
     deploy_workflow: Annotated[
         Optional[list[str]],
         typer.Option("--deploy-workflow", help="Production deploy workflow name"),
@@ -70,8 +65,6 @@ def setup(
     ] = None,
     force: bool = typer.Option(False, "--force", help="Overwrite generated Auto BM files"),
     yes: bool = typer.Option(False, "--yes", help="Skip confirmation prompts"),
-    local: bool = typer.Option(False, "--local", help="Force local API routing for schema seeding"),
-    cloud: bool = typer.Option(False, "--cloud", help="Force cloud API routing for schema seeding"),
     refresh_schemas: bool = typer.Option(
         False,
         "--refresh-schemas",
@@ -83,13 +76,11 @@ def setup(
 ) -> None:
     """Install the GitHub Actions workflow and seed project update schemas."""
     try:
-        validate_routing_flags(local, cloud)
         repo_root = repo_root.resolve()
         owner, repo = detect_github_repo(repo_root)
         config = ProjectUpdateConfig(
             project=project,
             project_id=project_id,
-            workspace=workspace,
             deploy_workflows=deploy_workflow or ["Deploy Production"],
             production_environments=environment or ["production"],
         )
@@ -108,15 +99,13 @@ def setup(
             preserve_existing=refresh_schemas,
         )
 
-        with force_routing(local=local, cloud=cloud):
-            seeded = run_with_cleanup(
-                seed_project_update_schemas(
-                    project=project,
-                    project_id=project_id,
-                    workspace=workspace,
-                    refresh=refresh_schemas,
-                )
+        seeded = run_with_cleanup(
+            seed_project_update_schemas(
+                project=project,
+                project_id=project_id,
+                refresh=refresh_schemas,
             )
+        )
 
         if wrote_generated_files:
             console.print("[green]Auto BM GitHub workflow installed[/green]")
@@ -131,9 +120,8 @@ def setup(
             console.print(f"{verb} schemas: {', '.join(seeded)}")
         else:
             console.print("Schema notes already exist; nothing seeded")
-        console.print("\nAdd these GitHub secrets before enabling the workflow:")
+        console.print("\nAdd this GitHub secret before enabling the workflow:")
         console.print("- OPENAI_API_KEY")
-        console.print("- BASIC_MEMORY_API_KEY")
     except ValueError as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(1) from exc
@@ -218,14 +206,9 @@ def publish(
         Path,
         typer.Option("--config", help="Auto BM repository config path"),
     ] = Path(DEFAULT_CONFIG_PATH),
-    local: bool = typer.Option(
-        False, "--local", help="Force local API routing (ignore cloud mode)"
-    ),
-    cloud: bool = typer.Option(False, "--cloud", help="Force cloud API routing"),
 ) -> None:
     """Publish an agent synthesis as an idempotent Basic Memory project update."""
     try:
-        validate_routing_flags(local, cloud)
         config = load_project_update_config(config_path)
         context = ProjectUpdateContext.model_validate(_read_json(context_path))
         if not context.eligible:
@@ -235,10 +218,9 @@ def publish(
         synthesis = AgentSynthesis.model_validate(_read_json(synthesis_path))
         note = build_project_update_note(context=context, synthesis=synthesis, config=config)
 
-        with force_routing(local=local, cloud=cloud):
-            result = run_with_cleanup(
-                publish_project_update_note(config=config, context=context, note=note)
-            )
+        result = run_with_cleanup(
+            publish_project_update_note(config=config, context=context, note=note)
+        )
 
         console.print(json.dumps(result, indent=2, sort_keys=True, default=str))
     except (ValueError, ValidationError) as exc:
@@ -250,7 +232,6 @@ async def seed_project_update_schemas(
     *,
     project: str | None,
     project_id: str | None = None,
-    workspace: str | None = None,
     refresh: bool = False,
 ) -> list[str]:
     """Seed Auto BM schema notes without overwriting customized schemas."""
@@ -259,11 +240,10 @@ async def seed_project_update_schemas(
     from basic_memory.mcp.tools import write_note as mcp_write_note
 
     seeded: list[str] = []
-    routed_project = _routed_project(project=project, project_id=project_id, workspace=workspace)
     for spec in schema_seed_specs():
         existing = await mcp_search_notes(
             query=None,
-            project=routed_project,
+            project=project,
             project_id=project_id,
             metadata_filters={"type": "schema", "entity": spec.entity},
             output_format="json",
@@ -283,7 +263,7 @@ async def seed_project_update_schemas(
             title=title,
             content=spec.content,
             directory=directory,
-            project=routed_project,
+            project=project,
             project_id=project_id,
             note_type="schema",
             metadata=spec.metadata,
@@ -305,14 +285,9 @@ async def publish_project_update_note(
     from basic_memory.mcp.tools import search_notes as mcp_search_notes
     from basic_memory.mcp.tools import write_note as mcp_write_note
 
-    routed_project = _routed_project(
-        project=config.project,
-        project_id=config.project_id,
-        workspace=config.workspace,
-    )
     existing = await mcp_search_notes(
         query=None,
-        project=routed_project,
+        project=config.project,
         project_id=config.project_id,
         metadata_filters={"type": "project_update", "idempotency_key": context.idempotency_key},
         output_format="json",
@@ -325,7 +300,7 @@ async def publish_project_update_note(
         title=title,
         content=note.content,
         directory=directory,
-        project=routed_project,
+        project=config.project,
         project_id=config.project_id,
         tags=note.tags,
         note_type="project_update",
@@ -421,18 +396,6 @@ def _write_github_output(key: str, value: str) -> None:
         return
     with Path(output_path).open("a", encoding="utf-8") as handle:
         handle.write(f"{key}={value}\n")
-
-
-def _routed_project(
-    *,
-    project: str | None,
-    project_id: str | None,
-    workspace: str | None,
-) -> str | None:
-    """Return a workspace-qualified project route when the config can enforce one."""
-    if project_id or not project or not workspace or "/" in project:
-        return project
-    return f"{workspace.strip('/')}/{project}"
 
 
 def _search_results(payload: object) -> list[Any]:

@@ -13,6 +13,7 @@ from loguru import logger
 
 from basic_memory import __version__
 from basic_memory import config_logging as _config_logging
+from basic_memory.config_migrations import RETIRED_PROJECT_KEYS, RETIRED_TOP_LEVEL_KEYS
 from basic_memory.config_models import (
     APP_DATABASE_NAME as APP_DATABASE_NAME,
     CONFIG_DIR_MODE as CONFIG_DIR_MODE,
@@ -22,12 +23,10 @@ from basic_memory.config_models import (
     DATA_DIR_NAME as DATA_DIR_NAME,
     WATCH_STATUS_JSON as WATCH_STATUS_JSON,
     BasicMemoryConfig as BasicMemoryConfig,
-    CloudProjectConfig as CloudProjectConfig,
     DatabaseBackend as DatabaseBackend,
     Environment as Environment,
     ProjectConfig as ProjectConfig,
     ProjectEntry as ProjectEntry,
-    ProjectMode as ProjectMode,
     _secure_config_dir,
     _secure_config_file,
     default_fastembed_cache_dir as default_fastembed_cache_dir,
@@ -86,13 +85,10 @@ class ConfigManager:
         if self.config_file.exists():
             try:
                 file_data = json.loads(self.config_file.read_text(encoding="utf-8"))
-                stale_keys = {
-                    "default_project_mode",
-                    "project_modes",
-                    "cloud_projects",
-                    "cloud_mode",
-                }
-                needs_resave = bool(stale_keys & file_data.keys())
+                # Resaving rewrites config.json in the current shape. It is
+                # triggered by anything the before-validators will strip or
+                # rewrite, so the on-disk file stops carrying retired keys.
+                needs_resave = bool(RETIRED_TOP_LEVEL_KEYS & file_data.keys())
 
                 projects_raw = file_data.get("projects", {})
                 if projects_raw:
@@ -102,12 +98,11 @@ class ConfigManager:
 
                 if not needs_resave:
                     for entry_data in projects_raw.values():
-                        if isinstance(entry_data, dict):
-                            local_sync_path = entry_data.get("local_sync_path")
-                            path = entry_data.get("path", "")
-                            if local_sync_path and not os.path.isabs(path):
-                                needs_resave = True
-                                break
+                        if isinstance(entry_data, dict) and (
+                            RETIRED_PROJECT_KEYS & entry_data.keys()
+                        ):
+                            needs_resave = True
+                            break
 
                 merged_data = file_data.copy()
                 for field_name in BasicMemoryConfig.model_fields:
@@ -238,16 +233,6 @@ def get_project_config(project_name: Optional[str] = None) -> ProjectConfig:
     raise ValueError(f"Project '{actual_project_name}' not found")  # pragma: no cover
 
 
-def has_cloud_credentials(config: BasicMemoryConfig) -> bool:
-    """Return whether API-key or OAuth cloud credentials are available."""
-    if config.cloud_api_key:
-        return True
-    from basic_memory.cli.auth import CLIAuth
-
-    auth = CLIAuth(client_id=config.cloud_client_id, authkit_domain=config.cloud_domain)
-    return auth.load_tokens() is not None
-
-
 def save_basic_memory_config(file_path: Path, config: BasicMemoryConfig) -> None:
     """Atomically save configuration so concurrent readers see complete JSON."""
     try:
@@ -295,12 +280,10 @@ def init_mcp_logging() -> None:
 
 
 def init_api_logging() -> None:
-    """Initialize local file logging or structured Cloud stderr logging."""
+    """Initialize API file logging without writing to stdout."""
     log_level = os.getenv("BASIC_MEMORY_LOG_LEVEL", "INFO")
     _configure_logfire_for_entrypoint("api")
-    cloud_mode = os.getenv("BASIC_MEMORY_CLOUD_MODE", "").lower() in ("1", "true")
-    _config_logging.initialize_api_logging(
+    _config_logging.initialize_file_logging(
         log_level=log_level,
-        cloud_mode=cloud_mode,
         setup_logging=setup_logging,
     )

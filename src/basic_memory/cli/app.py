@@ -10,7 +10,6 @@ import typer  # noqa: E402
 
 from basic_memory.cli.auto_update import maybe_run_periodic_auto_update  # noqa: E402
 from basic_memory.cli.container import CliContainer, set_container  # noqa: E402
-from basic_memory.cli.promo import maybe_show_cloud_promo, maybe_show_init_line  # noqa: E402
 from basic_memory.config import init_cli_logging  # noqa: E402
 import logfire  # noqa: E402
 
@@ -50,7 +49,7 @@ def app_callback(
     # Trigger: a `brief` invocation — the session-start hook's front door.
     # Why: two constraints the normal path violates. (1) `brief` writes markdown to
     # stdout that a harness splices straight into an agent's context, so the
-    # promo/init-line/auto-update messaging below must not run — it would land
+    # auto-update messaging below must not run — it would land
     # mid-brief. (2) Everything here — logging setup (Logfire loads config), the
     # span, the container — can raise SystemExit on a malformed config
     # (ConfigManager reports bad JSON that way), and a broken config must degrade
@@ -104,16 +103,10 @@ def app_callback(
 
     maybe_install_uvloop(container.config)
 
-    # Trigger: first-run init confirmation before command output.
-    # Why: informational "initialized" message belongs above command results, not in the upsell panel.
-    # Outcome: one-time plain line printed before the subcommand runs.
-    maybe_show_init_line(ctx.invoked_subcommand)
-
     # Trigger: register post-command messaging callbacks.
-    # Why: informational/promo/update output belongs below command results.
+    # Why: update notices belong below command results.
     # Outcome: command output remains primary, with optional follow-up notices afterwards.
     def _post_command_messages() -> None:
-        maybe_show_cloud_promo(ctx.invoked_subcommand)
         maybe_run_periodic_auto_update(ctx.invoked_subcommand)
 
     ctx.call_on_close(_post_command_messages)
@@ -138,7 +131,6 @@ def app_callback(
         "reindex",
         "update",
         "watch",
-        "workspace",
     }
     if (
         not version
@@ -157,9 +149,3 @@ app.add_typer(import_app, name="import")
 
 claude_app = typer.Typer(help="Import Conversations from Claude JSON export.")
 import_app.add_typer(claude_app, name="claude")
-
-
-## cloud
-
-cloud_app = typer.Typer(help="Access Basic Memory Cloud")
-app.add_typer(cloud_app, name="cloud")

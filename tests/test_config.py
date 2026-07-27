@@ -11,7 +11,6 @@ from basic_memory.config import (
     BasicMemoryConfig,
     ConfigManager,
     ProjectEntry,
-    ProjectMode,
     default_fastembed_cache_dir,
     resolve_data_dir,
 )
@@ -177,68 +176,28 @@ class TestBasicMemoryConfig:
         assert Path(config.projects["other"].path) == other_path
         assert config.default_project == "other"
 
-    def test_model_post_init_seeds_default_for_local_postgres(self, config_home, monkeypatch):
-        """A LOCAL Postgres backend still seeds a default project, like SQLite.
+    def test_model_post_init_seeds_default_for_postgres(self, config_home, monkeypatch):
+        """A Postgres backend seeds a default project exactly like SQLite.
 
-        The seeding skip is for stateless/cloud (skip_initialization_sync), not the
-        Postgres backend — otherwise a fresh local Postgres has no default project
-        and create_memory_project raises "No default project configured".
+        Without it a fresh Postgres install has no default project and
+        create_memory_project raises "No default project configured".
         """
         monkeypatch.delenv("BASIC_MEMORY_HOME", raising=False)
-        monkeypatch.delenv("BASIC_MEMORY_CLOUD_MODE", raising=False)
 
         config = BasicMemoryConfig(database_backend="postgres")
 
         assert "main" in config.projects
         assert config.default_project == "main"
 
-    def test_model_post_init_skips_seeding_for_stateless_deployments(
-        self, config_home, monkeypatch
-    ):
-        """Stateless/cloud configs discover projects from the DB, so seed nothing."""
-        monkeypatch.delenv("BASIC_MEMORY_HOME", raising=False)
-
-        config = BasicMemoryConfig(database_backend="postgres", skip_initialization_sync=True)
-
-        assert config.projects == {}
-        assert config.default_project is None
-
-    def test_model_post_init_skips_seeding_in_cloud_mode(self, config_home, monkeypatch):
-        """BASIC_MEMORY_CLOUD_MODE deployments build config via ConfigManager, not
-        for_cloud_tenant, so skip_initialization_sync is false — they must still skip
-        seeding (and reconcile) so cloud startup can't delete tenant project rows."""
-        monkeypatch.delenv("BASIC_MEMORY_HOME", raising=False)
-        monkeypatch.setenv("BASIC_MEMORY_CLOUD_MODE", "1")
-
-        config = BasicMemoryConfig(database_backend="postgres", skip_initialization_sync=False)
-
-        assert config.cloud_mode is True
-        assert config.skip_local_initialization is True
-        assert config.projects == {}
-        assert config.default_project is None
-
-    def test_local_postgres_creates_project_directories(self, config_home, tmp_path):
-        """Local Postgres creates its project directories like SQLite — the
-        ensure_project_paths_exists skip is gated on skip_initialization_sync."""
+    def test_postgres_creates_project_directories(self, config_home, tmp_path):
+        """Postgres creates its project directories like SQLite."""
         proj = tmp_path / "pg-project"
         BasicMemoryConfig(
             database_backend="postgres",
-            skip_initialization_sync=False,
             projects={"main": {"path": str(proj)}},
             default_project="main",
         )
         assert proj.exists()
-
-    def test_stateless_postgres_skips_project_directories(self, config_home, tmp_path):
-        """Stateless/cloud deployments don't touch the local filesystem."""
-        proj = tmp_path / "cloud-project"
-        BasicMemoryConfig(
-            database_backend="postgres",
-            skip_initialization_sync=True,
-            projects={"main": {"path": str(proj)}},
-            default_project="main",
-        )
-        assert not proj.exists()
 
     def test_basic_memory_home_with_relative_path(self, config_home, monkeypatch):
         """Test that BASIC_MEMORY_HOME works with relative paths."""
@@ -678,10 +637,10 @@ class TestConfigManager:
 
     @pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits are not portable to Windows")
     def test_save_config_uses_private_permissions(self, temp_config_manager):
-        """Config can contain cloud credentials, so writes should enforce private modes."""
+        """Config can contain provider API keys, so writes should enforce private modes."""
         config_manager = temp_config_manager
         config = config_manager.load_config()
-        config.cloud_api_key = "bmc_test123"
+        config.semantic_embedding_api_key = "sk-test123"
 
         config_manager.config_dir.chmod(0o777)
         config_manager.config_file.chmod(0o666)
@@ -812,76 +771,6 @@ class TestConfigManager:
         with pytest.raises(ValueError, match="Cannot remove the default project"):
             config_manager.remove_project("main")
 
-    def test_config_project_entry_cloud_sync_defaults(self, temp_config_manager):
-        """Test that ProjectEntry cloud sync fields default to None/False."""
-        config_manager = temp_config_manager
-        config = config_manager.load_config()
-
-        entry = config.projects["main"]
-        assert entry.local_sync_path is None
-        assert entry.bisync_initialized is False
-        assert entry.last_sync is None
-
-    def test_save_and_load_config_with_cloud_sync_fields(self):
-        """Test that config with cloud sync fields can be saved and loaded."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_path = Path(temp_dir)
-
-            config_manager = ConfigManager()
-            config_manager.config_dir = temp_path / "basic-memory"
-            config_manager.config_file = config_manager.config_dir / "config.json"
-            config_manager.config_dir.mkdir(parents=True, exist_ok=True)
-
-            # Create config with cloud sync fields on a project entry
-            now = datetime.now()
-            test_config = BasicMemoryConfig(
-                projects={
-                    "main": {"path": str(temp_path / "main")},
-                    "research": {
-                        "path": str(temp_path / "research"),
-                        "mode": "cloud",
-                        "local_sync_path": str(temp_path / "research-local"),
-                        "last_sync": now.isoformat(),
-                        "bisync_initialized": True,
-                    },
-                },
-            )
-            config_manager.save_config(test_config)
-
-            # Load and verify
-            loaded_config = config_manager.load_config()
-            assert "research" in loaded_config.projects
-            entry = loaded_config.projects["research"]
-            assert entry.local_sync_path == str(temp_path / "research-local")
-            assert entry.bisync_initialized is True
-            assert entry.last_sync == now
-
-    def test_add_cloud_sync_to_existing_project(self):
-        """Test adding cloud sync fields to an existing project entry."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_path = Path(temp_dir)
-
-            config_manager = ConfigManager()
-            config_manager.config_dir = temp_path / "basic-memory"
-            config_manager.config_file = config_manager.config_dir / "config.json"
-            config_manager.config_dir.mkdir(parents=True, exist_ok=True)
-
-            # Create initial config without cloud sync fields
-            initial_config = BasicMemoryConfig(projects={"main": {"path": str(temp_path / "main")}})
-            config_manager.save_config(initial_config)
-
-            # Load, modify, and save
-            config = config_manager.load_config()
-            assert config.projects["main"].local_sync_path is None
-
-            config.projects["main"].local_sync_path = str(temp_path / "work-local")
-            config_manager.save_config(config)
-
-            # Reload and verify persistence
-            reloaded_config = config_manager.load_config()
-            assert reloaded_config.projects["main"].local_sync_path == str(temp_path / "work-local")
-            assert reloaded_config.projects["main"].bisync_initialized is False
-
     def test_backward_compatibility_loading_old_format_config(self):
         """Test that old config files with Dict[str, str] projects can be loaded and migrated."""
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -914,10 +803,9 @@ class TestConfigManager:
             config = config_manager.load_config()
             assert isinstance(config.projects["main"], ProjectEntry)
             assert config.projects["main"].path == str(temp_path / "main")
-            assert config.projects["main"].mode == ProjectMode.LOCAL
 
-    def test_backward_compatibility_migrates_project_modes_and_cloud_projects(self):
-        """Test that old config with project_modes and cloud_projects is migrated."""
+    def test_retired_routing_keys_are_dropped_from_config_file(self):
+        """Old project_modes/cloud_projects blocks are dropped, not translated."""
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
 
@@ -954,11 +842,14 @@ class TestConfigManager:
 
             config = config_manager.load_config()
 
-            # Verify migration
-            assert config.projects["research"].mode == ProjectMode.CLOUD
-            assert config.projects["research"].local_sync_path == str(temp_path / "research-local")
-            assert config.projects["research"].bisync_initialized is True
-            assert config.projects["main"].mode == ProjectMode.LOCAL
+            # The local path recorded in projects wins; the cloud block is gone.
+            assert config.projects["research"].path == str(temp_path / "research")
+            assert config.projects["main"].path == str(temp_path / "main")
+
+            raw = json.loads(config_manager.config_file.read_text(encoding="utf-8"))
+            assert "project_modes" not in raw
+            assert "cloud_projects" not in raw
+            assert set(raw["projects"]["research"]) == {"path"}
 
     def test_legacy_cloud_mode_key_is_stripped_on_normalization_save(self):
         """Legacy cloud_mode should be removed from config.json after load/save normalization."""
@@ -1040,7 +931,7 @@ class TestConfigManager:
             # Write config in the current ProjectEntry format — no migration needed
             current_config_data = {
                 "env": "dev",
-                "projects": {"main": {"path": str(temp_path / "main"), "mode": "local"}},
+                "projects": {"main": {"path": str(temp_path / "main")}},
                 "default_project": "main",
             }
             config_manager.config_file.write_text(json.dumps(current_config_data, indent=2))
@@ -1136,8 +1027,7 @@ class TestPlatformNativePathSeparators:
     def test_add_project_never_creates_directory(self):
         """Test that ConfigManager.add_project() is pure config management — no mkdir.
 
-        Directory creation is delegated to ProjectService via FileService, which
-        supports both local and cloud (S3) backends.
+        Directory creation is delegated to ProjectService via FileService.
         """
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
@@ -1432,40 +1322,8 @@ class TestFormattingConfig:
             assert loaded_config.formatter_timeout == 10.0
 
 
-class TestProjectMode:
-    """Test per-project routing mode configuration."""
-
-    def test_project_mode_defaults(self):
-        """Test that ProjectMode enum has expected values."""
-        assert ProjectMode.LOCAL.value == "local"
-        assert ProjectMode.CLOUD.value == "cloud"
-
-    def test_get_project_mode_defaults_to_cloud(self):
-        """Test that unknown projects default to CLOUD mode.
-
-        Unknown projects are not registered in local config, so they
-        are assumed to be cloud-only projects discovered from the API.
-        """
-        config = BasicMemoryConfig()
-        assert config.get_project_mode("nonexistent") == ProjectMode.CLOUD
-
-    def test_set_project_mode_cloud(self):
-        """Test setting a project to cloud mode."""
-        config = BasicMemoryConfig()
-        config.set_project_mode("research", ProjectMode.CLOUD)
-        assert config.get_project_mode("research") == ProjectMode.CLOUD
-
-    def test_set_project_mode_local_resets_to_default(self):
-        """Test that setting a project back to LOCAL resets the entry's mode."""
-        config = BasicMemoryConfig()
-        # Need a project entry to set mode on
-        config.projects["research"] = ProjectEntry(path="/tmp/research")
-        config.set_project_mode("research", ProjectMode.CLOUD)
-        assert config.projects["research"].mode == ProjectMode.CLOUD
-
-        config.set_project_mode("research", ProjectMode.LOCAL)
-        assert config.projects["research"].mode == ProjectMode.LOCAL
-        assert config.get_project_mode("research") == ProjectMode.LOCAL
+class TestLocalSyncability:
+    """Which configured projects the local watcher is allowed to sync."""
 
     def test_is_locally_syncable_true_for_config_project_with_absolute_path(self, tmp_path):
         """A project in config with an absolute path is locally syncable."""
@@ -1479,9 +1337,9 @@ class TestProjectMode:
         assert config.is_locally_syncable("empty", "") is False
 
     def test_is_locally_syncable_false_for_relative_path(self):
-        """A relative (slug) path, as used by cloud-only projects, is not syncable."""
-        config = BasicMemoryConfig(projects={"cloud": ProjectEntry(path="cloud-slug")})
-        assert config.is_locally_syncable("cloud", "cloud-slug") is False
+        """A relative (slug) path is not a directory we own, so it is not syncable."""
+        config = BasicMemoryConfig(projects={"slug": ProjectEntry(path="bare-slug")})
+        assert config.is_locally_syncable("slug", "bare-slug") is False
 
     def test_is_locally_syncable_false_for_orphan_not_in_config(self, tmp_path):
         """A DB row absent from config is not syncable even with an absolute path.
@@ -1490,143 +1348,6 @@ class TestProjectMode:
         """
         config = BasicMemoryConfig(projects={})
         assert config.is_locally_syncable("orphan", str(tmp_path / "orphan")) is False
-
-    def test_cloud_api_key_defaults_to_none(self):
-        """Test that cloud_api_key defaults to None."""
-        config = BasicMemoryConfig()
-        assert config.cloud_api_key is None
-
-    def test_cloud_api_key_can_be_set(self):
-        """Test that cloud_api_key can be configured."""
-        config = BasicMemoryConfig(cloud_api_key="bmc_test123")
-        assert config.cloud_api_key == "bmc_test123"
-
-    def test_project_mode_round_trip(self):
-        """Test that project mode survives save/load cycle."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_path = Path(temp_dir)
-
-            config_manager = ConfigManager()
-            config_manager.config_dir = temp_path / "basic-memory"
-            config_manager.config_file = config_manager.config_dir / "config.json"
-            config_manager.config_dir.mkdir(parents=True, exist_ok=True)
-
-            # Create config with project mode and cloud_api_key
-            test_config = BasicMemoryConfig(
-                projects={
-                    "main": {"path": str(temp_path / "main")},
-                    "research": {"path": str(temp_path / "research"), "mode": "cloud"},
-                },
-                cloud_api_key="bmc_test123",
-            )
-            config_manager.save_config(test_config)
-
-            # Load and verify
-            loaded = config_manager.load_config()
-            assert loaded.cloud_api_key == "bmc_test123"
-            assert loaded.get_project_mode("research") == ProjectMode.CLOUD
-            assert loaded.get_project_mode("main") == ProjectMode.LOCAL
-
-    def test_backward_compat_loading_old_format_without_project_modes(self):
-        """Test that old config files with Dict[str, str] projects are migrated."""
-        import json
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_path = Path(temp_dir)
-
-            config_manager = ConfigManager()
-            config_manager.config_dir = temp_path / "basic-memory"
-            config_manager.config_file = config_manager.config_dir / "config.json"
-            config_manager.config_dir.mkdir(parents=True, exist_ok=True)
-
-            # Write old-style config with Dict[str, str] projects
-            old_config_data = {
-                "env": "dev",
-                "projects": {"main": str(temp_path / "main")},
-                "default_project": "main",
-                "log_level": "INFO",
-            }
-            config_manager.config_file.write_text(json.dumps(old_config_data, indent=2))
-
-            # Clear config cache
-            import basic_memory.config
-
-            basic_memory.config._CONFIG_CACHE = None
-            basic_memory.config._CONFIG_MTIME = None
-            basic_memory.config._CONFIG_SIZE = None
-
-            # Should load successfully with migration
-            config = config_manager.load_config()
-            assert config.cloud_api_key is None
-            assert config.get_project_mode("main") == ProjectMode.LOCAL
-            assert isinstance(config.projects["main"], ProjectEntry)
-
-    def test_project_list_includes_mode(self, config_home):
-        """Test that project_list property includes mode information."""
-        config = BasicMemoryConfig(
-            projects={
-                "main": {"path": str(config_home / "main")},
-                "research": {"path": str(config_home / "research"), "mode": "cloud"},
-            },
-        )
-
-        project_list = config.project_list
-        modes_by_name = {p.name: p.mode for p in project_list}
-        assert modes_by_name["main"] == ProjectMode.LOCAL
-        assert modes_by_name["research"] == ProjectMode.CLOUD
-
-    def test_workspace_id_defaults_to_none(self):
-        """Test that workspace_id on ProjectEntry defaults to None."""
-        entry = ProjectEntry(path="/tmp/test")
-        assert entry.workspace_id is None
-
-    def test_workspace_id_can_be_set(self):
-        """Test that workspace_id can be configured on ProjectEntry."""
-        entry = ProjectEntry(
-            path="/tmp/test",
-            workspace_id="11111111-1111-1111-1111-111111111111",
-        )
-        assert entry.workspace_id == "11111111-1111-1111-1111-111111111111"
-
-    def test_default_workspace_defaults_to_none(self):
-        """Test that default_workspace on BasicMemoryConfig defaults to None."""
-        config = BasicMemoryConfig()
-        assert config.default_workspace is None
-
-    def test_default_workspace_can_be_set(self):
-        """Test that default_workspace can be configured."""
-        config = BasicMemoryConfig(default_workspace="22222222-2222-2222-2222-222222222222")
-        assert config.default_workspace == "22222222-2222-2222-2222-222222222222"
-
-    def test_workspace_fields_round_trip(self):
-        """Test that workspace fields survive save/load cycle."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_path = Path(temp_dir)
-
-            config_manager = ConfigManager()
-            config_manager.config_dir = temp_path / "basic-memory"
-            config_manager.config_file = config_manager.config_dir / "config.json"
-            config_manager.config_dir.mkdir(parents=True, exist_ok=True)
-
-            test_config = BasicMemoryConfig(
-                projects={
-                    "main": {"path": str(temp_path / "main")},
-                    "research": {
-                        "path": str(temp_path / "research"),
-                        "mode": "cloud",
-                        "workspace_id": "11111111-1111-1111-1111-111111111111",
-                    },
-                },
-                default_workspace="22222222-2222-2222-2222-222222222222",
-            )
-            config_manager.save_config(test_config)
-
-            loaded = config_manager.load_config()
-            assert loaded.default_workspace == "22222222-2222-2222-2222-222222222222"
-            assert (
-                loaded.projects["research"].workspace_id == "11111111-1111-1111-1111-111111111111"
-            )
-            assert loaded.projects["main"].workspace_id is None
 
 
 class TestConfigCacheMtimeInvalidation:
@@ -1688,11 +1409,11 @@ class TestConfigCacheMtimeInvalidation:
 
             # First load populates cache
             config1 = config_manager.load_config()
-            assert config1.get_project_mode("main") == ProjectMode.LOCAL
+            assert "second" not in config1.projects
 
             # Simulate external process modifying the config file
             config_data = json.loads(config_manager.config_file.read_text())
-            config_data["projects"]["main"]["mode"] = "cloud"
+            config_data["projects"]["second"] = {"path": str(temp_path / "second")}
 
             # Ensure mtime actually changes (some filesystems have 1s granularity)
             time.sleep(0.05)
@@ -1703,7 +1424,7 @@ class TestConfigCacheMtimeInvalidation:
 
             # Next load should detect mtime change and re-read
             config2 = config_manager.load_config()
-            assert config2.get_project_mode("main") == ProjectMode.CLOUD
+            assert "second" in config2.projects
             assert config1 is not config2
 
     def test_save_config_resets_mtime(self, config_home):
@@ -1739,69 +1460,88 @@ class TestConfigCacheMtimeInvalidation:
             assert basic_memory.config._CONFIG_SIZE is None
 
 
-class TestLocalSyncPathMigration:
-    """Test migration that promotes local_sync_path into path for cloud projects."""
+class TestRetiredKeyMigration:
+    """The retired cloud/routing keys are dropped, never translated."""
 
-    def test_migrate_promotes_local_sync_path_to_path(self):
-        """When path is a cloud slug and local_sync_path is set, path becomes local_sync_path."""
-        data = {
-            "projects": {
-                "specs": {
-                    "path": "specs",
-                    "mode": "cloud",
-                    "local_sync_path": "/Users/test/Documents/specs",
-                }
-            }
-        }
-        result = _migrate_legacy_projects(data)
-        assert result["projects"]["specs"]["path"] == "/Users/test/Documents/specs"
-
-    def test_migrate_does_not_overwrite_absolute_path(self):
-        """When path is already absolute, migration should not change it."""
+    def test_retired_project_keys_are_removed_from_entries(self):
+        """Every retired per-project key disappears, leaving only path."""
         data = {
             "projects": {
                 "specs": {
                     "path": "/Users/test/Documents/specs",
                     "mode": "cloud",
+                    "workspace_id": "tenant-1",
                     "local_sync_path": "/Users/test/Documents/specs",
+                    "cloud_sync_path": "/specs",
+                    "bisync_initialized": True,
+                    "last_sync": "2026-02-06T17:36:38",
                 }
             }
+        }
+        result = _migrate_legacy_projects(data)
+        assert result["projects"]["specs"] == {"path": "/Users/test/Documents/specs"}
+
+    def test_retired_top_level_keys_are_removed(self):
+        """default_project_mode, cloud_mode, project_modes, cloud_projects all go."""
+        data = {
+            "default_project": "main",
+            "default_project_mode": "cloud",
+            "cloud_mode": True,
+            "project_modes": {"specs": "cloud"},
+            "cloud_projects": {},
+            "projects": {"main": {"path": "/tmp/main"}},
+        }
+        result = _migrate_legacy_projects(data)
+        assert result == {
+            "default_project": "main",
+            "projects": {"main": {"path": "/tmp/main"}},
+        }
+
+    def test_legacy_cloud_local_path_is_promoted_over_a_slug_path(self):
+        """A remote-only entry recorded a slug in path and the real directory in
+        cloud_projects.local_path — only the directory survives the strip."""
+        data = {
+            "projects": {"specs": {"path": "specs", "mode": "cloud"}},
+            "cloud_projects": {"specs": {"local_path": "/Users/test/Documents/specs"}},
+        }
+        result = _migrate_legacy_projects(data)
+        assert result["projects"]["specs"] == {"path": "/Users/test/Documents/specs"}
+
+    def test_absolute_path_is_never_overwritten_by_legacy_local_path(self):
+        """An absolute path is already the real directory, so it wins."""
+        data = {
+            "projects": {"specs": {"path": "/Users/test/Documents/specs"}},
+            "cloud_projects": {"specs": {"local_path": "/somewhere/else"}},
         }
         result = _migrate_legacy_projects(data)
         assert result["projects"]["specs"]["path"] == "/Users/test/Documents/specs"
 
-    def test_migrate_skips_entries_without_local_sync_path(self):
-        """Entries without local_sync_path should not be modified."""
-        data = {
-            "projects": {
-                "cloud-only": {
-                    "path": "cloud-only",
-                    "mode": "cloud",
-                }
-            }
-        }
+    def test_slug_path_without_legacy_entry_is_left_alone(self):
+        """Nothing to promote means the entry keeps whatever path it had."""
+        data = {"projects": {"orphan": {"path": "orphan", "mode": "cloud"}}}
         result = _migrate_legacy_projects(data)
-        assert result["projects"]["cloud-only"]["path"] == "cloud-only"
+        assert result["projects"]["orphan"] == {"path": "orphan"}
 
-    def test_migrate_handles_mixed_projects(self, tmp_path):
-        """Migration handles a mix of local, cloud-only, and cloud-with-bisync projects."""
+    def test_string_projects_are_wrapped_before_keys_are_dropped(self, tmp_path):
+        """The oldest format (name -> path string) still migrates in one pass."""
         local_path = str(tmp_path / "local")
-        bisync_path = str(tmp_path / "bisync")
         data = {
-            "projects": {
-                "local-proj": {"path": local_path, "mode": "local"},
-                "cloud-only": {"path": "cloud-only", "mode": "cloud"},
-                "cloud-bisync": {
-                    "path": "cloud-bisync",
-                    "mode": "cloud",
-                    "local_sync_path": bisync_path,
-                },
-            }
+            "projects": {"local-proj": local_path, "slug-proj": "slug-proj"},
+            "project_modes": {"slug-proj": "cloud"},
+            "cloud_projects": {"slug-proj": {"local_path": str(tmp_path / "promoted")}},
         }
         result = _migrate_legacy_projects(data)
-        assert result["projects"]["local-proj"]["path"] == local_path
-        assert result["projects"]["cloud-only"]["path"] == "cloud-only"
-        assert result["projects"]["cloud-bisync"]["path"] == bisync_path
+        assert result["projects"]["local-proj"] == {"path": local_path}
+        assert result["projects"]["slug-proj"] == {"path": str(tmp_path / "promoted")}
+        assert "project_modes" not in result
+
+    def test_non_dict_input_passes_through(self):
+        """Anything that is not a config mapping is returned untouched."""
+        assert _migrate_legacy_projects("not-a-dict") == "not-a-dict"
+
+    def test_empty_projects_returns_data_unchanged(self):
+        """No projects means there is nothing to normalize below the top level."""
+        assert _migrate_legacy_projects({"projects": {}}) == {"projects": {}}
 
 
 class TestAutoUpdateConfig:

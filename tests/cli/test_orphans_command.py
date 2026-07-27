@@ -1,7 +1,7 @@
 """Tests for the 'basic-memory orphans' CLI command."""
 
 import json
-from contextlib import asynccontextmanager, nullcontext
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from mcp.server.fastmcp.exceptions import ToolError
@@ -45,19 +45,6 @@ async def _fake_get_client(project_name=None):
     yield MagicMock()
 
 
-@patch("basic_memory.cli.commands.orphans.run_orphans", new_callable=AsyncMock)
-@patch("basic_memory.cli.commands.orphans.force_routing")
-def test_orphans_preserves_project_routing_by_default(mock_force_routing, mock_run_orphans):
-    """Default invocation keeps routing implicit so project mode can choose local/cloud."""
-    mock_force_routing.return_value = nullcontext()
-    mock_run_orphans.return_value = ("test-project", [])
-
-    result = runner.invoke(cli_app, ["orphans"])
-
-    assert result.exit_code == 0, f"CLI failed: {result.output}"
-    mock_force_routing.assert_called_once_with(local=False, cloud=False)
-
-
 @patch("basic_memory.cli.commands.orphans.ConfigManager")
 @patch("basic_memory.cli.commands.orphans.get_active_project", new_callable=AsyncMock)
 @patch("basic_memory.cli.commands.orphans.get_client")
@@ -78,7 +65,9 @@ def test_orphans_json_output(mock_knowledge_cls, mock_get_client, mock_get_activ
     data = json.loads(result.output[json_start:])
     titles = {entity["title"] for entity in data}
     assert titles == {"Isolated Note", "Dangling Spec"}
-    mock_get_client.assert_called_once_with(project_name="test-project")
+    mock_get_client.assert_called_once_with()
+    # No --project was passed, so the command must resolve the configured default.
+    assert mock_get_active.await_args.args[1] == "test-project"
 
 
 @patch("basic_memory.cli.commands.orphans.ConfigManager")
@@ -124,10 +113,8 @@ def test_orphans_no_results(mock_knowledge_cls, mock_get_client, mock_get_active
 
 
 @patch("basic_memory.cli.commands.orphans.run_orphans", new_callable=AsyncMock)
-@patch("basic_memory.cli.commands.orphans.force_routing")
-def test_orphans_value_error(mock_force_routing, mock_run_orphans):
+def test_orphans_value_error(mock_run_orphans):
     """User-facing command errors are printed and exit with failure."""
-    mock_force_routing.return_value = nullcontext()
     mock_run_orphans.side_effect = ValueError("project not found")
 
     result = runner.invoke(cli_app, ["orphans"])
@@ -137,14 +124,12 @@ def test_orphans_value_error(mock_force_routing, mock_run_orphans):
 
 
 @patch("basic_memory.cli.commands.orphans.run_orphans", new_callable=AsyncMock)
-@patch("basic_memory.cli.commands.orphans.force_routing")
-def test_orphans_tool_error_json_output(mock_force_routing, mock_run_orphans):
+def test_orphans_tool_error_json_output(mock_run_orphans):
     """User-facing command errors are JSON formatted when requested."""
-    mock_force_routing.return_value = nullcontext()
-    mock_run_orphans.side_effect = ToolError("cloud request failed")
+    mock_run_orphans.side_effect = ToolError("orphan lookup failed")
 
     result = runner.invoke(cli_app, ["orphans", "--json"])
 
     assert result.exit_code == 1
     json_start = result.output.rfind("{\n")
-    assert json.loads(result.output[json_start:]) == {"error": "cloud request failed"}
+    assert json.loads(result.output[json_start:]) == {"error": "orphan lookup failed"}

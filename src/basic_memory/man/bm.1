@@ -20,8 +20,8 @@ Notes use semantic markdown: observations
 .RB ( "\- [category] text #tag" )
 and relations
 .RB ( "\- relation_type [[Target]]" )
-become queryable graph structure. Projects route independently to the
-local API or to Basic Memory Cloud.
+become queryable graph structure. Everything runs locally; no network
+service is involved.
 .SH COMMANDS
 Knowledge operations:
 .TP
@@ -48,23 +48,18 @@ Run configured formatters over note files.
 Projects and schemas:
 .TP
 .B bm project
-Add, remove, list projects; set the default; flip a project between local
-and cloud routing.
+Add, remove, list, and move projects; set the default.
 .TP
 .B bm schema
 List, validate, infer, and drift-check Picoschema note-type contracts.
 .PP
-Data and cloud:
+Data:
 .TP
 .B bm import
 Import from ChatGPT, Claude, or memory.json exports. Imports write files;
 run
 .B bm reindex
 afterwards.
-.TP
-.B bm cloud
-Authenticate, sync (push/pull/sync/bisync), snapshots, and team workspace
-administration.
 .PP
 Infrastructure:
 .TP
@@ -81,9 +76,7 @@ Drop and recreate the database (destructive).
 Most commands accept
 .B \-\-project
 .I NAME
-to target a project and
-.BR \-\-local / \-\-cloud
-to override routing.
+to target a project.
 .SH EXAMPLES
 Write and find a note from the shell:
 .PP
@@ -106,14 +99,11 @@ bm reindex           # runs project indexing
 .SH FILES
 .TP
 .I ~/.basic-memory/config.json
-Projects, default project, per-project routing modes, cloud settings.
+Projects, default project, and global settings.
 .TP
 .I ~/.basic-memory/memory.db
 SQLite index (derived; safe to rebuild with bm reindex).
 .SH ENVIRONMENT
-.TP
-.B BASIC_MEMORY_FORCE_LOCAL
-Force local routing regardless of cloud mode.
 .TP
 .B BASIC_MEMORY_LOG_LEVEL
 Logging verbosity (e.g. DEBUG).

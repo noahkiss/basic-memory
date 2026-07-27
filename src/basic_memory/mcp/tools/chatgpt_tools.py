@@ -245,8 +245,7 @@ async def fetch(
     logger.info(f"ChatGPT fetch request: id='{id}'")
 
     try:
-        # Let read_note resolve the default project via get_project_client(),
-        # which works in both local mode (ConfigManager) and cloud mode (database).
+        # Let read_note resolve the default project via get_project_client().
         content = str(
             await read_note(
                 identifier=_identifier_for_read_note(id),

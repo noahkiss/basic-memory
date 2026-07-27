@@ -115,36 +115,9 @@ Full benchmark suite in `test-int/semantic/` covering 5 backend×provider combin
 - Rich CLI viewer: `just semantic-report`
 - JSON artifact output: `just test-semantic-report`
 
-Key finding: **FastEmbed (384-d local ONNX) matches or exceeds OpenAI (1536-d) quality at 30x lower latency.** Recommending FastEmbed as default for both local and cloud deployments.
+Key finding: **FastEmbed (384-d local ONNX) matches or exceeds OpenAI (1536-d) quality at 30x lower latency.** Recommending FastEmbed as the default.
 
-### 3) Per-Project Local/Cloud Routing + API Key Auth (`d84708c`, `ed94877`, `312662f`) — DONE
-
-### Acceptance criteria
-
-- Project mode (`local`/`cloud`) persists and displays correctly.
-- Routing selects ASGI for local projects and HTTP+Bearer for cloud projects.
-- Cloud project without key fails with explicit remediation (`cloud set-key`/`cloud create-key`).
-- Resolution precedence is correct (factory > force-local > per-project cloud > global fallback > local).
-- Watch/sync only run for local projects.
-
-### Existing coverage anchor points
-
-- `tests/mcp/test_async_client_modes.py`
-- `tests/cli/test_project_set_cloud_local.py`
-- `tests/mcp/test_project_context.py`
-- `tests/test_project_resolver.py`
-- `tests/sync/test_watch_service_reload.py`
-
-### Gaps to close — DONE
-
-- ~~Cloud routing branch gaps in `src/basic_memory/mcp/async_client.py`~~ — expanded `tests/mcp/test_async_client_modes.py`
-
-### Planned additions — DONE
-
-- ~~Add branch-focused tests for all unresolved routing branches in `get_client()`.~~ **DONE**
-- Add MCP integration scenario with mixed local/cloud project config — deferred to backlog item 4.
-
-### 4) Project-Prefixed Permalinks + Memory URL Routing (`545804f`) — DONE
+### 3) Project-Prefixed Permalinks + Memory URL Routing (`545804f`) — DONE
 
 ### Acceptance criteria
 
@@ -169,7 +142,7 @@ Key finding: **FastEmbed (384-d local ONNX) matches or exceeds OpenAI (1536-d) q
 
 - ~~Add one integration test with colliding titles across two projects and assert URL routing invariants.~~ **DONE** — `test-int/mcp/test_permalink_collision_integration.py` (2 tests: collision across projects + memory:// URL routing with project prefix)
 
-### 5) MCP UI Variants + TUI Output (`8bc03d1`) — DONE
+### 4) MCP UI Variants + TUI Output (`8bc03d1`) — DONE
 
 ### Acceptance criteria
 
@@ -193,13 +166,12 @@ Key finding: **FastEmbed (384-d local ONNX) matches or exceeds OpenAI (1536-d) q
 - ~~Add unit tests for UI SDK metadata generation and template selection branches.~~ **DONE** — 31 tests
 - ~~Add integration assertion for variant-specific resource URIs and metadata payload shape.~~ **DONE**
 
-### 6) Watch Command (`8df88e4`) — DONE
+### 5) Watch Command (`8df88e4`) — DONE
 
 ### Acceptance criteria
 
 - `basic-memory watch` starts and processes create/update/delete events.
 - Watch restart/reload path does not duplicate watchers.
-- Cloud-mode projects are excluded from active watcher set.
 
 ### Existing coverage anchor points
 
@@ -211,7 +183,7 @@ Key finding: **FastEmbed (384-d local ONNX) matches or exceeds OpenAI (1536-d) q
 
 - ~~Add one stress-style integration test for rapid file changes and watcher stability.~~ **DONE** — `tests/sync/test_watch_service_stress.py` (3 tests: 50-file batch, mixed add/modify/delete batch, rapid modifications to same file)
 
-### 7) CLI JSON Output (`a47c9c0`) — DONE
+### 6) CLI JSON Output (`a47c9c0`) — DONE
 
 ### Acceptance criteria
 
@@ -228,7 +200,7 @@ Key finding: **FastEmbed (384-d local ONNX) matches or exceeds OpenAI (1536-d) q
 
 - ~~Add one failure-path integration test per high-use tool command.~~ **DONE** — `test-int/cli/test_cli_tool_json_failure_integration.py` (4 tests: read-note not found, write-note missing content, write→read roundtrip, recent-activity empty project)
 
-### 8) Search/Edit and Metadata Fixes (`530cbac`, `f1d50c2`, `8838571`, `009e849`) — DONE
+### 7) Search/Edit and Metadata Fixes (`530cbac`, `f1d50c2`, `8838571`, `009e849`) — DONE
 
 ### Acceptance criteria
 
@@ -246,7 +218,7 @@ Key finding: **FastEmbed (384-d local ONNX) matches or exceeds OpenAI (1536-d) q
 
 - ~~Add Postgres-specific metadata filter edge-case tests to mirror SQLite assertions exactly.~~ **DONE** — `tests/repository/test_metadata_filters_edge_cases.py` (6 tests: missing field, AND logic, contains single-element array, nested path missing intermediate, $gte/$lte boundaries, $between inclusive — all pass on both SQLite and Postgres)
 
-### 9) Compatibility and Hotfix Regression Pack (`c46d7a6`, `a0e754b`, `343a6e1`, `24ca5f6`, `e3ced49`, `8489a3d`, `b609c4e`, `f6e0a5b`, `7624a20`)
+### 8) Compatibility and Hotfix Regression Pack (`c46d7a6`, `a0e754b`, `343a6e1`, `24ca5f6`, `e3ced49`, `8489a3d`, `b609c4e`, `f6e0a5b`, `7624a20`)
 
 ### Acceptance criteria
 
@@ -254,7 +226,6 @@ Key finding: **FastEmbed (384-d local ONNX) matches or exceeds OpenAI (1536-d) q
 - Entity creation conflicts map to conflict status (not 500).
 - `recent_activity` prompt defaults are correct.
 - No spurious `metadata: {}` in serialized frontmatter.
-- Tigris/rclone uses global consistency headers for all transaction types.
 - `bm --version` fast path avoids heavy import path and remains responsive.
 - Default SQLite DB path is isolated by config dir.
 
@@ -284,8 +255,6 @@ Run after automated tests pass.
 - Schema: verify error and success payloads match acceptance criteria.
 - Semantic search: call `search_notes` with `search_type=text|vector|hybrid`.
 - Semantic search: verify ranking relevance on semantic fixture queries.
-- Routing: call tools with explicit project on mixed local/cloud setup.
-- Routing: verify success/failure paths with and without API key.
 - Permalink routing: read/write/search notes across projects with colliding titles.
 - Permalink routing: verify memory URL routing correctness.
 - UI/TUI: call `search_notes` and `read_note` with UI variants and `output_format=text|json`.
@@ -296,7 +265,7 @@ Run after automated tests pass.
 1. ~~Fill schema MCP/client/router coverage gaps.~~ **DONE** — 18 tests in `test_tool_schema.py` + `test_client_schema.py`
 2. ~~Fill semantic search MCP + Postgres repository gaps.~~ **DONE** — 20 tests in `test_postgres_search_repository_unit.py` + `test_tool_search.py`
 3. ~~Add compatibility regression tests (migration, version fast path, and temporary legacy routes).~~ **DONE** — the legacy-route tests were later retired with those routes.
-4. ~~Add feature-level integration tests (permalinks, watch, CLI JSON, metadata filters).~~ **DONE** — 15 tests across 4 files (see items 4, 6, 7, 8 above)
+4. ~~Add feature-level integration tests (permalinks, watch, CLI JSON, metadata filters).~~ **DONE** — 15 tests across 4 files (see items 3, 5, 6, 7 above)
 5. ~~Expand UI SDK and template branch tests.~~ **DONE** — 31 tests in `test_ui_templates.py` + `test_ui_sdk.py` + `test_ui_resources.py`
 6. ~~Run full gate and capture results in a short release readiness summary.~~ **DONE** — see results below
 

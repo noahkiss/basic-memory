@@ -6,8 +6,8 @@ and MCP surfaces stay in sync.
 
 ## Design Center
 
-- Basic Memory is local-first. In local flows, Markdown files are the durable source and
-  SQLite/Postgres indexes are derived state. DB-first and cloud-style writes may record the exact
+- Basic Memory is local-first. In file-first flows, Markdown files are the durable source and
+  SQLite/Postgres indexes are derived state. DB-first writes may record the exact
   accepted Markdown in `NoteContent` before materializing the file. Follow
   [DOMAIN_MODEL.md](DOMAIN_MODEL.md) for the authority and projection rules in each phase.
 - Keep the existing boundary order: CLI/MCP/API entrypoints compose dependencies, services own
@@ -95,7 +95,7 @@ and MCP surfaces stay in sync.
 
 ## Comments And Names
 
-- Name values after the domain concept they carry: project, entity, permalink, tenant, route,
+- Name values after the domain concept they carry: project, entity, permalink, route,
   checksum, observation, relation, batch, or index state.
 - Comments should say why a branch, invariant, retry, lifecycle, or compatibility constraint
   exists. Section headers are useful when a function or file has clear phases.

@@ -12,7 +12,6 @@ import typer
 
 from basic_memory.cli.app import app
 from basic_memory.cli.commands.command_utils import run_with_cleanup
-from basic_memory.cli.commands.routing import force_routing, validate_routing_flags
 from basic_memory.mcp.async_client import get_client
 from basic_memory.mcp.clients import KnowledgeClient, ProjectClient, SearchClient
 from basic_memory.schemas.base import Entity
@@ -196,23 +195,13 @@ async def run_doctor() -> None:
 
 
 @app.command()
-def doctor(
-    local: bool = typer.Option(
-        False, "--local", help="Force local API routing (ignore cloud mode)"
-    ),
-    cloud: bool = typer.Option(False, "--cloud", help="Force cloud API routing"),
-) -> None:
+def doctor() -> None:
     """Run local consistency checks to verify file/database indexing."""
     # Deferred: ToolError lives in the mcp SDK, which must not load at CLI startup (#886).
     from mcp.server.fastmcp.exceptions import ToolError
 
     try:
-        validate_routing_flags(local, cloud)
-        # Doctor runs local filesystem checks — always default to local routing
-        if not local and not cloud:
-            local = True
-        with force_routing(local=local, cloud=cloud):
-            run_with_cleanup(run_doctor())
+        run_with_cleanup(run_doctor())
     except (ToolError, ValueError) as e:
         # str() of a message-less exception (e.g. httpx.ReadTimeout) is empty;
         # fall back to repr so the failure line always names the error (#1027).

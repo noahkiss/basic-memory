@@ -2,10 +2,7 @@
 
 ## Why
 
-We want Logfire in Basic Memory for two specific use cases:
-
-1. Local development and performance investigation
-2. Cloud deployments where Basic Memory runs inside Basic Memory Cloud
+We want Logfire in Basic Memory for local development and performance investigation.
 
 This instrumentation must be:
 
@@ -57,7 +54,7 @@ Span names should describe the operation class, not the specific input.
 Good:
 
 - `mcp.tool.write_note`
-- `sync.project.scan`
+- `change_detector.detect_moves`
 - `search.execute`
 - `routing.resolve_project`
 
@@ -100,7 +97,6 @@ Do not attach large or highly variable values everywhere:
 Prefer compact, queryable attributes:
 
 - `project_name`
-- `workspace_id`
 - `route_mode`
 - `scan_type`
 - `file_count`
@@ -153,7 +149,6 @@ Bind only the fields that help correlate work across the system:
 - `service_name`
 - `entrypoint`
 - `project_name`
-- `workspace_id`
 - `route_mode`
 - `tool_name`
 - `command_name`
@@ -173,13 +168,13 @@ Each user-visible or system-visible operation should get one root span.
 Examples:
 
 - `cli.command.status`
-- `cli.command.project_sync`
+- `cli.command.project`
 - `api.request.search`
 - `mcp.tool.write_note`
 - `mcp.tool.read_note`
 - `mcp.tool.search_notes`
-- `sync.project.run`
-- `db.semantic_backfill`
+- `api.lifecycle.startup`
+- `mcp.lifecycle.startup`
 
 ### Child spans
 
@@ -189,19 +184,17 @@ Examples:
 
 - `routing.client_session`
 - `routing.resolve_project`
-- `routing.resolve_workspace`
-- `api.search.execute`
-- `sync.project.scan`
-- `sync.project.detect_moves`
-- `sync.project.apply_changes`
-- `sync.project.resolve_relations`
-- `sync.project.sync_embeddings`
-- `sync.file.markdown`
-- `sync.file.regular`
+- `routing.validate_project`
+- `routing.resolve_memory_url`
+- `api.search.search.execute_query`
+- `change_detector.detect_all_changes`
+- `change_detector.detect_moves`
+- `change_detector.detect_deletes`
+- `index.markdown_file.persist`
+- `indexing.relation.resolve_conflicts`
+- `basic_memory.vector_sync.batch`
 - `search.execute`
 - `search.relaxed_fts_retry`
-- `db.init`
-- `db.migrate`
 
 ### Span naming rules
 
@@ -220,8 +213,7 @@ Every root span should have a small common set:
 - `service_name`
 - `entrypoint`
 - `project_name` when applicable
-- `workspace_id` when applicable
-- `route_mode` with values like `local_asgi`, `cloud_proxy`, `factory`
+- `route_mode` (`local_asgi` — every request is served in-process)
 
 ### Operation-specific attributes
 
@@ -285,14 +277,14 @@ Why:
 
 Instrument:
 
-- client routing decisions
-- workspace resolution
+- client session setup
 - project resolution
+- memory:// URL project routing
 - default-project fallback
 
 Why:
 
-- Basic Memory has local/cloud/per-project routing logic
+- project resolution has several fallback paths (explicit, cached, config default, API discovery)
 - when something is slow or surprising, we need to know which path was taken
 
 ### 3. Sync and indexing
@@ -314,7 +306,6 @@ Instrument:
 Why:
 
 - this is where performance work will happen
-- cloud and local both benefit from this visibility
 
 ### 4. Search
 
@@ -368,7 +359,7 @@ This gives immediate value with low noise.
 Add:
 
 - root spans for CLI, API, MCP, and main MCP tools
-- stable root attributes for project, workspace, route mode, and operation type
+- stable root attributes for project, route mode, and operation type
 
 This gives us clean top-level traces that match how users think about the product.
 
@@ -389,7 +380,7 @@ Add selective deeper spans/log enrichment for:
 - sync failures
 - relation resolution failures
 - slow file operations
-- cloud routing/auth failures
+- project routing failures
 
 This keeps normal traces clean while improving debuggability.
 
@@ -452,7 +443,7 @@ You should see a small set of comparable root spans rather than a framework-gene
 - `mcp.tool.edit_note`
 - `mcp.tool.build_context`
 - `mcp.tool.search_notes`
-- `sync.project.run`
+- `change_detector.detect_all_changes`
 
 You should also see correlated logs under those traces with stable fields like:
 
@@ -476,7 +467,7 @@ We should consider the integration successful when the following are true:
 1. With telemetry disabled, Basic Memory behaves exactly as it does today.
 2. With telemetry enabled, one user action produces one obvious root span.
 3. Logs emitted during that action are visible inside the same trace.
-4. A search in Logfire for `mcp.tool.write_note` or `sync.project.run` returns comparable spans across runs.
+4. A search in Logfire for `mcp.tool.write_note` or `change_detector.detect_all_changes` returns comparable spans across runs.
 5. Trace views show phase timing clearly without drowning in framework noise.
 6. Sensitive payloads are not captured by default.
 

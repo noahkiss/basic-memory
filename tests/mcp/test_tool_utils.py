@@ -15,11 +15,6 @@ from basic_memory.mcp.tools.utils import (
     call_put,
     get_error_message,
 )
-from basic_memory.workspace_context import (
-    WORKSPACE_SLUG_HEADER,
-    WORKSPACE_TYPE_HEADER,
-    workspace_permalink_context,
-)
 
 
 @pytest.fixture
@@ -175,26 +170,6 @@ async def test_call_get_with_params(mock_response):
     method, _args, kwargs = client.calls[0]
     assert method == "get"
     assert kwargs["params"] == params
-
-
-@pytest.mark.asyncio
-async def test_call_post_adds_workspace_permalink_headers_at_request_time(mock_response):
-    client = _Client()
-    client.set_response("post", mock_response())
-
-    with workspace_permalink_context("team-paul", "organization"):
-        await call_post(
-            _client(client),
-            "http://test.com",
-            headers={"X-Existing": "value"},
-        )
-
-    assert len(client.calls) == 1
-    _, _args, kwargs = client.calls[0]
-    request_headers = kwargs["headers"]
-    assert request_headers["X-Existing"] == "value"
-    assert request_headers[WORKSPACE_SLUG_HEADER] == "team-paul"
-    assert request_headers[WORKSPACE_TYPE_HEADER] == "organization"
 
 
 _ALL_CALL_HELPERS = [

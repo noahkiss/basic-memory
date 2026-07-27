@@ -9,8 +9,6 @@ import logfire
 import pytest
 
 from basic_memory.config import ProjectEntry
-from basic_memory.schemas.cloud import WorkspaceInfo
-from tests.mcp.conftest import ContextState, ctx
 
 project_context = importlib.import_module("basic_memory.mcp.project_context")
 
@@ -24,36 +22,6 @@ def _capture_spans():
         yield
 
     return spans, fake_span
-
-
-@pytest.mark.asyncio
-async def test_resolve_workspace_parameter_emits_routing_span(monkeypatch) -> None:
-    spans, fake_span = _capture_spans()
-    context = ContextState()
-    workspace = WorkspaceInfo(
-        tenant_id="11111111-1111-1111-1111-111111111111",
-        workspace_type="personal",
-        slug="personal",
-        name="Personal",
-        role="owner",
-        is_default=True,
-    )
-
-    async def fake_get_available_workspaces(context=None):
-        return [workspace]
-
-    monkeypatch.setattr(logfire, "span", fake_span)
-    monkeypatch.setattr(project_context, "get_available_workspaces", fake_get_available_workspaces)
-
-    resolved = await project_context.resolve_workspace_parameter(context=ctx(context))
-
-    assert resolved.tenant_id == workspace.tenant_id
-    assert spans == [
-        (
-            "routing.resolve_workspace",
-            {"workspace_requested": False, "has_context": True},
-        )
-    ]
 
 
 @pytest.mark.asyncio

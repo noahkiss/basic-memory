@@ -279,8 +279,8 @@ async def schema_validate(
             If provided, validates only this note.
         project: Project name. Optional -- server will resolve.
         project_id: Project external_id (UUID). Prefer this over `project` when known —
-                it routes to the exact project regardless of name collisions across cloud
-                workspaces. Takes precedence over `project`. Get from list_memory_projects().
+                it routes to the exact project regardless of name collisions. Takes
+                precedence over `project`. Get from list_memory_projects().
         context: Optional FastMCP context for performance caching.
 
     Returns:
@@ -415,8 +415,8 @@ async def schema_infer(
             Default 0.25 (25%). Fields above 95% become required.
         project: Project name. Optional -- server will resolve.
         project_id: Project external_id (UUID). Prefer this over `project` when known —
-                it routes to the exact project regardless of name collisions across cloud
-                workspaces. Takes precedence over `project`. Get from list_memory_projects().
+                it routes to the exact project regardless of name collisions. Takes
+                precedence over `project`. Get from list_memory_projects().
         context: Optional FastMCP context for performance caching.
 
     Returns:
@@ -539,8 +539,8 @@ async def schema_diff(
         note_type: The note type to check for drift (e.g., "person").
         project: Project name. Optional -- server will resolve.
         project_id: Project external_id (UUID). Prefer this over `project` when known —
-                it routes to the exact project regardless of name collisions across cloud
-                workspaces. Takes precedence over `project`. Get from list_memory_projects().
+                it routes to the exact project regardless of name collisions. Takes
+                precedence over `project`. Get from list_memory_projects().
         context: Optional FastMCP context for performance caching.
 
     Returns:

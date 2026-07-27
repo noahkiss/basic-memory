@@ -94,9 +94,9 @@ class ProjectService:
     async def get_default_project_name(self) -> str:
         """Get the default project name, falling back to the database.
 
-        ConfigManager reads from the local config file, which doesn't exist
-        in cloud mode. When it returns None, fall back to the is_default
-        flag stored in the database.
+        ConfigManager reads from the local config file, which may not name a
+        default. When it returns None, fall back to the is_default flag stored
+        in the database.
         """
         default = self.config_manager.default_project
         if default is not None:
@@ -184,9 +184,9 @@ class ProjectService:
         if project_root:
             base_path = Path(project_root)
 
-            # In cloud mode (when project_root is set), ignore user's path completely
-            # and use sanitized project name as the directory name
-            # This ensures flat structure: /app/data/test-bisync instead of /app/data/documents/test bisync
+            # When project_root is set, ignore the user's path completely and use the
+            # sanitized project name as the directory name. This keeps the tree flat:
+            # /data/my-project instead of /data/documents/my project.
             sanitized_name = generate_permalink(name)
 
             # Construct path using sanitized project name only
@@ -214,7 +214,7 @@ class ProjectService:
                         raise ValueError(  # pragma: no cover
                             f"Path collision detected: '{resolved_path}' conflicts with existing project "
                             f"'{existing.name}' at '{existing.path}'. "
-                            f"In cloud mode, paths are normalized to lowercase to prevent case-sensitivity issues."
+                            f"Under project_root, paths are normalized to lowercase to prevent case-sensitivity issues."
                         )  # pragma: no cover
 
             # Check for nested paths with existing projects
@@ -240,9 +240,9 @@ class ProjectService:
                         )
 
             # Ensure the project directory exists on disk.
-            # Trigger: project_root not set means local filesystem mode (not S3/cloud)
-            # Why: FileService (or future S3FileService) provides cloud-compatible directory creation;
-            #      direct Path.mkdir() bypasses this abstraction
+            # Trigger: project_root not set means the caller chose the directory itself
+            # Why: FileService owns filesystem writes; direct Path.mkdir() bypasses that
+            #      abstraction and its error handling
             # Outcome: directory exists before config/DB entries are written
             if not self.config_manager.config.project_root:
                 if self.file_service is None:
@@ -365,20 +365,19 @@ class ProjectService:
 
             project_path = project.path
 
-            # Check if project is default
-            # In cloud mode: database is source of truth
-            # In local mode: also check config file
+            # Check if project is default. The database is the source of truth; the
+            # SQLite backend also honours the default recorded in the config file.
             is_default = project.is_default
             if self.config_manager.config.database_backend != DatabaseBackend.POSTGRES:
                 is_default = is_default or name == self.config_manager.config.default_project
             if is_default:
                 raise ValueError(f"Cannot remove the default project '{name}'")  # pragma: no cover
 
-            # Remove from config if it exists there (may not exist in cloud mode)
+            # Remove from config if it exists there (a DB project may have no config entry)
             try:
                 self.config_manager.remove_project(name)
             except ValueError:  # pragma: no cover
-                # Project not in config - that's OK in cloud mode, continue with database deletion
+                # Project not in config - fine, continue with database deletion
                 logger.debug(  # pragma: no cover
                     f"Project '{name}' not found in config, removing from database only"
                 )
@@ -582,9 +581,9 @@ class ProjectService:
         if name not in self.config_manager.projects:
             raise ValueError(f"Project '{name}' not found in configuration")
 
-        # Create the new directory if it doesn't exist (skip in cloud mode where storage is S3)
-        # Trigger: project_root not set means local filesystem mode
-        # Why: FileService (or future S3FileService) provides cloud-compatible directory creation
+        # Create the new directory if it doesn't exist.
+        # Trigger: project_root not set means the caller chose the directory itself
+        # Why: FileService owns filesystem writes; direct Path.mkdir() bypasses it
         # Outcome: destination directory exists before config/DB are updated
         if not self.config_manager.config.project_root:
             if self.file_service is None:
@@ -697,8 +696,8 @@ class ProjectService:
                 raise ValueError(f"Project '{requested_project_name}' not found in database")
             db_projects = await self.repository.get_active_projects(session)
 
-        # Trigger: cloud-only projects may exist in DB but not in local config.
-        # Why: cloud routing should not require local config entries for project info.
+        # Trigger: a project may exist in the DB but not in the local config.
+        # Why: project info should not require a local config entry.
         # Outcome: prefer config path when available, otherwise use DB path.
         config_name, config_path = self.config_manager.get_project(db_project.name)
         if config_name and config_path:
@@ -748,7 +747,7 @@ class ProjectService:
                 ),
             }
 
-        # Include active DB projects that are not present in local config (cloud-only).
+        # Include active DB projects that are not present in local config.
         for active_db_project in db_projects:
             if active_db_project.name in enhanced_projects:
                 continue

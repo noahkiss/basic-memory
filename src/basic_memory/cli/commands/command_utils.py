@@ -68,11 +68,10 @@ async def run_project_index(
     # Deferred: ToolError lives in the mcp SDK, which must not load at CLI startup (#886).
     from mcp.server.fastmcp.exceptions import ToolError
 
-    # Resolve default project so get_client() can route per-project
     project = project or ConfigManager().default_project
 
     try:
-        async with get_client(project_name=project) as client:
+        async with get_client() as client:
             project_item = await get_active_project(client, project, None)
             project_client = ProjectClient(client)
             data = await project_client.index(
@@ -103,23 +102,9 @@ async def get_project_info(project: str):
     from mcp.server.fastmcp.exceptions import ToolError
 
     try:
-        async with get_client(project_name=project) as client:
+        async with get_client() as client:
             project_item = await get_active_project(client, project, None)
             return await ProjectClient(client).get_info(project_item.external_id)
     except (ToolError, ValueError) as e:
-        error_text = str(e)
-        if "internal proxy error" in error_text.lower() and "not found in configuration" in (
-            error_text.lower()
-        ):
-            console.print(
-                "[red]Project info failed: cloud returned an internal configuration error for "
-                "this project.[/red]"
-            )
-            console.print(
-                "[yellow]This is a cloud backend issue for detailed info lookups. "
-                "Use `bm project list --cloud` for project metadata until the service is updated."
-                "[/yellow]"
-            )
-        else:
-            console.print(f"[red]Project info failed: {e}[/red]")
+        console.print(f"[red]Project info failed: {e}[/red]")
         raise typer.Exit(1)

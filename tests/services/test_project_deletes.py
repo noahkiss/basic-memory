@@ -19,7 +19,7 @@ from sqlalchemy.pool import StaticPool
 
 
 @pytest_asyncio.fixture
-async def tenant_session_maker() -> AsyncGenerator[async_sessionmaker[AsyncSession], None]:
+async def project_session_maker() -> AsyncGenerator[async_sessionmaker[AsyncSession], None]:
     engine = create_async_engine(
         "sqlite+aiosqlite://",
         connect_args={"check_same_thread": False},
@@ -85,12 +85,12 @@ class FailingProjectDeleteEnqueuer:
 
 @pytest.mark.asyncio
 async def test_project_delete_acceptance_soft_deletes_and_queues_runtime_request(
-    tenant_session_maker: async_sessionmaker[AsyncSession],
+    project_session_maker: async_sessionmaker[AsyncSession],
 ) -> None:
-    project = await create_project(tenant_session_maker)
+    project = await create_project(project_session_maker)
     enqueuer = RecordingProjectDeleteEnqueuer()
     service = ProjectDeleteAcceptanceService(
-        session_maker=tenant_session_maker,
+        session_maker=project_session_maker,
         job_enqueuer=enqueuer,
     )
 
@@ -101,7 +101,7 @@ async def test_project_delete_acceptance_soft_deletes_and_queues_runtime_request
         )
     )
 
-    async with tenant_session_maker() as session:
+    async with project_session_maker() as session:
         stored_project = await session.get(Project, project.id)
 
     assert stored_project is not None
@@ -128,15 +128,15 @@ async def test_project_delete_acceptance_soft_deletes_and_queues_runtime_request
 
 @pytest.mark.asyncio
 async def test_project_delete_acceptance_rejects_deleting_the_only_project(
-    tenant_session_maker: async_sessionmaker[AsyncSession],
+    project_session_maker: async_sessionmaker[AsyncSession],
 ) -> None:
     # The default project can only be deleted when another active project can
     # inherit the flag. A sole project has no replacement, so the delete is
     # rejected before any soft delete happens.
-    project = await create_project(tenant_session_maker, is_default=True)
+    project = await create_project(project_session_maker, is_default=True)
     enqueuer = RecordingProjectDeleteEnqueuer()
     service = ProjectDeleteAcceptanceService(
-        session_maker=tenant_session_maker,
+        session_maker=project_session_maker,
         job_enqueuer=enqueuer,
     )
 
@@ -148,7 +148,7 @@ async def test_project_delete_acceptance_rejects_deleting_the_only_project(
             )
         )
 
-    async with tenant_session_maker() as session:
+    async with project_session_maker() as session:
         stored_project = await session.get(Project, project.id)
 
     assert exc_info.value.status_code == 400
@@ -160,17 +160,17 @@ async def test_project_delete_acceptance_rejects_deleting_the_only_project(
 
 @pytest.mark.asyncio
 async def test_project_delete_acceptance_promotes_replacement_default(
-    tenant_session_maker: async_sessionmaker[AsyncSession],
+    project_session_maker: async_sessionmaker[AsyncSession],
 ) -> None:
     # Deleting the default project hands the flag to another active project so
-    # the workspace always resolves a default for project-less writes.
+    # a default project always resolves for project-less writes.
     default_project = await create_project(
-        tenant_session_maker,
+        project_session_maker,
         is_default=True,
         created_at=datetime(2026, 1, 1, tzinfo=UTC),
     )
     sibling = await create_project(
-        tenant_session_maker,
+        project_session_maker,
         name="Notes",
         permalink="notes",
         external_id="project-notes",
@@ -178,7 +178,7 @@ async def test_project_delete_acceptance_promotes_replacement_default(
     )
     enqueuer = RecordingProjectDeleteEnqueuer()
     service = ProjectDeleteAcceptanceService(
-        session_maker=tenant_session_maker,
+        session_maker=project_session_maker,
         job_enqueuer=enqueuer,
     )
 
@@ -189,7 +189,7 @@ async def test_project_delete_acceptance_promotes_replacement_default(
         )
     )
 
-    async with tenant_session_maker() as session:
+    async with project_session_maker() as session:
         deleted = await session.get(Project, default_project.id)
         promoted = await session.get(Project, sibling.id)
 
@@ -205,31 +205,31 @@ async def test_project_delete_acceptance_promotes_replacement_default(
 
 @pytest.mark.asyncio
 async def test_project_delete_acceptance_promotes_oldest_active_project(
-    tenant_session_maker: async_sessionmaker[AsyncSession],
+    project_session_maker: async_sessionmaker[AsyncSession],
 ) -> None:
     # When several projects could inherit the default, the oldest active one
     # wins so the promotion is deterministic.
     await create_project(
-        tenant_session_maker,
+        project_session_maker,
         is_default=True,
         created_at=datetime(2026, 3, 1, tzinfo=UTC),
     )
     older = await create_project(
-        tenant_session_maker,
+        project_session_maker,
         name="Older",
         permalink="older",
         external_id="project-older",
         created_at=datetime(2026, 1, 1, tzinfo=UTC),
     )
     newer = await create_project(
-        tenant_session_maker,
+        project_session_maker,
         name="Newer",
         permalink="newer",
         external_id="project-newer",
         created_at=datetime(2026, 2, 1, tzinfo=UTC),
     )
     service = ProjectDeleteAcceptanceService(
-        session_maker=tenant_session_maker,
+        session_maker=project_session_maker,
         job_enqueuer=RecordingProjectDeleteEnqueuer(),
     )
 
@@ -240,7 +240,7 @@ async def test_project_delete_acceptance_promotes_oldest_active_project(
         )
     )
 
-    async with tenant_session_maker() as session:
+    async with project_session_maker() as session:
         promoted_older = await session.get(Project, older.id)
         promoted_newer = await session.get(Project, newer.id)
 
@@ -252,11 +252,11 @@ async def test_project_delete_acceptance_promotes_oldest_active_project(
 
 @pytest.mark.asyncio
 async def test_project_delete_acceptance_reactivates_project_when_enqueue_fails(
-    tenant_session_maker: async_sessionmaker[AsyncSession],
+    project_session_maker: async_sessionmaker[AsyncSession],
 ) -> None:
-    project = await create_project(tenant_session_maker)
+    project = await create_project(project_session_maker)
     service = ProjectDeleteAcceptanceService(
-        session_maker=tenant_session_maker,
+        session_maker=project_session_maker,
         job_enqueuer=FailingProjectDeleteEnqueuer(),
     )
 
@@ -268,7 +268,7 @@ async def test_project_delete_acceptance_reactivates_project_when_enqueue_fails(
             )
         )
 
-    async with tenant_session_maker() as session:
+    async with project_session_maker() as session:
         stored_project = await session.get(Project, project.id)
 
     assert stored_project is not None

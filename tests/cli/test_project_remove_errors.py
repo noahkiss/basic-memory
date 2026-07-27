@@ -1,8 +1,8 @@
 """Tests for bm project remove error surfacing (#1034).
 
-Large cloud project deletes can fail with httpx transport errors whose str() is
-empty, which used to print a detail-free "Error removing project:". The CLI must
-never print a blank error.
+Large project deletes can fail with httpx transport errors whose str() is empty,
+which used to print a detail-free "Error removing project:". The CLI must never
+print a blank error.
 """
 
 import json
@@ -56,7 +56,7 @@ def failing_resolve(monkeypatch):
     """Stub the API client so project resolution raises a chosen exception."""
 
     @asynccontextmanager
-    async def fake_get_client(*, project_name=None, workspace=None):
+    async def fake_get_client():
         yield object()
 
     state: dict[str, Exception] = {}
