@@ -33,8 +33,8 @@ clean up after.
 | Upstream subject | `fix(core): fail loud on ambiguous strict identifier resolution (#1151)` |
 | Forked on | 2026-07-26 |
 
-That SHA is load-bearing. It is the merge base for every future rebase or cherry-pick from upstream.
-When you pull upstream changes in, update the row above to the new merge base.
+That SHA records where this tree came from. It is **not** a merge base to be maintained — see
+"We do not track upstream" below — and nothing needs to update it.
 
 Note: upstream self-reports version `0.22.1` on `main` even though PyPI `0.22.1` is far behind this
 tree — `basic-memory --version` reads a hardcoded string from `src/basic_memory/__init__.py` that
@@ -51,18 +51,55 @@ origin     https://github.com/noahkiss/basic-memory.git       (fetch + push)
 upstream   https://github.com/basicmachines-co/basic-memory.git (fetch only; push URL set to DISABLED)
 ```
 
-Inspect what upstream has done since the fork point:
+## We do not track upstream
+
+The point of this fork is to **strip and reshape** the tree into exactly what `tend` needs: a
+slimmer, self-contained tool. We do not merge, rebase, or cherry-pick from upstream, and we do not
+keep this tree mergeable with it. There is no compat tax to pay.
+
+Concretely:
+
+- **Fix our own bugs**, in our own way, in whatever shape suits this fork. Do not weigh a fix by how
+  hard it would be to reconcile with upstream later — there is no later.
+- **Do not preserve upstream behavior for its own sake.** Divergence is the goal, not a cost. A test
+  that only guards an upstream-shaped decision we have deliberately reversed can be rewritten.
+- **Check upstream as-needed only** — to see whether they already diagnosed something we are staring
+  at, or to lift a specific fix by hand. That is a lookup, not a sync.
+- **Do not spend tokens on code we will never run.** Reading, testing, or "keeping consistent" a
+  subsystem that this fork does not use is wasted work. Deleting it is usually the better answer.
+
+The `upstream` remote stays fetch-only, for those as-needed lookups:
 
 ```sh
 git fetch upstream
 git log --oneline 232f2c2..upstream/main            # everything new upstream
-git diff 232f2c2..upstream/main -- src/basic_memory # what changed in the core
-git log --oneline main..upstream/main               # upstream commits we do not have
-git log --oneline upstream/main..main               # our divergence
+git log --grep=<symptom> 232f2c2..upstream/main     # did they already hit this?
+git show <sha> -- src/basic_memory                  # lift one fix by hand
 ```
 
-Pull upstream work in deliberately and in small pieces (`git cherry-pick`, or a topic branch plus
-`git rebase --onto`). Do not merge `upstream/main` wholesale — divergence here is intentional.
+### Strip policy
+
+No big-bang strip: the payoff is mostly "less to read" and a sweeping diff costs more than it saves.
+The default rule is **delete a subsystem the next time it makes you write the same thing twice**.
+
+**Two deliberate exceptions, to be removed proactively rather than on the second offence:**
+
+1. **The cloud / multi-tenancy surface** — cloud sync, rclone, bisync, cloud auth, and the CLI
+   routing flags that select them. It is already generating design questions that need no answer.
+2. **The Postgres backend.** It has *already* cost us the duplicate fix the rule waits for
+   (`43d1a3a4` changed 27 lines of `postgres_search_repository.py` purely to mirror a SQLite fix),
+   so it has met the bar. Deleting it halves every future search-repository change.
+
+Postgres is an alternative **index** backend, not an alternative format — files stay authoritative
+and the DB is disposable. It exists for the hosted multi-tenant deployment and buys a local
+single-user install nothing. **Until the deletion lands, run its tests whenever a commit touches
+`postgres_search_repository.py`** (`BASIC_MEMORY_TEST_POSTGRES=1`; testcontainers pulls
+`pgvector/pgvector:pg16` — filter `docker ps` by that image or by label `org.testcontainers=true`,
+*not* by `ancestor=postgres`, which silently matches nothing).
+
+Further cleanly separable candidates, to be taken under the default rule: `integrations/hermes`;
+`integrations/openclaw`; the ChatGPT and Claude importers; the `plugins/claude-code` marketplace
+surface.
 
 ## License and redistribution
 
