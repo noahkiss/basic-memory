@@ -4,7 +4,7 @@ from importlib.metadata import PackageNotFoundError, version as _distribution_ve
 
 _DISTRIBUTION_NAME = "basic-memory"
 
-# Release fallback - updated by release automation (scripts/update_versions.py). It only moves on
+# Release fallback - rewritten in place by the `just release` recipe. It only moves on
 # release, so every build between two releases carries the same number and it cannot identify the
 # code that is running. Used only when no installed distribution exists (a bare source tree).
 __version__ = "0.22.1"

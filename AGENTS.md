@@ -1,13 +1,10 @@
 # FORK NOTICE — read this first
 
-This repository is a **hard fork** of [`basicmachines-co/basic-memory`](https://github.com/basicmachines-co/basic-memory),
-maintained at [`noahkiss/basic-memory`](https://github.com/noahkiss/basic-memory).
-
-**It is not a GitHub fork and it is not upstream-track.** Changes made here are not intended to be
-contributed back, and no PR will be opened against upstream. Do not write code, commit messages, or
-docs to upstream's contribution standards (DCO sign-off, semantic PR scopes, the CLA) — those apply
-to upstream, not here. Upstream's own guidance is preserved below because it remains accurate about
-*this codebase*; it is not a statement of this fork's process.
+This repo is a **hard fork** of [`basicmachines-co/basic-memory`](https://github.com/basicmachines-co/basic-memory),
+maintained at [`noahkiss/basic-memory`](https://github.com/noahkiss/basic-memory). It is not a GitHub
+fork and it is not upstream-track. Nothing here goes back upstream, so upstream's contribution
+standards — DCO sign-off, semantic PR scopes, the CLA — do not apply. **The repo is public**, so
+don't commit local paths or personal material; design docs live in `.forked/` (gitignored).
 
 ## → `GAPS.md` is this fork's to-do list. Write to it as you work.
 
@@ -16,126 +13,43 @@ here, with reproductions. Read it before planning work in this repo.
 
 **If you find a gap during a session, record it there in that same session** — not in a design doc
 or a STATUS file with the intention of transferring it later. That transfer is a return visit, and
-return visits do not happen. Several figures in the design docs were inherited across sessions and
-never re-checked; the same rot applies to unrecorded gaps, except that a gap recorded elsewhere is
-also invisible to whoever is working *in this repo*, which is where it has to get fixed.
+return visits do not happen.
 
 The working order is **fix the gaps that block the next thing, then build** — not build now and
 clean up after.
 
-## Fork point
-
-| | |
-|---|---|
-| Forked from | `basicmachines-co/basic-memory` @ `main` |
-| **Upstream SHA** | **`232f2c2fc4e91564d88bcc312ed3d8bd1e8e051b`** |
-| Upstream commit date | 2026-07-26 |
-| Upstream subject | `fix(core): fail loud on ambiguous strict identifier resolution (#1151)` |
-| Forked on | 2026-07-26 |
-
-That SHA records where this tree came from. It is **not** a merge base to be maintained — see
-"We do not track upstream" below — and nothing needs to update it.
-
-Note: upstream self-reports version `0.22.1` on `main` even though PyPI `0.22.1` is far behind this
-tree — `basic-memory --version` reads a hardcoded string from `src/basic_memory/__init__.py` that
-only moves on release. It is not a reliable way to tell what code you are running.
-
-The *package* version is reliable, because uv-dynamic-versioning derives it from git: a build from
-the fork point reports `0.22.2.dev118+232f2c2f`. To check what is actually installed, use
-`uv tool list` (or `pip show basic-memory`) and read the `+<sha>` suffix, not `--version`.
-
-## Remotes
-
-```
-origin     https://github.com/noahkiss/basic-memory.git       (fetch + push)
-upstream   https://github.com/basicmachines-co/basic-memory.git (fetch only; push URL set to DISABLED)
-```
-
 ## We do not track upstream
 
-The point of this fork is to **strip and reshape** the tree into exactly what `tend` needs: a
-slimmer, self-contained tool. We do not merge, rebase, or cherry-pick from upstream, and we do not
-keep this tree mergeable with it. There is no compat tax to pay.
+The point of this fork is to **strip and reshape** the tree into exactly what `bm` needs. We do
+not merge, rebase, or cherry-pick from upstream, and we do not keep this tree mergeable with it.
+There is no compat tax to pay.
 
-Concretely:
+- **Fix our own bugs in whatever shape suits this fork.** Never weigh a fix by how hard it would be
+  to reconcile with upstream later — there is no later.
+- **Divergence is the goal, not a cost.** A test that only guards an upstream-shaped decision we
+  have deliberately reversed can be rewritten.
+- **Don't spend tokens on code we will never run.** Reading, testing, or "keeping consistent" a
+  subsystem this fork doesn't use is wasted work. Deleting it is usually the better answer.
 
-- **Fix our own bugs**, in our own way, in whatever shape suits this fork. Do not weigh a fix by how
-  hard it would be to reconcile with upstream later — there is no later.
-- **Do not preserve upstream behavior for its own sake.** Divergence is the goal, not a cost. A test
-  that only guards an upstream-shaped decision we have deliberately reversed can be rewritten.
-- **Check upstream as-needed only** — to see whether they already diagnosed something we are staring
-  at, or to lift a specific fix by hand. That is a lookup, not a sync.
-- **Do not spend tokens on code we will never run.** Reading, testing, or "keeping consistent" a
-  subsystem that this fork does not use is wasted work. Deleting it is usually the better answer.
+Forked from upstream `main` @ `232f2c2fc4e91564d88bcc312ed3d8bd1e8e051b` (2026-07-26). That SHA
+records provenance only — it is not a merge base and nothing needs to update it. The `upstream`
+remote is fetch-only (push URL `DISABLED`) for as-needed lookups: `git log 232f2c2..upstream/main`
+to see if they already diagnosed something, `git show <sha> -- src/basic_memory` to lift one fix.
 
-The `upstream` remote stays fetch-only, for those as-needed lookups:
-
-```sh
-git fetch upstream
-git log --oneline 232f2c2..upstream/main            # everything new upstream
-git log --grep=<symptom> 232f2c2..upstream/main     # did they already hit this?
-git show <sha> -- src/basic_memory                  # lift one fix by hand
-```
-
-### Strip policy
-
-No big-bang strip: the payoff is mostly "less to read" and a sweeping diff costs more than it saves.
-The default rule is **delete a subsystem the next time it makes you write the same thing twice**.
-
-**Two deliberate exceptions, to be removed proactively rather than on the second offence:**
-
-1. **The cloud / multi-tenancy surface** — cloud sync, rclone, bisync, cloud auth, and the CLI
-   routing flags that select them. It is already generating design questions that need no answer.
-2. **The Postgres backend.** It has *already* cost us the duplicate fix the rule waits for
-   (`43d1a3a4` changed 27 lines of `postgres_search_repository.py` purely to mirror a SQLite fix),
-   so it has met the bar. Deleting it halves every future search-repository change.
-
-Postgres is an alternative **index** backend, not an alternative format — files stay authoritative
-and the DB is disposable. It exists for the hosted multi-tenant deployment and buys a local
-single-user install nothing. **Until the deletion lands, run its tests whenever a commit touches
-`postgres_search_repository.py`** (`BASIC_MEMORY_TEST_POSTGRES=1`; testcontainers pulls
-`pgvector/pgvector:pg16` — filter `docker ps` by that image or by label `org.testcontainers=true`,
-*not* by `ancestor=postgres`, which silently matches nothing).
-
-Further cleanly separable candidates, to be taken under the default rule: `integrations/hermes`;
-`integrations/openclaw`; the ChatGPT and Claude importers; the `plugins/claude-code` marketplace
-surface.
-
-## License and redistribution
-
-Upstream is **AGPL-3.0**, and so is this fork. `LICENSE` is unchanged and **must stay unchanged**.
-Do not relicense, do not add a more permissive header to modified files, and do not strip upstream's
-copyright notices.
-
-Redistributing a modified build (including via a Homebrew tap) is explicitly permitted by AGPL-3.0,
-subject to:
-
-- **Source availability.** Recipients must be able to get the complete corresponding source of what
-  they run. The public `noahkiss/basic-memory` repo satisfies this, so it must stay public for as
-  long as builds are distributed from it.
-- **Same license.** Derived work ships under AGPL-3.0. It cannot be sublicensed under other terms.
-- **State changes.** Modified files should carry a notice that they were changed and when. This
-  FORK NOTICE plus git history covers that at the repo level.
-- **Section 13 (the network clause).** If a modified version is ever made available to users over a
-  network, those users must be offered the corresponding source. Local and personal use does not
-  trigger this; exposing a modified server to other people does.
-
-Upstream also ships a `CLA.md`. It governs contributions *to upstream* and has no bearing on this
-fork, since nothing here goes upstream.
+**`basic-memory --version` lies.** It reads a hardcoded string that only moves on release, so both
+upstream `main` and this tree self-report `0.22.1`. The *package* version is derived from git and is
+reliable — use `uv tool list` (or `pip show basic-memory`) and read the `+<sha>` suffix.
 
 ## What this fork is for
 
-Building a local work-tracking system — **`tend`** — directly into this codebase as first-class `bm`
-subcommands, **not** as a separate wrapper tool around a stock `basic-memory`. The wrapper approach
-was considered and rejected: the pieces below need to run inside the write path and the query layer,
-which a wrapper cannot reach without racing the indexer.
+Building a local work-tracking system directly into this codebase as first-class `bm`
+subcommands, **not** as a separate wrapper tool.
 
 Planned, in rough dependency order:
 
-1. **A gardener** (`bm tend gc` or similar) that keeps the note corpus from rotting. Strictly
-   lossless: it may move, index, dedupe, re-label, and flag — it may never summarize, merge, or
-   resolve. Ship the flag-only version first so the lossless constraint is structural rather than
-   aspirational.
+1. **A gardener** (`bm gc`) that keeps the note corpus from rotting. Strictly lossless: it may move,
+   index, dedupe, re-label, and flag — it may never summarize, merge, or resolve. Ship the flag-only
+   version first so the lossless constraint is structural rather than aspirational.
 2. **Local git history on writes.** Every mutation commits into a local-only store repo so pruning is
    recoverable. Two traps: set `core.excludesFile` and `core.hooksPath` to `/dev/null` inside that
    repo (a global pre-commit hook will otherwise block automated commits), and never export `GIT_DIR`.
@@ -145,20 +59,24 @@ Planned, in rough dependency order:
 4. **A decision-mining subcommand** over Claude Code transcripts, to recover decisions that were made
    in conversation and never written down.
 
-The store is central and id-keyed (not one repo per project): a single plain git repo, with the id
-written once into a `.tend.yml` marker at each project root. The id is authoritative; any directory
-name in the store is a human-browsing label that nothing reads.
+The store is central and id-keyed (not one repo per project): a single plain git repo at
+**`~/.basic-memory/store/`**, with the id written once into a **`.bm.yml`** marker at each project
+root. The id is authoritative; any directory name in the store is a human-browsing label that
+nothing reads. The store path must derive from `resolve_data_dir()` so it honours
+`BASIC_MEMORY_CONFIG_DIR` like `config.json` and `memory.db` do — never hardcode it.
+
+**Naming:** `tend` is a **codename for the design, not a command.** There is no `tend` binary and no
+`bm tend` namespace — the verbs ship flat under `bm` (`bm gc`, `bm check`, `bm ls`, `bm new`,
+`bm path`, `bm mine`, `bm done`, `bm show`, `bm history`, `bm undo`, `bm mark`).
 
 ## Measured baseline at the fork point
 
-Taken on Linux/x86-64, Python 3.13, semantic search enabled (the default when `fastembed` and
-`sqlite_vec` are importable), against a 67-file / 888 KB markdown corpus. Recorded because these
-numbers drive the design and should be re-measured after any rebase.
+Linux/x86-64, Python 3.13, semantic search enabled, 67-file / 888 KB corpus. Re-measure if the tree
+moves substantially.
 
 | Path | Wall time | Resident memory |
 |---|---|---|
-| MCP server, idle | — | 184 MB |
-| MCP server, embeddings loaded | 40–80 ms per query | **~477 MB (stable over 31 queries)** |
+| MCP server, idle → embeddings loaded | 40–80 ms per query | 184 MB → ~477 MB |
 | CLI `bm tool search-notes` | 4.3–4.8 s | ~447 MB |
 | CLI native cmd (`project list`, `config get`) | ~0.55 s | ~73 MB |
 | CLI `--version` floor | 0.33 s | 59 MB |
@@ -166,25 +84,18 @@ numbers drive the design and should be re-measured after any rebase.
 
 The decisive structural fact: **commands that avoid importing `basic_memory.mcp.tools` /
 `basic_memory.api.app` cost ~0.55 s; commands that touch them cost ~4 s.** Those two modules are
-~2.1 s and ~2.2 s of import time each, and upstream has already deferred them off the CLI entrypoint
-(importing `basic_memory.cli.main` is only 0.41 s). Any `tend` subcommand that needs to be fast must
-talk to the repository/service layer directly and must not reach through the MCP tool layer.
+~2.1 s and ~2.2 s of import time each. **Any `tend` subcommand that needs to be fast must talk to
+the repository/service layer directly and must not reach through the MCP tool layer.**
 
-Embedding model: `qdrant/bge-small-en-v1.5-onnx-q` (quantized ONNX), 64 MB on disk.
-
-Upstream cached it **inside the Basic Memory data dir** (`$BASIC_MEMORY_CONFIG_DIR/fastembed_cache/`),
-so every config dir paid its own 64 MB download. **Changed in this fork:** the default is now the
-shared `$XDG_CACHE_HOME/fastembed` (falling back to `~/.cache/fastembed`), because the model is an
-immutable artifact keyed by model name and does not belong inside the isolation boundary
-`BASIC_MEMORY_CONFIG_DIR` exists to draw. `FASTEMBED_CACHE_PATH` and the
-`semantic_embedding_cache_dir` config field still override it, and an install that already
-downloaded the model to the legacy path keeps using that copy rather than silently re-downloading.
+Embedding model `qdrant/bge-small-en-v1.5-onnx-q` (64 MB) caches to the shared
+`$XDG_CACHE_HOME/fastembed` in this fork, not inside `BASIC_MEMORY_CONFIG_DIR` as upstream had it —
+it's an immutable artifact keyed by model name and doesn't belong inside that isolation boundary.
 See `default_fastembed_cache_dir()` in `src/basic_memory/config_models.py`.
 
 ---
 
-*Everything below this line is upstream's own project guide, preserved as-is. Where it describes the
-codebase it is accurate; where it describes contribution process, see the FORK NOTICE above.*
+*Everything below is upstream's project guide, trimmed to what this fork actually runs. Where it
+describes the codebase it is accurate.*
 
 # AGENTS.md - Basic Memory Project Guide
 
@@ -202,78 +113,31 @@ See the [README.md](README.md) file for a project overview.
 
 ### Build and Test Commands
 
-- Install: `just install` or `pip install -e ".[dev]"`
-- Run all tests (SQLite + Postgres): `just test`
-- Run all tests against SQLite: `just test-sqlite`
-- Run all tests against Postgres: `just test-postgres` (uses testcontainers)
-- Run unit tests (SQLite): `just test-unit-sqlite`
-- Run unit tests (Postgres): `just test-unit-postgres`
-- Run integration tests (SQLite): `just test-int-sqlite`
-- Run integration tests (Postgres): `just test-int-postgres`
-- Run impacted tests: `just fast-test` or `just testmon` (pytest-testmon; only tests affected by changed code)
-- Run MCP smoke test: `just test-smoke`
-- Fast static check: `just fast-check` (fix, format, typecheck)
-- Fast test loop: `just fast-test` (pytest-testmon impacted tests)
-- Local consistency check: `just doctor`
-- Run all consolidated agent package checks: `just package-check`
-- Run Claude Code plugin checks: `just package-check-claude-code`
-- Run shared skills checks: `just package-check-skills`
-- Run Hermes plugin checks: `just package-check-hermes`
-- Run OpenClaw plugin checks: `just package-check-openclaw`
-- Run host-native agent harness checks: `just agent-harness-check`
-- Generate HTML coverage: `just coverage`
-- Single test: `pytest tests/path/to/test_file.py::test_function_name`
-- Run benchmarks: `pytest test-int/test_sync_performance_benchmark.py -v -m "benchmark and not slow"`
-- Lint: `just lint` or `ruff check . --fix`
-- Type check: `just typecheck` or `uv run ty check src tests test-int`
-- Type check (pyright): `just typecheck-pyright` or `uv run pyright`
-- Format: `just format` or `uv run ruff format .`
-- Run all static code checks: `just check` (runs lint, format, typecheck)
-- Create db migration: `just migration "Your migration message"`
-- Run development MCP Inspector: `just run-inspector`
+- Install: `just install`
+- Fast static check: `just fast-check` (fix, format, typecheck; no tests)
+- Impacted tests: `just fast-test` (pytest-testmon)
+- Unit: `just test-unit-sqlite` · integration: `just test-int-sqlite` · everything: `just test-sqlite`
+- Single test: `uv run pytest tests/path/to/test_file.py::test_function_name`
+- Local consistency check: `just doctor` — end-to-end file ↔ DB loop in a temp project. Runs with a
+  temporary HOME/config so it won't touch your local settings; leaves temp dirs in `/tmp`.
+- Lint: `just lint` · format: `just format` · typecheck: `just typecheck` (or `just typecheck-pyright`)
+- All static checks: `just check` · DB migration: `just migration "message"`
+- Coverage HTML: `just coverage` · MCP smoke: `just test-smoke` · MCP Inspector: `just run-inspector`
+- Benchmarks: `uv run pytest test-int/test_sync_performance_benchmark.py -v -m "benchmark and not slow"`
 
-**Note:** Project requires Python 3.12+ (uses type parameter syntax and `type` aliases introduced in 3.12)
+Python 3.12+ required (type parameter syntax and `type` aliases).
 
-**Postgres Testing:** Uses [testcontainers](https://testcontainers-python.readthedocs.io/) which automatically spins up a Postgres instance in Docker. No manual database setup required - just have Docker running.
+**The loop:** code → `just fast-check` → `just fast-test` (or a targeted `uv run pytest`) →
+`just doctor`. Widen to `just test-sqlite` when the change warrants it. A cold testmon run is slow,
+later ones aren't; testmon collecting 0 tests means nothing was impacted, not that it failed.
 
-**Doctor Note:** `just doctor` runs with a temporary HOME/config so it won't touch your local Basic Memory settings. It leaves temp dirs in `/tmp` (safe to ignore or remove).
+**Postgres variants** (`just test-postgres`, `test-unit-postgres`, `test-int-postgres`) use
+testcontainers and need Docker. Required only while the Postgres backend survives — see Strip policy.
 
-**Testmon Note:** When no files have changed, `just testmon` may collect 0 tests. That's expected and means no impacted tests were detected.
-
-### Code/Test/Verify Loop (fast path)
-
-1) **Code:** make changes.
-2) **Check:** `just fast-check` (fix, format, typecheck; no tests).
-3) **Test:** `just fast-test` for pytest-testmon impacted tests, or a targeted `uv run pytest ...` command.
-4) **Verify:** `just doctor` (end-to-end file ↔ DB loop in a temp project).
-5) **Package verify:** `just package-check` when changes touch `plugins/`, `skills/`, `integrations/`, package metadata, or release wiring.
-6) **Full gate (when needed):** `just test` for SQLite + Postgres.
-
-Run `just test-smoke` when you specifically need the MCP smoke flow.
-
-If testmon is “cold,” the first run may be long. Subsequent runs get much faster.
-
-### Consolidated Agent Package Checks
-
-The monorepo ships several host-native packages alongside the Python core. Use the root justfile as the canonical entry point:
-
-- `just package-check` — validates every copied package and generated bundle path.
-- `just package-check-claude-code` — validates the root and plugin-local Claude marketplace manifests, the SessionStart/PreCompact hooks, the bundled output style, and the seed schemas, then runs `claude plugin validate . --strict`.
-- `just package-check-skills` — validates every top-level `skills/memory-*/SKILL.md` frontmatter block.
-- `just package-check-hermes` — validates `integrations/hermes/plugin.yaml`, the Hermes provider entrypoint, bundled skill, and runs the hermetic unit suite.
-- `just package-check-openclaw` — runs the OpenClaw package install, copies top-level skills into the generated bundle, typechecks, lints, builds `dist/`, runs Bun tests, and performs `npm pack --dry-run`.
-- `just agent-harness-check` — checks the host-specific harnesses without the shared markdown-only skills target.
-
-Package-local justfiles live in `plugins/claude-code/`, `skills/`, `integrations/hermes/`, and `integrations/openclaw/`. Prefer the root targets for PR verification so command names stay stable as package internals evolve.
-
-### PR CI Gate
-
-Before opening or updating a PR, run the checks that mirror the common required CI failures:
-
-- Run `just typecheck` in addition to targeted `ruff` and `pytest` commands when tests were added or changed.
-- Sign commits with `git commit -s` so DCO passes. If a PR branch already has unsigned commits, rewrite the branch with signed-off commits before asking for review.
-- Use a semantic PR title accepted by `.github/workflows/pr-title.yml`: `type(scope): summary`.
-- Use one of the allowed scopes: `core`, `cli`, `api`, `mcp`, `sync`, `ui`, `ci`, `deps`, `installer`, `plugins`, `skills`, `integrations`.
+**Releases** are a git tag and nothing else — nothing is published anywhere. `just gate` is the
+pre-push check (lint + typecheck + unit tests); `just release vX.Y.Z` tags and pushes; `just
+release-preview vX.Y.Z` shows what it would do. See `.forked/release-design.md` for why there is
+no PyPI, npm, Homebrew, GitHub Release, or CI.
 
 ### Test Structure
 
@@ -338,51 +202,15 @@ agents must apply this skill before changing or evaluating Python code.
 
 ### Literate Programming Style
 
-Code should tell a story. Comments must explain the "why" and narrative flow, not just the "what".
+Comments explain **why**, never what. `counter += 1  # increment counter` is noise;
+`counter += 1  # track retries for backoff calculation` earns its line.
 
-**Section Headers:**
-For files with multiple phases of logic, add section headers so the control flow reads like chapters:
-```python
-# --- Authentication ---
-# ... auth logic ...
-
-# --- Data Validation ---
-# ... validation logic ...
-
-# --- Business Logic ---
-# ... core logic ...
-```
-
-**Decision Point Comments:**
-For conditionals that materially change behavior (gates, fallbacks, retries, feature flags), add comments with:
-- **Trigger**: what condition causes this branch
-- **Why**: the rationale (cost, correctness, UX, determinism)
-- **Outcome**: what changes downstream
-
-```python
-# Trigger: project has no active sync watcher
-# Why: avoid duplicate file system watchers consuming resources
-# Outcome: starts new watcher, registers in active_watchers dict
-if project_id not in active_watchers:
-    start_watcher(project_id)
-```
-
-**Constraint Comments:**
-If code exists because of a constraint (async requirements, rate limits, schema compatibility), explain the constraint near the code:
-```python
-# SQLite requires WAL mode for concurrent read/write access
-connection.execute("PRAGMA journal_mode=WAL")
-```
-
-**What NOT to Comment:**
-Avoid comments that restate obvious code:
-```python
-# Bad - restates code
-counter += 1  # increment counter
-
-# Good - explains why
-counter += 1  # track retries for backoff calculation
-```
+- **Section headers** (`# --- Authentication ---`) when a file has distinct phases, so control flow
+  reads like chapters.
+- **Decision points** — for conditionals that materially change behavior (gates, fallbacks, retries,
+  feature flags), state the trigger, the rationale, and what changes downstream.
+- **Constraints** — when code exists because of an external limit (async requirements, rate limits,
+  schema compatibility), explain the constraint next to the code that obeys it.
 
 ### Codebase Architecture
 
@@ -406,10 +234,6 @@ layers implement.
 - `/index` - Local runtime indexing adapters, watch service + `watch_coordinator.py` for lifecycle management
 - `/indexing` - Portable indexing runners and planners shared by local and hosted runtimes
 - `/runtime` - RuntimeMode resolution + runtime Protocol contracts
-- `/plugins/claude-code` - Claude Code plugin marketplace package, hooks, skills, and agent harness
-- `/skills` - Canonical framework-agnostic Basic Memory `SKILL.md` source
-- `/integrations/hermes` - Hermes memory-provider plugin
-- `/integrations/openclaw` - OpenClaw npm/TypeScript plugin
 
 **Composition Roots:**
 Each entrypoint (API, MCP, CLI) has a composition root that:
@@ -447,9 +271,9 @@ Flow: MCP Tool → Typed Client → HTTP API → Router → Service → Reposito
 - Use pytest markers: `@pytest.mark.benchmark` for benchmarks, `@pytest.mark.slow` for slow tests
 - **Coverage must stay at 100%**: Write tests for new code. Only use `# pragma: no cover` when tests would require excessive mocking (e.g., TYPE_CHECKING blocks, error handlers that need failure injection, runtime-mode-dependent code paths)
 
-### Async Client Pattern (Important!)
+### Async Client Pattern
 
-**MCP tools use `get_project_client()` for per-project routing:**
+MCP tools use `get_project_client()`; CLI commands and non-project-scoped code use `get_client()`.
 
 ```python
 from basic_memory.mcp.project_context import get_project_client
@@ -457,83 +281,19 @@ from basic_memory.mcp.project_context import get_project_client
 @mcp.tool()
 async def my_tool(project: str | None = None, context: Context | None = None):
     async with get_project_client(project, context) as (client, active_project):
-        # client is routed based on project's mode (local ASGI or cloud HTTP)
-        response = await call_get(client, "/path")
-        return response
+        return await call_get(client, "/path")
 ```
-
-**CLI commands and non-project-scoped code use `get_client()` directly:**
 
 ```python
 from basic_memory.mcp.async_client import get_client
 
-async def my_cli_command():
-    async with get_client() as client:
-        response = await call_get(client, "/path")
-        return response
-
-# Per-project routing (when project name is known):
-async with get_client(project_name="research") as client:
-    ...
+async with get_client() as client:              # or get_client(project_name="research")
+    return await call_get(client, "/path")
 ```
 
-**Do NOT use:**
-- ❌ `from basic_memory.mcp.async_client import client` (deprecated module-level client)
-- ❌ Manual auth header management
-- ❌ `inject_auth_header()` (deleted)
-- ❌ Separate `get_client()` + `get_active_project()` in MCP tools (use `get_project_client()` instead)
-
-**Key principles:**
-- Auth happens at client creation, not per-request
-- Proper resource management via context managers
-- Per-project routing: each project can be LOCAL or CLOUD independently
-- Cloud projects use API key (`cloud_api_key` in config) as Bearer token
-- Routing priority: factory injection > force-local > per-project cloud > global cloud > local ASGI
-- Factory pattern enables dependency injection for cloud consolidation
-
-**For cloud app integration:**
-```python
-from basic_memory.mcp import async_client
-
-# Set custom factory before importing tools
-async_client.set_client_factory(your_custom_factory)
-```
-
-See SPEC-16 for full context manager refactor details.
-
-### Release Process
-
-Releases are driven by `just release` / `just beta` — never by a bare `git tag`. The recipes bump version metadata, run pre-flight checks, land the bump on `main` through a release PR, tag, and push the tag. GitHub Actions then publishes to PyPI and updates the Homebrew formula.
-
-**Main requires PRs.** The `main` ruleset rejects direct pushes ("Changes must be made through a pull request") and the repo disallows merge commits, so the recipes push a `release/vX.Y.Z` branch, open a PR titled `chore(core): release vX.Y.Z`, rebase-merge it with `gh pr merge --rebase`, then tag the rebased bump commit on `main` (located by its commit subject, since rebasing rewrites the SHA) and push the tag. The CHANGELOG entry for the version must already be on `main` — land it via a normal PR before running the recipe (it pre-flight-checks for a `## vX.Y.Z` heading).
-
-**Stable release:**
-
-```
-just release v0.21.3
-```
-
-The recipe runs `just lint` + `just typecheck`, then updates every release manifest through `scripts/update_versions.py`: `src/basic_memory/__init__.py`, `server.json`, the root Claude marketplace, the Claude Code plugin manifest and local marketplace, the Hermes `plugin.yaml`, and the OpenClaw `package.json`. It commits as `chore: update version to X.Y.Z for vX.Y.Z release` on a `release/vX.Y.Z` branch, lands it on `main` via a rebase-merged PR, then tags the rebased commit and pushes the tag. After the tag lands, the `Release` workflow builds the Python package, publishes to PyPI, creates the GitHub release with auto-generated notes, publishes the OpenClaw npm package, and updates the Homebrew formula. The recipe finishes by printing the post-release tasks the workflow doesn't cover.
-
-**Beta release:** `just beta v0.21.3b1` — same flow with a beta-suffixed tag. PyPI consumers install with `pip install basic-memory --pre`.
-
-**Release dry run:** `just release-dry-run v0.21.4` previews the consolidated version update without writing files.
-
-**Development builds:** every commit to `main` publishes a `0.21.3.dev26+468a22f`-style version to PyPI automatically via `.github/workflows/dev-release.yml`. No human action.
-
-**Do not tag releases by hand.** A bare `git tag vX.Y.Z` skips the in-code version bump. Package metadata is still correct (uv-dynamic-versioning derives it from the git tag) but `basic-memory --version` reports the previous release, which is what happened with v0.21.2 → v0.21.3.
-
-**Post-release tasks** the recipe surfaces but doesn't run:
-- `docs.basicmemory.com` — add a What's New page under `content/2.whats-new/` and bump the version badge in `content/index.md` (the changelog page auto-fetches GitHub releases; see that repo's CLAUDE.md version-bump checklist)
-- `basicmemory.com` — the marketing site (Astro + React, repo
-  `basicmachines-co/basicmemory.com`, formerly `basicmachines.co`) carries **no
-  hardcoded version number** in its UI, so there is nothing to bump. For a
-  significant release, optionally add a dated announcement post under
-  `src/content/blog/` (model it on an existing `basic-memory-vX-Y-Z-release.md`).
-  Skip entirely for routine patch releases.
-- MCP Registry — `mcp-publisher publish` from the repo root
-
-See `.claude/commands/release/release.md` (and `beta.md`, `release-check.md`, `changelog.md` alongside it) for the full release + post-release runbook, including the slash commands.
+Auth happens at client creation, not per-request, and the context manager owns the lifecycle. Do
+**not** use the deprecated module-level `async_client.client`, hand-rolled auth headers, or a
+separate `get_client()` + `get_active_project()` pair inside an MCP tool.
 
 ## BASIC MEMORY PRODUCT USAGE
 
@@ -552,204 +312,29 @@ See `.claude/commands/release/release.md` (and `beta.md`, `release-check.md`, `c
 
 ### Basic Memory Commands
 
-**Local Commands:**
-- Check sync status: `basic-memory status`
-- Doctor check (file <-> DB loop): `basic-memory doctor`
-- Import from Claude: `basic-memory import claude conversations`
-- Import from ChatGPT: `basic-memory import chatgpt`
-- Import from Memory JSON: `basic-memory import memory-json`
-- Tool access: `basic-memory tool` (provides CLI access to MCP tools)
-    - Continue: `basic-memory tool continue-conversation --topic="search"`
+- Sync status: `basic-memory status` · file ↔ DB check: `basic-memory doctor`
+- Projects: `project list` / `project add "name" ~/path` / `project info` / `project check`
+- Config: `config list` (effective values, env overrides marked) / `config get <key>` /
+  `config set <key> <value>` (validated through the config model) / `config unset <key>`
+- MCP tools from the shell: `basic-memory tool <tool-name>` — e.g.
+  `basic-memory tool continue-conversation --topic="search"`. Note this path imports the MCP tool
+  layer and costs ~4 s; see the measured baseline above.
+- Importers: `import claude conversations` / `import chatgpt` / `import memory-json` — all strip
+  candidates.
 
-**Config Management:**
-- List all settings (effective values, env overrides marked): `basic-memory config list`
-- Get one setting: `basic-memory config get cli_output_style`
-- Set a setting (validated through the config model): `basic-memory config set cli_output_style plain`
-- Revert a setting to its default: `basic-memory config unset cli_output_style`
-
-**Project Management:**
-- List projects: `basic-memory project list`
-- Add project: `basic-memory project add "name" ~/path`
-- Project info: `basic-memory project info`
-- Set cloud mode: `basic-memory project set-cloud "name"`
-- Set local mode: `basic-memory project set-local "name"`
-- One-way sync (local -> cloud): `basic-memory project sync`
-- Bidirectional sync: `basic-memory project bisync`
-- Integrity check: `basic-memory project check`
-
-**Cloud Commands (requires subscription):**
-- Authenticate (global): `basic-memory cloud login`
-- Logout (global): `basic-memory cloud logout`
-- Check cloud status: `basic-memory cloud status`
-- Setup cloud sync: `basic-memory cloud setup`
-- Save API key: `basic-memory cloud set-key bmc_...`
-- Create API key: `basic-memory cloud create-key "name"`
-- Manage snapshots: `basic-memory cloud snapshot [create|list|delete|show|browse]`
-- Restore from snapshot: `basic-memory cloud restore <path> --snapshot <id>`
-
-**Cloud Sync Commands (Personal and Team workspaces):**
-- Fetch cloud changes (cloud -> local): `basic-memory cloud pull --name "name"` (Team-safe; additive, never deletes local)
-- Upload local changes (local -> cloud): `basic-memory cloud push --name "name"` (Team-safe; additive, never deletes cloud)
-- Resolve conflicts on push/pull: `--on-conflict [fail|keep-local|keep-cloud|keep-both]` (default `fail` lists conflicts and aborts, git-style)
-- One-way mirror (local -> cloud): `basic-memory cloud sync --name "name"` (Personal workspaces only; deletes cloud files missing locally)
-- Two-way mirror (local <-> cloud): `basic-memory cloud bisync --name "name"` (Personal workspaces only)
+Cloud commands (`cloud login`, `cloud sync`, `cloud bisync`, `project set-cloud`, …) exist upstream
+and are scheduled for deletion here. Don't build on them.
 
 ### MCP Capabilities
 
-- Basic Memory exposes these MCP tools to LLMs:
+Tools live in `src/basic_memory/mcp/tools/`, prompts in `src/basic_memory/mcp/prompts/`. Tools
+should be atomic and composable. Read the module for exact signatures — the surface is:
 
-  **Content Management:**
-    - `write_note(title, content, directory, tags)` - Create/update markdown notes with semantic observations and relations
-    - `read_note(identifier, page, page_size)` - Read notes by title, permalink, or memory:// URL with knowledge graph awareness
-    - `read_content(path)` - Read raw file content (text, images, binaries) without knowledge graph processing
-    - `view_note(identifier, page, page_size)` - View notes as formatted artifacts for better readability
-    - `edit_note(identifier, operation, content)` - Edit notes incrementally (append, prepend, find/replace, replace_section)
-    - `move_note(identifier, destination_path, is_directory)` - Move notes or directories to new locations, updating database and maintaining links
-    - `delete_note(identifier, is_directory)` - Delete notes or directories from the knowledge base
-
-  **Knowledge Graph Navigation:**
-    - `build_context(url, depth, timeframe)` - Navigate the knowledge graph via memory:// URLs for conversation continuity
-    - `recent_activity(type, depth, timeframe)` - Get recently updated information with specified timeframe (e.g., "1d", "1 week")
-    - `list_directory(dir_name, depth, file_name_glob)` - Browse directory contents with filtering and depth control
-
-  **Search & Discovery:**
-    - `search_notes(query, page, page_size, search_type, types, entity_types, after_date)` - Full-text search across all content with advanced filtering options
-
-  **Project Management:**
-    - `list_memory_projects()` - List all available projects with their status
-    - `create_memory_project(project_name, project_path, set_default)` - Create new Basic Memory projects
-    - `delete_project(project_name)` - Delete a project from configuration
-
-  **ChatGPT-Compatible Tools:**
-    - `search(query)` - Search across knowledge base (OpenAI actions compatible)
-    - `fetch(id)` - Fetch full content of a search result document
-
-- MCP Prompts for better AI interaction:
-    - `ai_assistant_guide()` - Guidance on effectively using Basic Memory tools for AI assistants
-    - `continue_conversation(topic, timeframe)` - Continue previous conversations with relevant historical context
-    - `search(query, after_date)` - Search with detailed, formatted results for better context understanding
-    - `recent_activity(timeframe)` - View recently changed items with formatted output
-
-### Cloud Features (v0.15.0+)
-
-Basic Memory now supports cloud synchronization and storage (requires active subscription):
-
-**Authentication:**
-- JWT-based authentication with subscription validation
-- Secure session management with token refresh
-- Support for multiple cloud projects
-
-**Bidirectional Sync:**
-- rclone bisync integration for two-way synchronization
-- Conflict resolution and integrity verification
-- Real-time sync with change detection
-- Mount/unmount cloud storage for direct file access
-
-**Cloud Project Management:**
-- Create and manage projects in the cloud
-- Toggle between local and cloud modes
-- Per-project sync configuration
-- Subscription-based access control
-
-**Security & Performance:**
-- Removed .env file loading for improved security
-- .gitignore integration (respects gitignored files)
-- WAL mode for SQLite performance
-- Background relation resolution (non-blocking startup)
-- API performance optimizations (SPEC-11)
-
-**Per-Project Cloud Routing:**
-
-Individual projects can be routed through the cloud while others stay local, using an API key:
-
-```bash
-# Save API key and set project to cloud mode
-basic-memory cloud set-key bmc_abc123...
-basic-memory project set-cloud research    # route through cloud
-basic-memory project set-local research    # revert to local
-```
-
-MCP tools use `get_project_client()` which automatically routes based on the project's mode. Cloud projects use the `cloud_api_key` from config as Bearer token.
-
-**CLI Routing Flags (Global Cloud Mode):**
-
-When global cloud mode is enabled, CLI commands route to the cloud API by default. Use `--local` and `--cloud` flags to override:
-
-```bash
-# Force local routing (ignore cloud mode)
-basic-memory status --local
-basic-memory project list --local
-
-# Force cloud routing (when cloud mode is disabled)
-basic-memory status --cloud
-basic-memory project info my-project --cloud
-```
-
-Key behaviors:
-- The local MCP server (`basic-memory mcp`) automatically uses local routing
-- This allows simultaneous use of local Claude Desktop and cloud-based clients
-- Some commands (like `project default`, `project sync-config`, `project move`) require `--local` in cloud mode since they modify local configuration
-- Environment variable `BASIC_MEMORY_FORCE_LOCAL=true` forces local routing globally
-- Per-project cloud routing via API key works independently of global cloud mode
-
-## AI-Human Collaborative Development
-
-Basic Memory emerged from and enables a new kind of development process that combines human and AI capabilities. Instead
-of using AI just for code generation, we've developed a true collaborative workflow:
-
-1. AI (LLM) writes initial implementation based on specifications and context
-2. Human reviews, runs tests, and commits code with any necessary adjustments
-3. Knowledge persists across conversations using Basic Memory's knowledge graph
-4. Development continues seamlessly across different AI sessions with consistent context
-5. Results improve through iterative collaboration and shared understanding
-
-This approach has allowed us to tackle more complex challenges and build a more robust system than either humans or AI
-could achieve independently.
-
-**Problem-Solving Guidance:**
-- If a solution isn't working after reasonable effort, suggest alternative approaches
-- Don't persist with a problematic library or pattern when better alternatives exist
-- Example: When py-pglite caused cascading test failures, switching to testcontainers-postgres was the right call
-
-## GitHub Integration
-
-Basic Memory has taken AI-Human collaboration to the next level by integrating Claude directly into the development workflow through GitHub:
-
-### GitHub MCP Tools
-
-Using the GitHub Model Context Protocol server, Claude can now:
-
-- **Repository Management**:
-  - View repository files and structure
-  - Read file contents
-  - Create new branches
-  - Create and update files
-
-- **Issue Management**:
-  - Create new issues
-  - Comment on existing issues
-  - Close and update issues
-  - Search across issues
-
-- **Pull Request Workflow**:
-  - Create pull requests
-  - Review code changes
-  - Add comments to PRs
-
-This integration enables Claude to participate as a full team member in the development process, not just as a code generation tool. Claude's GitHub account ([bm-claudeai](https://github.com/bm-claudeai)) is a member of the Basic Machines organization with direct contributor access to the codebase.
-
-### Collaborative Development Process
-
-With GitHub integration, the development workflow includes:
-
-1. **Direct code review** - Claude can analyze PRs and provide detailed feedback
-2. **Contribution tracking** - All of Claude's contributions are properly attributed in the Git history
-3. **Branch management** - Claude can create feature branches for implementations
-4. **Documentation maintenance** - Claude can keep documentation updated as the code evolves
-5. **Code Commits**: ALWAYS sign off commits with `git commit -s`
-6. **Pull Request Titles**: PR titles must follow the semantic format enforced by `.github/workflows/pr-title.yml`: `type(scope): summary`
-   - Allowed types: `feat`, `fix`, `chore`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`
-   - Allowed scopes: `core`, `cli`, `api`, `mcp`, `sync`, `ui`, `ci`, `deps`, `installer`, `plugins`, `skills`, `integrations`
-   - Example: `fix(cli): propagate cloud workspace routing`
-
-This level of integration represents a new paradigm in AI-human collaboration, where the AI assistant becomes a full-fledged team member rather than just a tool for generating code snippets.
+- **Content** — `write_note`, `read_note`, `read_content` (raw bytes, no graph processing),
+  `view_note`, `edit_note` (append / prepend / find-replace / replace_section), `move_note`,
+  `delete_note`
+- **Graph navigation** — `build_context` (memory:// URLs), `recent_activity`, `list_directory`
+- **Search** — `search_notes`
+- **Projects** — `list_memory_projects`, `create_memory_project`, `delete_project`
+- **ChatGPT-compatible** — `search`, `fetch`
+- **Prompts** — `ai_assistant_guide`, `continue_conversation`, `search`, `recent_activity`

@@ -537,310 +537,81 @@ check: lint format typecheck
 # Run all code quality checks and all test suites, including semantic benchmarks
 check-all: lint format typecheck test test-semantic
 
-# Validate every consolidated agent package (Claude Code, Codex, skills, Hermes, OpenClaw)
-package-check: package-check-claude-code package-check-codex package-check-skills package-check-hermes package-check-openclaw
-
-# Alias for plugin/package validation during consolidation work
-plugins-check: package-check
-
-# Validate the host-native agent harnesses
-agent-harness-check: package-check-claude-code package-check-hermes package-check-openclaw
-
-# Claude Code plugin: manifests, bundled skills, bundled agent, and strict plugin validation
-package-check-claude-code:
-    just --justfile plugins/claude-code/justfile --working-directory plugins/claude-code check
-
-# Codex plugin: manifest, bundled skills, hooks, MCP config, and schemas
-package-check-codex:
-    just --justfile plugins/codex/justfile --working-directory plugins/codex check
-
-# Shared top-level SKILL.md source
-package-check-skills:
-    just --justfile skills/justfile --working-directory skills check
-
-# Hermes plugin: native manifest plus hermetic unit test suite
-package-check-hermes:
-    just --justfile integrations/hermes/justfile --working-directory integrations/hermes check
-
-# OpenClaw plugin: install deps, copy skills, typecheck, lint, build, test, and npm pack dry-run
-package-check-openclaw:
-    just --justfile integrations/openclaw/justfile --working-directory integrations/openclaw install
-    just --justfile integrations/openclaw/justfile --working-directory integrations/openclaw release-check
-
 # Generate Alembic migration with descriptive message
 migration message:
     cd src/basic_memory/alembic && alembic revision --autogenerate -m "{{message}}"
 
-# Set the Basic Memory version across release manifests (scope: all | core | packages)
-set-version version scope="all":
-    python3 scripts/update_versions.py "{{version}}" --scope "{{scope}}"
 
-# Pin the Basic Memory Git ref used by all Codex uv hook scripts.
-set-codex-hook-version ref:
-    uv add --script plugins/codex/hooks/session_start.py --raw "basic-memory @ git+https://github.com/basicmachines-co/basic-memory@{{ref}}"
-    uv add --script plugins/codex/hooks/pre_compact.py --raw "basic-memory @ git+https://github.com/basicmachines-co/basic-memory@{{ref}}"
+# --- Release ---
+# A release here is a git tag and nothing else. Nothing is published: the
+# installable artifact is this checkout, and uv-dynamic-versioning derives the
+# package version from the tag at install time. See .forked/release-design.md.
 
-# Preview a version update without writing (scope: all | core | packages)
-set-version-dry-run version scope="all":
-    python3 scripts/update_versions.py "{{version}}" --scope "{{scope}}" --dry-run
+# The one gate. Run before pushing anything you would be sad to break.
+gate:
+    just lint
+    just typecheck
+    just test-unit-sqlite
 
-# Set the version for just the plugin/agent artifacts (plugins, marketplaces, Hermes, OpenClaw)
-set-packages-version version:
-    just set-version "{{version}}" packages
-
-# Preview a plugin/agent-artifact version update without writing
-set-packages-version-dry-run version:
-    just set-version-dry-run "{{version}}" packages
-
-# Preview the consolidated manifest version update without changing files
-release-dry-run version:
-    just set-version-dry-run "{{version}}"
-
-# Create a stable release (e.g., just release v0.13.2)
+# Cut a release tag (e.g. just release v0.23.0)
 release version:
     #!/usr/bin/env bash
     set -euo pipefail
-    
-    # Validate version format
+
     if [[ ! "{{version}}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-        echo "❌ Invalid version format. Use: v0.13.2"
+        echo "Invalid version. Use: v0.23.0"
         exit 1
     fi
-    
-    # Extract version number without 'v' prefix
     VERSION_NUM=$(echo "{{version}}" | sed 's/^v//')
-    
-    echo "🚀 Creating stable release {{version}}"
-    
-    # Pre-flight checks
-    echo "📋 Running pre-flight checks..."
-    if [[ -n $(git status --porcelain) ]]; then
-        echo "❌ Uncommitted changes found. Please commit or stash them first."
-        exit 1
-    fi
-    
-    if [[ $(git branch --show-current) != "main" ]]; then
-        echo "❌ Not on main branch. Switch to main first."
-        exit 1
-    fi
-    
-    # Check if tag already exists
-    if git tag -l "{{version}}" | grep -q "{{version}}"; then
-        echo "❌ Tag {{version}} already exists"
-        exit 1
-    fi
 
-    # Changelog must already be on main (land it via a normal PR first)
-    if ! grep -q "^## {{version}} " CHANGELOG.md; then
-        echo "❌ CHANGELOG.md has no entry for {{version}}. Land one via PR first."
-        exit 1
-    fi
+    # Trigger: dirty tree, wrong branch, or a tag that already exists.
+    # Why: a tag must name a state reachable from the remote; a dirty tree
+    # would tag code nobody else can get. This fork has one line of history.
+    # Outcome: abort before anything is written.
+    [[ -z "$(git status --porcelain)" ]] || { echo "Uncommitted changes."; exit 1; }
+    [[ "$(git branch --show-current)" == "main" ]] || { echo "Not on main."; exit 1; }
+    ! git rev-parse -q --verify "refs/tags/{{version}}" >/dev/null \
+        || { echo "Tag {{version}} already exists."; exit 1; }
 
-    # Run quality checks
-    echo "🔍 Running lint  checks..."
-    just lint
-    just typecheck
+    just gate
 
-    # Update all package manifests to the one Basic Memory product version.
-    echo "📝 Updating consolidated package versions..."
-    just set-version "{{version}}"
-    just set-codex-hook-version "{{version}}"
+    # Trigger: __version__ in src/basic_memory/__init__.py is a hardcoded
+    # literal that only moves on release.
+    # Why: `basic-memory --version` reads it, so tagging without this bump makes
+    # --version report the previous release (upstream hit exactly this on
+    # v0.21.2 -> v0.21.3).
+    # Outcome: one file changes. Delete this block once __version__ is derived
+    # from importlib.metadata, at which point this recipe writes no files.
+    sed -i -E "s/^__version__ = \".*\"$/__version__ = \"${VERSION_NUM}\"/" \
+        src/basic_memory/__init__.py
+    git diff --quiet src/basic_memory/__init__.py \
+        || git commit -m "chore: version ${VERSION_NUM}" src/basic_memory/__init__.py
 
-    # Trigger: main's ruleset rejects direct pushes ("Changes must be made
-    # through a pull request").
-    # Why: the version bump must land on main before the tag is cut, so it
-    # rides a release PR that is rebase-merged (the repo disallows merge
-    # commits).
-    # Outcome: the bump commit gets a new SHA on main; the tag is created on
-    # that rebased commit, found by its commit subject.
-    COMMIT_SUBJECT="chore: update version to $VERSION_NUM for {{version}} release"
-    git checkout -b "release/{{version}}"
-    git add \
-        src/basic_memory/__init__.py \
-        server.json \
-        .claude-plugin/marketplace.json \
-        plugins/claude-code/.claude-plugin/plugin.json \
-        plugins/claude-code/.claude-plugin/marketplace.json \
-        plugins/codex/.codex-plugin/plugin.json \
-        plugins/codex/hooks/session_start.py \
-        plugins/codex/hooks/pre_compact.py \
-        integrations/hermes/plugin.yaml \
-        integrations/hermes/__init__.py \
-        integrations/openclaw/package.json
-    git commit -s -m "$COMMIT_SUBJECT"
+    git tag -a "{{version}}" -m "{{version}}"
+    git push origin main "{{version}}"
 
-    echo "📤 Opening release PR..."
-    git push -u origin "release/{{version}}"
-    gh pr create --title "chore(core): release {{version}}" \
-        --body "Version bump for {{version}}. See CHANGELOG.md for release notes."
+    echo
+    echo "Tagged {{version}}. Nothing was published - that is correct."
+    echo "Install/upgrade locally:"
+    echo "    uv tool install --reinstall $(pwd)"
+    echo "On another machine:"
+    echo "    uv tool install --reinstall 'git+https://github.com/noahkiss/basic-memory@{{version}}'"
+    echo
+    echo "Migrations auto-apply on first run. Before upgrading across a schema"
+    echo "change, snapshot the index:  cp ~/.basic-memory/memory.db{,.bak}"
+    echo "Recovery if the index goes bad:  bm reset --reindex"
 
-    # Trigger: the PR may not be mergeable synchronously (merge gates,
-    # required checks added later, or GitHub still computing mergeability).
-    # Why: the tag must point at the bump commit on main, so the recipe
-    # cannot tag until the merge has actually landed.
-    # Outcome: try a direct rebase-merge, fall back to queueing auto-merge,
-    # then poll main for the rebased bump commit before tagging.
-    if ! gh pr merge "release/{{version}}" --rebase --delete-branch; then
-        echo "⚠️  Direct merge did not complete (merge gates pending?). Queueing auto-merge..."
-        gh pr merge "release/{{version}}" --rebase --delete-branch --auto
-    fi
-
-    echo "⏳ Waiting for the bump commit to land on main..."
-    TAG_COMMIT=""
-    for _ in $(seq 1 60); do
-        git fetch origin main --quiet
-        TAG_COMMIT=$(git log FETCH_HEAD --fixed-strings --grep "$COMMIT_SUBJECT" --format='%H' -1)
-        [[ -n "$TAG_COMMIT" ]] && break
-        sleep 5
-    done
-    if [[ -z "$TAG_COMMIT" ]]; then
-        echo "❌ Bump commit not on main after 5 minutes (merge still pending?)."
-        echo "   Once the release PR merges, finish the release manually:"
-        echo "   git fetch origin main"
-        echo "   git tag {{version}} \$(git log FETCH_HEAD --fixed-strings --grep \"$COMMIT_SUBJECT\" --format='%H' -1)"
-        echo "   git push origin {{version}}"
-        exit 1
-    fi
-
-    git checkout main
-    git pull --ff-only origin main
-    git branch -D "release/{{version}}" 2>/dev/null || true
-
-    echo "🏷️  Creating tag {{version}} at $TAG_COMMIT..."
-    git tag "{{version}}" "$TAG_COMMIT"
-    git push origin "{{version}}"
-
-    echo "✅ Release {{version}} created successfully!"
-    echo "📦 GitHub Actions will build and publish to PyPI"
-    echo "🔗 Monitor at: https://github.com/basicmachines-co/basic-memory/actions"
-    echo ""
-    echo "📝 REMINDER: Post-release tasks:"
-    echo "   1. docs.basicmemory.com - Add a What's New page under content/2.whats-new/"
-    echo "      and bump the badge in content/index.md (see that repo's CLAUDE.md)"
-    echo "   2. basicmemory.com - No version number in the site UI; for a significant"
-    echo "      release optionally add a post under src/content/blog/. Skip for patches."
-    echo "   3. MCP Registry - Run: mcp-publisher publish"
-    echo "   See: .claude/commands/release/release.md for detailed instructions"
-
-# Create a beta release (e.g., just beta v0.13.2b1)
-beta version:
+# Show what `just release` would tag, without writing or pushing anything
+release-preview version:
     #!/usr/bin/env bash
     set -euo pipefail
-    
-    # Validate version format (allow beta/rc suffixes)
-    if [[ ! "{{version}}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(b[0-9]+|rc[0-9]+)$ ]]; then
-        echo "❌ Invalid beta version format. Use: v0.13.2b1 or v0.13.2rc1"
-        exit 1
-    fi
-    
-    # Extract version number without 'v' prefix
-    VERSION_NUM=$(echo "{{version}}" | sed 's/^v//')
-    
-    echo "🧪 Creating beta release {{version}}"
-    
-    # Pre-flight checks
-    echo "📋 Running pre-flight checks..."
-    if [[ -n $(git status --porcelain) ]]; then
-        echo "❌ Uncommitted changes found. Please commit or stash them first."
-        exit 1
-    fi
-    
-    if [[ $(git branch --show-current) != "main" ]]; then
-        echo "❌ Not on main branch. Switch to main first."
-        exit 1
-    fi
-    
-    # Check if tag already exists
-    if git tag -l "{{version}}" | grep -q "{{version}}"; then
-        echo "❌ Tag {{version}} already exists"
-        exit 1
-    fi
-    
-    # Run quality checks
-    echo "🔍 Running lint  checks..."
-    just lint
-    just typecheck
-    
-    # Update all package manifests to the one Basic Memory product version.
-    echo "📝 Updating consolidated package versions..."
-    just set-version "{{version}}"
-    just set-codex-hook-version "{{version}}"
-
-    # Trigger: main's ruleset rejects direct pushes ("Changes must be made
-    # through a pull request").
-    # Why: the version bump must land on main before the tag is cut, so it
-    # rides a release PR that is rebase-merged (the repo disallows merge
-    # commits).
-    # Outcome: the bump commit gets a new SHA on main; the tag is created on
-    # that rebased commit, found by its commit subject.
-    COMMIT_SUBJECT="chore: update version to $VERSION_NUM for {{version}} beta release"
-    git checkout -b "release/{{version}}"
-    git add \
-        src/basic_memory/__init__.py \
-        server.json \
-        .claude-plugin/marketplace.json \
-        plugins/claude-code/.claude-plugin/plugin.json \
-        plugins/claude-code/.claude-plugin/marketplace.json \
-        plugins/codex/.codex-plugin/plugin.json \
-        plugins/codex/hooks/session_start.py \
-        plugins/codex/hooks/pre_compact.py \
-        integrations/hermes/plugin.yaml \
-        integrations/hermes/__init__.py \
-        integrations/openclaw/package.json
-    git commit -s -m "$COMMIT_SUBJECT"
-
-    echo "📤 Opening release PR..."
-    git push -u origin "release/{{version}}"
-    gh pr create --title "chore(core): release {{version}}" \
-        --body "Version bump for {{version}} beta."
-
-    # Trigger: the PR may not be mergeable synchronously (merge gates,
-    # required checks added later, or GitHub still computing mergeability).
-    # Why: the tag must point at the bump commit on main, so the recipe
-    # cannot tag until the merge has actually landed.
-    # Outcome: try a direct rebase-merge, fall back to queueing auto-merge,
-    # then poll main for the rebased bump commit before tagging.
-    if ! gh pr merge "release/{{version}}" --rebase --delete-branch; then
-        echo "⚠️  Direct merge did not complete (merge gates pending?). Queueing auto-merge..."
-        gh pr merge "release/{{version}}" --rebase --delete-branch --auto
-    fi
-
-    echo "⏳ Waiting for the bump commit to land on main..."
-    TAG_COMMIT=""
-    for _ in $(seq 1 60); do
-        git fetch origin main --quiet
-        TAG_COMMIT=$(git log FETCH_HEAD --fixed-strings --grep "$COMMIT_SUBJECT" --format='%H' -1)
-        [[ -n "$TAG_COMMIT" ]] && break
-        sleep 5
-    done
-    if [[ -z "$TAG_COMMIT" ]]; then
-        echo "❌ Bump commit not on main after 5 minutes (merge still pending?)."
-        echo "   Once the release PR merges, finish the release manually:"
-        echo "   git fetch origin main"
-        echo "   git tag {{version}} \$(git log FETCH_HEAD --fixed-strings --grep \"$COMMIT_SUBJECT\" --format='%H' -1)"
-        echo "   git push origin {{version}}"
-        exit 1
-    fi
-
-    git checkout main
-    git pull --ff-only origin main
-    git branch -D "release/{{version}}" 2>/dev/null || true
-
-    echo "🏷️  Creating tag {{version}} at $TAG_COMMIT..."
-    git tag "{{version}}" "$TAG_COMMIT"
-    git push origin "{{version}}"
-
-    echo "✅ Beta release {{version}} created successfully!"
-    echo "📦 GitHub Actions will build and publish to PyPI as pre-release"
-    echo "🔗 Monitor at: https://github.com/basicmachines-co/basic-memory/actions"
-    echo "📥 Install with: uv tool install basic-memory --pre"
-    echo ""
-    echo "📝 REMINDER: For stable releases, update documentation sites:"
-    echo "   1. docs.basicmemory.com - Add a What's New page under content/2.whats-new/"
-    echo "      and bump the badge in content/index.md (see that repo's CLAUDE.md)"
-    echo "   2. basicmemory.com - No version number in the site UI; for a significant"
-    echo "      release optionally add a post under src/content/blog/. Skip for patches."
-    echo "   See: .claude/commands/release/release.md for detailed instructions"
+    # `skills-latest` is a moving tag left by the deleted publish-skills
+    # workflow and sorts newer than every version tag, so an unfiltered
+    # describe reports nonsense. Match only release tags.
+    echo "would tag:    {{version}}"
+    echo "at commit:    $(git rev-parse --short HEAD)"
+    echo "current desc: $(git describe --tags --always --dirty --match 'v[0-9]*')"
+    echo "__version__:  $(grep -m1 '^__version__' src/basic_memory/__init__.py | cut -d'"' -f2)"
 
 # List all available recipes
 default:

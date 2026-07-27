@@ -447,6 +447,144 @@ a non-empty result alone. Fork fix removes the lie; the verb-level check enforce
 Upstream states a "fail-fast / no-silent-fallback" house style (see #1151) and would probably take
 this, but we do not track upstream — reporting it is a courtesy, not a dependency.
 
+### T11 — no newer-schema guard: an older build over a newer DB dies in a raw stack trace
+**Found:** 2026-07-27, in `.forked/release-design.md` §2. Code sites re-verified before recording.
+
+`run_migrations` (`src/basic_memory/db.py:525`) builds the Alembic config and calls
+`command.upgrade(config, "head")` at `db.py:554`. It never reads the database's `alembic_version`
+to compare it against the code's head revision, and nothing in `src/` ever calls
+`command.downgrade`:
+
+```
+$ grep -rn "alembic_version\|command.downgrade\|get_current_head\|MigrationContext" src/ | grep -v "/alembic/"
+src/basic_memory/db.py:530:    Note: Alembic tracks which migrations have been applied via the alembic_version table,
+```
+
+One hit in the whole of `src/` outside the migration directory itself, and it is a **comment**.
+So installing an *older* build over a database a *newer* build already migrated raises out of the
+generic `except Exception` re-raise at `db.py:577-579` — the user gets Alembic's internal error and
+no actionable message.
+
+**Why it matters:** in this fork "upgrade" means `git pull` + reinstall, so **rollback is a normal
+operation**, not an exotic one — `git checkout <older-commit> && uv tool install --reinstall .` is
+one command away. Of all the migration hazards in this tree this is the only one that actually
+bites this install.
+
+**Fix:** read `alembic_version` before `command.upgrade`, and if it is a revision the shipped
+script directory does not contain, fail with something like "this database was migrated by a newer
+Basic Memory; reinstall the newer build or run `bm reset --reindex`".
+
+**The code evidence above is captured; the runtime repro is not.** By this file's own rule the
+crash *shape* is still a claim. To capture it: migrate on `main`, `git checkout` a commit before the
+newest migration, reinstall, run any command, and paste the traceback here.
+
+### T12 — `bm reset` claims your markdown is safe while unflushed writes live only in the DB
+**Found:** 2026-07-27, in `.forked/release-design.md` §2. Both sites re-verified before recording.
+
+`NoteContent` (`src/basic_memory/models/knowledge.py:159-224`) materializes `markdown_content` in
+the database alongside a `file_write_status` constrained to
+`{pending, writing, synced, failed, external_change_detected}`. While a row is `pending`,
+`writing`, or `failed`, **the database row is the only copy of that note** — it has not reached
+disk. But `bm reset` opens with the opposite promise (`src/basic_memory/cli/commands/db.py:201-204`):
+
+```python
+console.print(
+    "[yellow]Note:[/yellow] This only deletes the index database. "
+    "Your markdown note files will not be affected.\n"
+    "Use [green]bm reset --reindex[/green] to automatically rebuild the index afterward."
+)
+```
+
+That is true for `entity` / `observation` / `relation` / `search_index`, which are all derivable
+from the files. It is **false for un-flushed `note_content`**, which is derivable from nothing.
+The `--force` pre-flight guard covers live MCP processes holding the DB open; it says nothing about
+unflushed content.
+
+**Why it matters:** this is a data-loss path dressed as a safe operation, and it is reachable by
+following the tool's own advice. It also undercuts the "files are source of truth, the index is
+disposable" premise the whole fork design leans on — including D9 (store under the config dir),
+which was cleared specifically on the grounds that `bm reset` only drops the index and says so.
+
+**Fix, in descending order of preference:** flush pending rows to disk before unlinking; or refuse
+to reset while any row is `pending`/`writing`/`failed`, with `--force` to override; or at minimum
+correct the message so it stops asserting something that can be false.
+
+**Repro not yet captured** — needs a note held in `pending`/`failed` at reset time. Until then this
+is a documented contradiction between two code sites, not an observed loss.
+
+### T13 — a dependency reference naming `basic-memory` silently resolves to UPSTREAM
+**Found:** 2026-07-27, from `.forked/release-design.md` §5 and `.forked/hook-design.md`.
+
+**This is a standing rule, not just a bug list.** This fork is not published on PyPI, and its GitHub
+path is `noahkiss/basic-memory`, not `basicmachines-co/basic-memory`. Therefore **any** dependency
+spec anywhere in this tree that names `basic-memory` — a PEP 723 `# dependencies = [...]` header, a
+`pip`/`uv` install line executed by tooling, a `git+https://github.com/basicmachines-co/...` URL, a
+`github:basicmachines-co/...` source string — resolves to **upstream's code**, not this tree, and
+does so silently and with exit 0. The failure mode is upstream's binary running against this fork's
+data.
+
+The PEP 723 instances are gone (both offending Claude hook scripts were deleted this session):
+
+```
+$ grep -rIn -- "/// script" --exclude-dir=.git .
+.forked/release-design.md:538:**The PEP 723 bug from §5 is fully gone by deletion** — no `# /// script` header remains anywhere
+```
+
+The only hit is prose about the fix. Still live, all under `benchmarks/`:
+
+```
+$ grep -rn "basicmachines-co/basic-memory" benchmarks/
+benchmarks/justfile:242:      "basic-memory @ git+https://github.com/basicmachines-co/basic-memory@{{ref}}"
+benchmarks/src/basic_memory_benchmarks/cli.py:223:        "github:basicmachines-co/basic-memory@main",
+benchmarks/src/basic_memory_benchmarks/cli.py:385:    bm_source: str = typer.Option("github:basicmachines-co/basic-memory@main", "--bm-source"),
+benchmarks/src/basic_memory_benchmarks/models.py:214:    bm_source: str = "github:basicmachines-co/basic-memory@main"
+benchmarks/src/basic_memory_benchmarks/runner.py:47:    return resolve_remote_main_sha("https://github.com/basicmachines-co/basic-memory")
+benchmarks/docs/write-load-benchmark.md:31:   (`uv pip install 'basic-memory @ git+https://github.com/basicmachines-co/basic-memory@<ref>'`).
+```
+
+**Six live sites, not the three that were handed over** — `justfile:242` and `runner.py:47` are
+executable code that were missed, and `docs/write-load-benchmark.md:31` documents the same default
+to a human. (`benchmarks/docs/benchmarks.md:45` names `basicmachines-co/basic-memory-benchmarks`,
+a *different* repo, and is out of scope.)
+
+**Why it matters beyond the benchmarks:** these are the defaults, so `bm-source` unset means
+"benchmark upstream." That casts direct doubt on `AGENTS.md`'s "Measured baseline at the fork
+point" table — if any of those numbers came from this harness with the default source, they
+describe upstream's `main`, not this tree. Worth re-measuring before anything else is designed
+around them.
+
+**Fix:** repoint every executable default at this fork (or at the local working tree), and treat
+the rule above as a lint. `benchmarks/` is also a plausible strip-policy deletion candidate, which
+would close five of the six at once.
+
+### T14 — `skills-latest` is a stale moving tag that outranks every version tag
+**Found:** 2026-07-27, by `release-design` while building `just release-preview`.
+
+`skills-latest` was a moving tag maintained by `.github/workflows/publish-skills.yml`, which was
+deleted with the rest of `.github/` this session. The tag outlived it, and because it was created
+most recently, a bare `git describe` picks it over every `v*` tag:
+
+```
+$ git describe --tags
+skills-latest-87-gbd5c4d2c
+$ git describe --tags --match 'v[0-9]*'
+v0.22.1-133-gbd5c4d2c
+$ git ls-remote --tags origin | grep -i skills
+232f2c2fc4e91564d88bcc312ed3d8bd1e8e051b	refs/tags/skills-latest
+```
+
+It exists **both locally and on `origin`**, and it points at the fork point.
+
+**Why it matters:** it does not affect the package version — uv-dynamic-versioning goes through
+dunamai, which pattern-matches version tags rather than shelling out to a bare `describe`, which is
+why the installed build still reads `0.22.2.dev118+232f2c2f` correctly. What it corrupts is every
+*human-facing* `git describe` and anything scripted on one. `just release-preview` already works
+around it with `--match 'v[0-9]*'`; the source is unfixed, so the next tool to ask git "what version
+is this?" hits it again.
+
+**Fix:** delete the tag locally and on the remote. **Not done deliberately** — deleting a remote tag
+changes published state, and `noahkiss/basic-memory` is public. Needs the user's explicit go-ahead.
+
 ---
 
 ## BLOCKERS / gaps in capability
@@ -758,6 +896,20 @@ duplicated surface in this tree.
 `pgvector/pgvector:pg16` — verify it ran by filtering `docker ps` on that image or on label
 `org.testcontainers=true`, **not** `--filter ancestor=postgres`, which cannot match and produced a
 false "Postgres never ran" conclusion on 2026-07-26.
+
+### W14 — delete the `bm ci` GitHub CI-capture surface
+
+**Strip candidate, found 2026-07-27 while verifying the strip.** `src/basic_memory/cli/commands/ci.py`
++ `src/basic_memory/ci/project_updates.py` + `tests/cli/test_ci_commands.py` scaffold a
+`.github/workflows/basic-memory.yml` into a *target* repo so a GitHub Action can write project-update
+notes. It survived the 2026-07-27 strip only because it writes into `tmp_path` in tests and so kept
+passing after `.github/` was deleted — it was never judged on merit.
+
+This fork runs no CI, opens no PRs, and has no `.github/` of its own. Nothing here is a dependency of
+anything else. Same class as W12/W13: pure deletion, no replacement.
+
+Not urgent — it costs nothing at runtime (`ci` is one more entry in the `cli/commands` import list).
+Bundle it with W12 rather than making a pass of its own.
 
 ---
 

@@ -175,77 +175,12 @@ lock-in either way — flip between them when your needs change.
 | [Obsidian](#obsidian) | — | Reads/writes the same Markdown directly |
 | Anything MCP | stdio/https | If it speaks MCP, it works |
 
-## Official agent packages
+## Session briefings
 
-This repository is also the canonical home for Basic Memory's host-native
-agent packages. The core Python package, Claude Code plugin, shared skills,
-Hermes plugin, and OpenClaw plugin all ship from the same source tree.
-
-Maintainers can verify the whole consolidated surface from the repo root:
-
-```bash
-just package-check
-```
-
-Package-local justfiles are also available when working inside one host:
-
-```bash
-just package-check-claude-code
-just package-check-skills
-just package-check-hermes
-just package-check-openclaw
-```
-
-### Claude Code plugin
-
-The Claude Code plugin is the bridge between Claude's working memory and Basic
-Memory — session-start briefings, pre-compaction checkpoints, an opt-in capture
-output style, and `/basic-memory:bm-setup` · `:remember` · `:share` · `:status`.
-
-**Connect the Basic Memory MCP server first** — see [Connect your AI
-client](#connect-your-ai-client). The plugin's hooks and skills call it, so it's a
-hard prerequisite. Then add the marketplace and install:
-
-```bash
-claude plugin marketplace add basicmachines-co/basic-memory \
-  --sparse .claude-plugin plugins/claude-code
-claude plugin install basic-memory@basicmachines-co
-```
-
-Source: [`plugins/claude-code`](plugins/claude-code).
-
-### Shared skills
-
-Framework-agnostic `SKILL.md` files live in [`skills/`](skills). If your
-Skills CLI supports repository subdirectory sources:
-
-```bash
-npx skills add basicmachines-co/basic-memory/skills
-```
-
-If your installed Skills CLI cannot load that source, update the CLI or copy
-the `memory-*` directories from `skills/` into your agent's skills directory.
-
-### Hermes
-
-Hermes keeps its native plugin shape under [`integrations/hermes`](integrations/hermes):
-
-```bash
-hermes plugins install basicmachines-co/basic-memory --path integrations/hermes
-```
-
-If your Hermes build lacks subpath installs, use the final deprecated
-`basicmachines-co/hermes-basic-memory` pointer release until host support
-lands.
-
-### OpenClaw
-
-OpenClaw stays package-native and publishes from
-[`integrations/openclaw`](integrations/openclaw):
-
-```bash
-openclaw plugins install @basicmemory/openclaw-basic-memory
-```
+`bm brief` prints a session-start orientation — open tasks, open decisions, and
+recent sessions. Wire it into your agent by hand; this fork ships no plugin
+package. For Claude Code, add it as a `SessionStart` hook in
+`~/.claude/settings.json`.
 
 ## Pick up where you left off
 
@@ -282,9 +217,7 @@ Restart Claude Desktop. Notes live in `~/basic-memory` by default.
 claude mcp add basic-memory -- uvx basic-memory mcp
 ```
 
-For the full memory bridge — session briefings, pre-compaction checkpoints, and
-the `/basic-memory:*` commands — also install the [Claude Code
-plugin](#claude-code-plugin) on top of this.
+For session-start briefings, see [Session briefings](#session-briefings).
 
 ### Codex CLI
 
@@ -309,8 +242,7 @@ default_tools_approval_mode = "approve"
 This does not disable Codex approvals globally or expand which Basic Memory
 projects the server can access. Codex still requires approval for tools that
 advertise a destructive annotation, including Basic Memory's writes, edits, and
-deletes. If you installed the Basic Memory Codex plugin, use its
-[plugin-scoped configuration](plugins/codex/README.md#mcp-approvals) instead.
+deletes.
 
 ### Cursor
 
@@ -387,8 +319,6 @@ Try a prompt:
   runtime instead of guessing or burning tokens.
 - **CLI overhaul.** `--json` output for scripting, workspace-aware commands,
   and an htop-inspired project dashboard.
-
-Full [CHANGELOG](CHANGELOG.md) for v0.18 → v0.20.
 
 ## Why Basic Memory
 
@@ -626,20 +556,19 @@ just test-sqlite      # All tests, SQLite
 just test-postgres    # All tests, Postgres (testcontainers)
 just test             # Both backends
 just fast-check       # fix/format/typecheck + impacted tests
+just gate             # lint + typecheck + unit tests (pre-push gate)
 just doctor           # File <-> DB consistency check (temp config)
-just package-check    # Claude Code, skills, Hermes, OpenClaw package checks
 just lint
 just typecheck        # Pyright (primary)
 just typecheck-ty     # ty (supplemental)
 just format
 just check            # All quality checks
 just migration "msg"  # New Alembic migration
+just release v0.23.0  # Cut a release tag (publishes nothing)
 ```
 
 Tests use pytest markers: `windows`, `benchmark`, `smoke`. See
 [justfile](justfile) for the full list.
-
-Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
