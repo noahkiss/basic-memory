@@ -47,11 +47,58 @@ def test_parse_between_text():
 
 
 def test_parse_normalizes_scalar_types():
-    parsed = parse_metadata_filters({"flag": True, "created": date(2025, 1, 10), "ratio": 0.5})
+    parsed = parse_metadata_filters({"created": date(2025, 1, 10), "ratio": 0.5})
     values = {f.path_parts[0]: f.value for f in parsed}
-    assert values["flag"] == "True"
     assert values["created"] == "2025-01-10"
     assert values["ratio"] == "0.5"
+
+
+def test_parse_boolean_matches_both_stored_spellings():
+    """Unquoted YAML booleans index as "True"; quoted ones keep the author's spelling."""
+    assert parse_metadata_filters({"flag": True}) == [
+        ParsedMetadataFilter(["flag"], "in", ["True", "true"])
+    ]
+    assert parse_metadata_filters({"flag": False}) == [
+        ParsedMetadataFilter(["flag"], "in", ["False", "false"])
+    ]
+
+
+def test_parse_boolean_literal_strings():
+    """`--meta draft=true` arrives as a string and must still mean the boolean."""
+    assert parse_metadata_filters({"draft": "true"}) == [
+        ParsedMetadataFilter(["draft"], "in", ["True", "true"])
+    ]
+    assert parse_metadata_filters({"draft": "yes"}) == [
+        ParsedMetadataFilter(["draft"], "in", ["True", "yes"])
+    ]
+    assert parse_metadata_filters({"draft": "True"}) == [
+        ParsedMetadataFilter(["draft"], "in", ["True"])
+    ]
+
+
+def test_parse_non_boolean_string_is_unaffected():
+    assert parse_metadata_filters({"status": "truely"}) == [
+        ParsedMetadataFilter(["status"], "eq", "truely")
+    ]
+
+
+def test_parse_contains_operator():
+    assert parse_metadata_filters({"tags": {"$contains": "security"}}) == [
+        ParsedMetadataFilter(["tags"], "contains", ["security"])
+    ]
+    assert parse_metadata_filters({"tags": {"$contains": ["security", "oauth"]}}) == [
+        ParsedMetadataFilter(["tags"], "contains", ["security", "oauth"])
+    ]
+
+
+def test_parse_contains_rejects_empty_list():
+    with pytest.raises(ValueError, match="at least one value"):
+        parse_metadata_filters({"tags": {"$contains": []}})
+
+
+def test_unsupported_operator_names_the_supported_ones():
+    with pytest.raises(ValueError, match=r"Supported operators: .*\$contains"):
+        parse_metadata_filters({"tags": {"contains": "security"}})
 
 
 def test_invalid_filter_key():

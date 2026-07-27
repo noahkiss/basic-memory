@@ -20,6 +20,14 @@ Match a single value exactly.
 
 Finds notes whose frontmatter contains `status: active`.
 
+Equality is **element-wise against list-valued fields**: `{"supersedes": "tnd_aaaa1111"}` matches a
+note whose frontmatter carries `supersedes: [tnd_aaaa1111, tnd_bbbb2222]`. The match is exact — a
+value that is only a substring of an element is not a hit.
+
+Booleans match either stored spelling. An unquoted YAML boolean (`draft: true`) is indexed as the
+string `"True"`, while a quoted one keeps the author's text, so `{"draft": true}`, `{"draft":
+"true"}`, and `--meta draft=yes` all find both.
+
 ### Array Contains (all)
 
 Pass a list to require **all** listed values to be present in the field.
@@ -30,12 +38,23 @@ Pass a list to require **all** listed values to be present in the field.
 
 Finds notes tagged with both `security` and `oauth`.
 
+### `$contains` (any one element)
+
+Require a list-valued field to contain the given element. Pass a list to require all of them —
+the same semantics as the bare-list form, stated explicitly.
+
+```json
+{"tags": {"$contains": "security"}}
+```
+
 ### `$in` (any of)
 
-Match if the field equals **any** value in the list.
+Match if the field equals **any** value in the list. Against a list-valued field this is the
+contains-**any** (OR) form, since each candidate is compared element-wise.
 
 ```json
 {"priority": {"$in": ["high", "critical"]}}
+{"supersedes": {"$in": ["tnd_aaaa1111", "tnd_zzzz9999"]}}
 ```
 
 ### `$gt`, `$gte`, `$lt`, `$lte`
@@ -71,6 +90,7 @@ This queries the `version` key inside a `schema` object in frontmatter.
 |----------|--------|---------|
 | Equality | `{"field": "value"}` | `{"status": "active"}` |
 | Array contains (all) | `{"field": ["a", "b"]}` | `{"tags": ["security", "oauth"]}` |
+| `$contains` (any one) | `{"field": {"$contains": v}}` | `{"tags": {"$contains": "security"}}` |
 | `$in` (any of) | `{"field": {"$in": [...]}}` | `{"priority": {"$in": ["high", "critical"]}}` |
 | `$gt` / `$gte` | `{"field": {"$gt": N}}` | `{"confidence": {"$gt": 0.7}}` |
 | `$lt` / `$lte` | `{"field": {"$lt": N}}` | `{"score": {"$lt": 0.5}}` |

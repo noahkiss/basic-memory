@@ -16,6 +16,17 @@ _COMPARISON_OPERATORS = {
     "$lt": "lt",
     "$lte": "lte",
 }
+_SUPPORTED_OPERATORS = "$in, $contains, $gt, $gte, $lt, $lte, $between"
+
+# YAML 1.1 boolean literals PyYAML resolves to `bool` when parsing frontmatter.
+_BOOLEAN_LITERALS = {
+    "true": True,
+    "false": False,
+    "yes": True,
+    "no": False,
+    "on": True,
+    "off": False,
+}
 
 
 @dataclass(frozen=True)
@@ -54,6 +65,27 @@ def _normalize_scalar(value: Any) -> Any:
     return value
 
 
+def _boolean_match_values(value: Any) -> List[str] | None:
+    """Return the stored spellings a boolean-valued query must match, or None if not boolean.
+
+    An unquoted YAML boolean is indexed as `str(bool)` ("True"/"False"), while a quoted one
+    keeps whatever the author typed, and `--meta draft=true` arrives as the string "true".
+    Matching only one spelling turns the other into a zero-result answer that reads as
+    "no matches" -- the silent miss this exists to prevent.
+    """
+    if isinstance(value, bool):
+        canonical = str(value)
+        return [canonical, canonical.lower()]
+    if isinstance(value, str):
+        token = value.strip()
+        literal = _BOOLEAN_LITERALS.get(token.lower())
+        if literal is None:
+            return None
+        # dict.fromkeys preserves order and drops the duplicate when the caller typed "True"
+        return list(dict.fromkeys([str(literal), token]))
+    return None
+
+
 def _normalize_numeric(value: object) -> float:
     """Normalize a value already proven numeric by _is_numeric_value."""
     return float(cast(str | int | float, value))
@@ -65,7 +97,8 @@ def parse_metadata_filters(filters: dict[str, Any]) -> List[ParsedMetadataFilter
     Supported forms:
     - {"status": "in-progress"}
     - {"tags": ["security", "oauth"]}  # array contains all
-    - {"priority": {"$in": ["high", "critical"]}}
+    - {"tags": {"$contains": "security"}}  # array contains this element
+    - {"priority": {"$in": ["high", "critical"]}}  # any of, element-wise on lists
     - {"schema.confidence": {"$gt": 0.7}}
     - {"schema.confidence": {"$between": [0.3, 0.6]}}
     """
@@ -128,7 +161,22 @@ def parse_metadata_filters(filters: dict[str, Any]) -> List[ParsedMetadataFilter
                 parsed.append(ParsedMetadataFilter(path_parts, "between", normalized, comparison))
                 continue
 
-            raise ValueError(f"Unsupported operator '{op}' in metadata filter for '{raw_key}'")
+            # $contains states element-wise intent explicitly; a bare list means "all of".
+            if op == "$contains":
+                values = value if isinstance(value, list) else [value]
+                if not values:
+                    raise ValueError(f"$contains requires at least one value for '{raw_key}'")
+                parsed.append(
+                    ParsedMetadataFilter(
+                        path_parts, "contains", [_normalize_scalar(v) for v in values]
+                    )
+                )
+                continue
+
+            raise ValueError(
+                f"Unsupported operator '{op}' in metadata filter for '{raw_key}'. "
+                f"Supported operators: {_SUPPORTED_OPERATORS}"
+            )
 
         # Array contains (all)
         if isinstance(raw_value, list):
@@ -139,6 +187,12 @@ def parse_metadata_filters(filters: dict[str, Any]) -> List[ParsedMetadataFilter
                     path_parts, "contains", [_normalize_scalar(v) for v in raw_value]
                 )
             )
+            continue
+
+        # Boolean equality has two possible stored spellings, so it becomes a set membership.
+        boolean_values = _boolean_match_values(raw_value)
+        if boolean_values is not None:
+            parsed.append(ParsedMetadataFilter(path_parts, "in", boolean_values))
             continue
 
         # Simple equality

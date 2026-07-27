@@ -791,8 +791,11 @@ async def search_notes(
     Filters are exact matches on frontmatter metadata. Supported forms:
     - Equality: `{"status": "in-progress"}`
     - Array contains (all): `{"tags": ["security", "oauth"]}`
+    - Equality matches element-wise against list-valued fields, and matches either stored
+      spelling of a boolean: `{"supersedes": "tnd_aaaa1111"}`, `{"draft": true}`
     - Operators:
-      - `$in`: `{"priority": {"$in": ["high", "critical"]}}`
+      - `$contains`: `{"tags": {"$contains": "security"}}`
+      - `$in` (contains-any on list fields): `{"priority": {"$in": ["high", "critical"]}}`
       - `$gt`, `$gte`, `$lt`, `$lte`: `{"schema.confidence": {"$gt": 0.7}}`
       - `$between`: `{"schema.confidence": {"$between": [0.3, 0.6]}}`
     - Nested keys use dot notation (e.g., `"schema.confidence"`).

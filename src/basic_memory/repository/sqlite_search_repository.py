@@ -885,20 +885,35 @@ class SQLiteSearchRepository(SearchRepositoryBase):
                 if extract_expr is None:
                     params[path_param] = build_sqlite_json_path(filt.path_parts)
                     extract_expr = f"json_extract(entity.entity_metadata, :{path_param})"
+                    element_source = f"json_each(entity.entity_metadata, :{path_param})"
+                elif use_tags_column:
+                    element_source = "json_each(entity.tags_json)"
+                else:
+                    # The frontmatter_status / frontmatter_type shortcut columns are plain text
+                    # and can never hold a list, so there is nothing to iterate over.
+                    element_source = None
 
-                if filt.op == "eq":
-                    value_param = f"meta_val_{idx}"
-                    params[value_param] = filt.value
-                    conditions.append(f"{extract_expr} = :{value_param}")
-                    continue
-
-                if filt.op == "in":
-                    placeholders = []
-                    for j, val in enumerate(filt.value):
+                # Trigger: a scalar comparison against list-valued frontmatter.
+                # Why: json_extract returns the whole array ('["a"]'), which equals no scalar, so
+                # the query reported zero rows for a note it could see (GAPS T1).
+                # Outcome: scalar equality is OR'd with an exact element-wise match. json_each
+                # yields one row per element for a list and a single row for a scalar, so the
+                # EXISTS is correct for both shapes and stays exact (no substring matching).
+                if filt.op in {"eq", "in"}:
+                    candidates = filt.value if filt.op == "in" else [filt.value]
+                    clauses = []
+                    for j, val in enumerate(candidates):
                         value_param = f"meta_val_{idx}_{j}"
                         params[value_param] = val
-                        placeholders.append(f":{value_param}")
-                    conditions.append(f"{extract_expr} IN ({', '.join(placeholders)})")
+                        scalar_clause = f"{extract_expr} = :{value_param}"
+                        if element_source is None:
+                            clauses.append(scalar_clause)
+                            continue
+                        clauses.append(
+                            f"({scalar_clause} OR EXISTS ("
+                            f"SELECT 1 FROM {element_source} WHERE value = :{value_param}))"
+                        )
+                    conditions.append(f"({' OR '.join(clauses)})")
                     continue
 
                 if filt.op == "contains":

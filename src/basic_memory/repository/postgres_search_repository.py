@@ -840,19 +840,24 @@ class PostgresSearchRepository(SearchRepositoryBase):
                 text_expr = f"jsonb_extract_path_text({metadata_expr}, {path_args})"
                 json_expr = f"jsonb_extract_path({metadata_expr}, {path_args})"
 
-                if filt.op == "eq":
-                    value_param = f"meta_val_{idx}"
-                    params[value_param] = filt.value
-                    conditions.append(f"{text_expr} = :{value_param}")
-                    continue
-
-                if filt.op == "in":
-                    placeholders = []
-                    for j, val in enumerate(filt.value):
+                # Trigger: a scalar comparison against list-valued frontmatter.
+                # Why: jsonb_extract_path_text returns the whole array, which equals no scalar, so
+                # the query reported zero rows for a note it could see (GAPS T1).
+                # Outcome: scalar equality is OR'd with an exact containment test. `@>` against a
+                # single-element array matches list membership and never a substring.
+                if filt.op in {"eq", "in"}:
+                    candidates = filt.value if filt.op == "in" else [filt.value]
+                    clauses = []
+                    for j, val in enumerate(candidates):
                         value_param = f"meta_val_{idx}_{j}"
                         params[value_param] = val
-                        placeholders.append(f":{value_param}")
-                    conditions.append(f"{text_expr} IN ({', '.join(placeholders)})")
+                        element_param = f"{value_param}_element"
+                        params[element_param] = json.dumps([val])
+                        clauses.append(
+                            f"({text_expr} = :{value_param} "
+                            f"OR {json_expr} @> CAST(:{element_param} AS jsonb))"
+                        )
+                    conditions.append(f"({' OR '.join(clauses)})")
                     continue
 
                 if filt.op == "contains":
