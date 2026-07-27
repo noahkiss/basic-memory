@@ -37,9 +37,7 @@ venv/
 
 # Documentation (keep README.md and pyproject.toml)
 docs/
-CHANGELOG.md
 CLAUDE.md
-CONTRIBUTING.md
 
 # Example files not needed for runtime
 examples/

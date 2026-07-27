@@ -1,8 +1,0 @@
-blank_issues_enabled: false
-contact_links:
-  - name: Basic Memory Discussions
-    url: https://github.com/basicmachines-co/basic-memory/discussions
-    about: For questions, ideas, or more open-ended discussions
-  - name: Documentation
-    url: https://github.com/basicmachines-co/basic-memory#readme
-    about: Please check the documentation first before reporting an issue
