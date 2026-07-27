@@ -136,9 +136,7 @@ async def test_resolve_identifier_not_found(client: AsyncClient, v2_project_url)
 
 
 @pytest.mark.asyncio
-async def test_resolve_identifier_ambiguous_title_returns_409(
-    client: AsyncClient, v2_project_url
-):
+async def test_resolve_identifier_ambiguous_title_returns_409(client: AsyncClient, v2_project_url):
     """A strict resolve of a title shared by multiple notes returns 409 (#1148).
 
     Covers the router's AmbiguousIdentifierError -> 409 transport contract: the resolver raising

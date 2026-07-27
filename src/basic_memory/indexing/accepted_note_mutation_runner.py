@@ -631,9 +631,7 @@ async def _run_accepted_note_update(
                 or current_head_in_storage
             )
             if not relay_supersede:
-                reject_stale_base_checksum(
-                    current_db_checksum=current_note_content.db_checksum
-                )
+                reject_stale_base_checksum(current_db_checksum=current_note_content.db_checksum)
         try:
             prepared_write = await prepare_accepted_note_replace(
                 preparer,
