@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "AGPL-3.0-or-later" }
 authors = [
-    { name = "Basic Machines", email = "hello@basic-machines.co" }
+    { name = "Noah Kiss", email = "noahkiss@users.noreply.github.com" }
 ]
 dependencies = [
     "sqlalchemy>=2.0.0",
