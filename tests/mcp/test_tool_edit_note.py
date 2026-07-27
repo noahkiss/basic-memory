@@ -1,8 +1,10 @@
 """Tests for the edit_note MCP tool."""
 
+from datetime import date
 from pathlib import Path
 from unittest.mock import patch
 
+import frontmatter
 import httpx
 import pytest
 from mcp.server.fastmcp.exceptions import ToolError
@@ -1696,3 +1698,88 @@ async def test_edit_note_append_traversal_identifier_json_error(client, test_pro
     assert isinstance(result, dict)
     assert result["error"] == "SECURITY_VALIDATION_ERROR"
     assert result["fileCreated"] is False
+
+
+# --- Frontmatter preservation on unindexed on-disk notes (GAPS.md T6) ---
+
+# A note written to disk by something other than Basic Memory carries frontmatter the
+# indexer has never seen. The regression this pins: editing such a note used to prepend a
+# *second* frontmatter block, keeping only `permalink:` in the real block and demoting the
+# rest of the keys to prose — a silent, exit-0 data loss. Disk recovery (#581) parses the
+# existing block before writing, so every key must survive an edit untouched.
+
+DISK_FRONTMATTER_NOTE = """---
+title: Disk Frontmatter Note
+type: note
+permalink: notes/disk-frontmatter
+status: draft
+review-by: 2026-08-01
+record-kind: decision
+owner: flight
+tags:
+- tend
+- fork
+---
+
+# Disk Frontmatter Note
+
+Original body line.
+"""
+
+DISK_FRONTMATTER_KEYS = {
+    "title": "Disk Frontmatter Note",
+    "type": "note",
+    "permalink": "notes/disk-frontmatter",
+    "status": "draft",
+    # Unquoted YAML dates round-trip as `datetime.date`, not `str`. Asserting the native
+    # type keeps the test honest about what a `review-by:` key actually survives as.
+    "review-by": date(2026, 8, 1),
+    "record-kind": "decision",
+    "owner": "flight",
+    "tags": ["tend", "fork"],
+}
+
+
+@pytest.mark.parametrize(
+    ("operation", "edit_kwargs"),
+    [
+        ("append", {"content": "\nAppended line."}),
+        ("prepend", {"content": "Prepended line.\n"}),
+        (
+            "find_replace",
+            {"content": "Replaced body line.", "find_text": "Original body line."},
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_edit_note_preserves_frontmatter_of_unindexed_disk_note(
+    client, test_project, operation, edit_kwargs
+):
+    """Editing an unindexed on-disk note must not double its frontmatter or drop keys."""
+    note_path = Path(test_project.path) / "notes" / "disk-frontmatter.md"
+    note_path.parent.mkdir(parents=True, exist_ok=True)
+    note_path.write_text(DISK_FRONTMATTER_NOTE, encoding="utf-8")
+
+    result = await edit_note(
+        project=test_project.name,
+        identifier="notes/disk-frontmatter",
+        operation=operation,
+        **edit_kwargs,
+    )
+
+    assert isinstance(result, str)
+    assert f"Edited note ({operation})" in result
+
+    final_content = note_path.read_text(encoding="utf-8")
+    post = frontmatter.loads(final_content)
+
+    # A doubled block leaves the original `---\ntitle: ...` opener sitting in the body,
+    # so a body that still starts with a fence is the corruption signature itself.
+    assert not post.content.lstrip().startswith("---"), (
+        f"second frontmatter block prepended:\n{final_content}"
+    )
+
+    for key, expected in DISK_FRONTMATTER_KEYS.items():
+        assert post.metadata.get(key) == expected, (
+            f"frontmatter key '{key}' lost or altered:\n{final_content}"
+        )
