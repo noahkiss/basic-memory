@@ -56,12 +56,6 @@ dependencies = [
     # asyncpg engine-dispose race ("IndexError: pop from an empty deque") that
     # crashes the Postgres backend cannot fire under it. Not available on Windows.
     "uvloop>=0.21.0; sys_platform != 'win32'",
-    "detect-secrets>=1.5",
-    # Cross-platform advisory file lock (already resolved transitively via
-    # huggingface-hub; declared directly since the hook flush path imports it).
-    # Serializes concurrent `bm hook flush` runs so a stale sweep can't overwrite
-    # an artifact without a sibling flush's just-retired event.
-    "filelock>=3.12",
 ]
 
 [project.urls]
@@ -80,8 +74,7 @@ build-backend = "hatchling.build"
 [tool.pytest.ini_options]
 pythonpath = ["src", "tests"]
 addopts = "--cov=basic_memory --cov-report term-missing"
-# plugins/ carries the co-located uv hook-script tests (one per script).
-testpaths = ["tests", "test-int", "plugins"]
+testpaths = ["tests", "test-int"]
 asyncio_mode = "strict"
 asyncio_default_fixture_loop_scope = "function"
 # Any test hanging >120s fails with a stack dump instead of stalling the CI job

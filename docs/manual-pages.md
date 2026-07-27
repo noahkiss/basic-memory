@@ -10,9 +10,13 @@ documents the tools; the tools verify the manual.
 ## Where it lives
 
 The canonical manual is the **`manual` project in the Basic Memory team
-workspace** (cloud, shared). Anyone can build their own: the schema ships as
-an opt-in seed at `plugins/claude-code/schemas/manpage.md` — copy it into any
-project's folder and start writing pages against it.
+workspace** (cloud, shared). Anyone can build their own: write pages against
+the layout below in any project's folder.
+
+> The `manpage.md` seed schema this section used to point at lived in the
+> Claude Code plugin package, which this fork deleted along with the rest of
+> the harness plugin surface. Recover it from git history if you want it:
+> `git show <pre-strip-sha>:plugins/claude-code/schemas/manpage.md`.
 
 Layout:
 

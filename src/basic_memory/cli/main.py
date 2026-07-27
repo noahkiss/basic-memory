@@ -16,11 +16,11 @@ def _version_only_invocation(argv: list[str]) -> bool:
 if not _version_only_invocation(sys.argv[1:]):
     # Register commands only when not short-circuiting for --version
     from basic_memory.cli.commands import (  # noqa: F401  # pragma: no cover
+        brief,
         ci,
         cloud,
         db,
         doctor,
-        hook,
         import_chatgpt,
         import_claude_conversations,
         import_claude_projects,
