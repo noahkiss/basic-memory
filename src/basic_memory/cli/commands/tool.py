@@ -1315,14 +1315,24 @@ def list_projects(
         False, "--local", help="Force local API routing (ignore cloud mode)"
     ),
     cloud: bool = typer.Option(False, "--cloud", help="Force cloud API routing"),
+    json_output: bool = typer.Option(
+        False, "--json", help="Output in JSON format (this command always emits JSON)"
+    ),
 ):
     """List all available projects with their status (JSON output).
 
     Examples:
 
     bm tool list-projects
+    bm tool list-projects --json
     bm tool list-projects --local
     """
+    # --json is accepted but unused: this command has only ever emitted JSON, while
+    # every other `bm tool` subcommand gates JSON behind the flag. Scripts reaching
+    # for the documented machine-readable path passed --json and died in Click
+    # argument parsing with exit 2 and no output at all. Accepting the flag makes
+    # the documented invocation work without inventing a second output format.
+    del json_output
     # Deferred: loading the MCP tool stack at module import slows CLI startup (#886).
     from basic_memory.mcp.tools import list_memory_projects as mcp_list_projects
 

@@ -358,3 +358,44 @@ def test_project_add_rejects_invalid_visibility(runner, mock_config):
 
     assert result.exit_code == 1
     assert "Invalid visibility" in result.stdout
+
+
+def test_project_add_announces_when_the_default_moves(runner, mock_config, monkeypatch, tmp_path):
+    """A default change must be visible in the add output (T5).
+
+    ``project add`` printed only the API's "added successfully" message, so a move
+    of the default — which the service performs on its own for the first project
+    and when repairing a dangling configured default — was invisible until a later
+    unqualified command targeted the wrong project.
+    """
+    project_dir = tmp_path / "q3test"
+    project_dir.mkdir()
+
+    @asynccontextmanager
+    async def fake_get_client(*, workspace=None):
+        yield object()
+
+    async def fake_create_project(self, project_data):
+        return ProjectStatusResponse.model_validate(
+            {
+                "message": "Project 'q3test' added successfully",
+                "status": "success",
+                "default": True,
+                "old_project": None,
+                "new_project": {
+                    "id": 1,
+                    "external_id": "12345678-1234-1234-1234-123456789012",
+                    "name": "q3test",
+                    "path": str(project_dir),
+                    "is_default": True,
+                },
+            }
+        )
+
+    monkeypatch.setattr(project_cmd, "get_client", fake_get_client)
+    monkeypatch.setattr(ProjectClient, "create_project", fake_create_project)
+
+    result = runner.invoke(app, ["project", "add", "q3test", str(project_dir)])
+
+    assert result.exit_code == 0, f"Exit code: {result.exit_code}, Stdout: {result.stdout}"
+    assert "default project" in result.stdout

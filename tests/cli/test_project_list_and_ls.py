@@ -1138,3 +1138,84 @@ def test_project_list_local_excludes_cloud_mode_config_fallback(
 
     assert result.exit_code == 0, f"Exit code: {result.exit_code}, output: {result.stdout}"
     assert json.loads(result.stdout) == {"projects": []}
+
+
+def test_project_list_shows_name_in_narrow_terminal(
+    runner: CliRunner, write_config, mock_client, tmp_path, monkeypatch
+):
+    """The Name column must survive a default-width terminal (B2).
+
+    Regression: Local Path was declared ``no_wrap=True``, so a long project path
+    claimed the whole line and Rich squeezed every other column — Name included —
+    to zero width. The table then rendered projects by path only, and the name a
+    user has to pass to ``--project`` was not recoverable from the output.
+    """
+    long_path = (tmp_path / ("nested/" * 12) / "alpha-notes").as_posix()
+
+    write_config(
+        {
+            "env": "dev",
+            "projects": {"alpha": {"path": long_path, "mode": "local"}},
+            "default_project": "alpha",
+        }
+    )
+
+    async def fake_list_projects(self):
+        return ProjectList.model_validate(
+            {
+                "projects": [
+                    {
+                        "id": 1,
+                        "external_id": "11111111-1111-1111-1111-111111111111",
+                        "name": "alpha",
+                        "path": long_path,
+                        "is_default": True,
+                    }
+                ],
+                "default_project": "alpha",
+            }
+        )
+
+    monkeypatch.setattr(ProjectClient, "list_projects", fake_list_projects)
+    monkeypatch.setattr(project_cmd, "_has_cloud_credentials", lambda config: False)
+
+    result = runner.invoke(app, ["project", "list"], env={"COLUMNS": "80"})
+
+    assert result.exit_code == 0, f"Exit code: {result.exit_code}, output: {result.stdout}"
+    assert "Name" in result.stdout
+    assert "alpha" in result.stdout
+
+
+def test_project_list_warns_when_config_project_missing_from_index(
+    runner: CliRunner, write_config, mock_client, tmp_path, monkeypatch
+):
+    """A local project in config that the index does not know about must be called out (B2).
+
+    config.json and the project table are two registries that can disagree, and the
+    row seeded from config to fix #1003 made the disagreement invisible — the table
+    looked identical whether or not the project was indexed. A project in this state
+    resolves for routing but returns nothing from search.
+    """
+    alpha_path = (tmp_path / "alpha").as_posix()
+
+    write_config(
+        {
+            "env": "dev",
+            "projects": {"alpha": {"path": alpha_path, "mode": "local"}},
+            "default_project": "alpha",
+        }
+    )
+
+    # The local index has no row for alpha — the fresh-config state, where
+    # config.json is written before anything materializes the project table.
+    async def fake_list_projects(self):
+        return ProjectList.model_validate({"projects": [], "default_project": "alpha"})
+
+    monkeypatch.setattr(ProjectClient, "list_projects", fake_list_projects)
+    monkeypatch.setattr(project_cmd, "_has_cloud_credentials", lambda config: False)
+
+    result = runner.invoke(app, ["project", "list"], env={"COLUMNS": "240"})
+
+    assert result.exit_code == 0, f"Exit code: {result.exit_code}, output: {result.stdout}"
+    assert "alpha" in result.stdout
+    assert "not indexed" in result.stdout

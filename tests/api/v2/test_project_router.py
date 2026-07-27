@@ -7,7 +7,6 @@ import pytest
 from httpx import AsyncClient
 
 from basic_memory import db
-from basic_memory.config import ProjectEntry
 from basic_memory.models import Project
 from basic_memory.schemas.project_info import ProjectItem, ProjectStatusResponse
 from basic_memory.schemas.v2 import ProjectResolveResponse
@@ -91,16 +90,23 @@ async def test_add_project_response_reflects_promoted_default(
     project_repository,
     session_maker,
 ):
-    """Regression #974/#985: POST response should echo persisted default promotion."""
-    main_home = config_home / "basic-memory"
-    main_home.mkdir(parents=True, exist_ok=True)
+    """Regression #974/#985: POST response should echo persisted default promotion.
+
+    Reaching the promotion requires a default named by *neither* config nor database.
+    A default that is registered in config but has no database row is repaired in
+    place instead (see the `elif` in ProjectService.add_project), so the scenario
+    here is a *dangling* default. BasicMemoryConfig normally repairs a dangling
+    default during validation, and that repair is skipped only for stateless/cloud
+    configs — hence skip_initialization_sync, which is what makes 'ghost' survive.
+    """
     qa_path = config_home / "qa-notes"
     qa_path.mkdir(parents=True, exist_ok=True)
 
     fresh_config = app_config.model_copy(
         update={
-            "projects": {"main": ProjectEntry(path=str(main_home))},
-            "default_project": "main",
+            "projects": {},
+            "default_project": "ghost",
+            "skip_initialization_sync": True,
         }
     )
     config_manager.save_config(fresh_config)
@@ -435,11 +441,15 @@ async def test_project_status_uses_event_index_report_not_sync_service(
     assert response.status_code == 200
     data = response.json()
     assert data["total_files"] == 1
+    # The note was written straight to disk, so it is observed but has no index row yet;
+    # status must report that rather than counting it as queryable content (GAPS.md T2).
+    assert data["unindexed_file_count"] == 1
     assert data["observed_files"] == [
         {
             "path": "incoming/project-status.md",
             "checksum": data["observed_files"][0]["checksum"],
             "size": note_path.stat().st_size,
+            "indexed": False,
         }
     ]
     assert "new" not in data

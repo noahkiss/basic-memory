@@ -908,6 +908,27 @@ def test_list_projects_json_output(mock_mcp):
     assert mock_mcp.call_args.kwargs["output_format"] == "json"
 
 
+@patch(
+    "basic_memory.mcp.tools.list_memory_projects",
+    new_callable=AsyncMock,
+    return_value=LIST_PROJECTS_RESULT,
+)
+def test_list_projects_accepts_json_flag(mock_mcp):
+    """--json is the documented machine-readable path and must be accepted (B3).
+
+    Regression: the command emitted JSON unconditionally but declared no --json
+    option, so the documented invocation died in Click argument parsing before any
+    output was produced.
+    """
+    result = runner.invoke(
+        cli_app,
+        ["tool", "list-projects", "--json"],
+    )
+
+    assert result.exit_code == 0, f"CLI failed: {result.output}"
+    assert json.loads(result.output)["count"] == 2
+
+
 # --- list-workspaces ---
 
 LIST_WORKSPACES_RESULT = {

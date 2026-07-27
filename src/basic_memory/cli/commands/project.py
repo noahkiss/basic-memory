@@ -454,8 +454,13 @@ def list_projects(
                     cloud_error = exc
 
         table = Table(title="Basic Memory Projects")
-        table.add_column("Name", style="cyan")
-        table.add_column("Local Path", style="yellow", no_wrap=True, overflow="fold")
+        # Name must never lose its width: it is the identifier the user passes to
+        # --project, and a row that renders as a bare path cannot be acted on.
+        # Local Path used to be no_wrap, which let one long path claim the whole
+        # line and squeeze every other column — Name included — to zero width in a
+        # default-width terminal. "fold" alone wraps the path and leaves room.
+        table.add_column("Name", style="cyan", no_wrap=True)
+        table.add_column("Local Path", style="yellow", overflow="fold")
         table.add_column("Cloud Path", style="green")
         table.add_column("Workspace", style="green")
         table.add_column("CLI Route", style="blue")
@@ -705,6 +710,33 @@ def list_projects(
             )
 
         console.print(table)
+
+        # Trigger: config.json registers a local-mode project that the local index
+        #   did not return.
+        # Why: config.json is this registry's source of truth — synchronize_projects
+        #   creates index rows from it and deletes rows absent from it — so a project
+        #   missing from the index is drift in the derived index, not a missing
+        #   project. The row seeded above for #1003 renders such a project exactly
+        #   like a healthy one, which hid the drift entirely: the project resolves
+        #   for routing but has no indexed content behind it.
+        # Outcome: name the drifting projects rather than letting the two registries
+        #   disagree silently, and point at the command that reconciles them.
+        if local_result is not None:
+            unindexed = [
+                project_name
+                for permalink, project_name in sorted(configured_names_by_permalink.items())
+                if config.projects[project_name].mode == ProjectMode.LOCAL
+                and permalink not in local_projects_by_permalink
+            ]
+            if unindexed:
+                console.print(
+                    f"[yellow]Configured but not indexed: {', '.join(unindexed)}[/yellow]"
+                )
+                console.print(
+                    "[dim]These projects are in config.json with no row in the project "
+                    "index. Run 'bm reindex' to reconcile.[/dim]"
+                )
+
         if cloud_error is not None:
             console.print(f"[yellow]Cloud project discovery failed: {cloud_error}[/yellow]")
             console.print(
@@ -830,6 +862,17 @@ def add_project(
         with force_routing(local=local, cloud=cloud):
             result = run_with_cleanup(_add_project())
         console.print(f"[green]{result.message}[/green]")
+
+        # Trigger: the service made the new project the default without being asked —
+        #     it is the first project, or it repaired a default named by neither
+        #     config.json nor the database.
+        # Why: the default is what every unqualified command targets, and a silent
+        #     move means the next `bm` invocation writes somewhere the user did not
+        #     choose. `bm project remove` then refuses, citing a default nobody set.
+        # Outcome: the move is stated, with the command to put it back.
+        if result.default and not set_default:
+            console.print(f"[yellow]'{name}' is now the default project.[/yellow]")
+            console.print("[dim]Change it with: bm project default <name>[/dim]")
 
         # Trigger: local config needs enough metadata to route future commands back to cloud.
         # Why: explicit workspace selection and local sync state should persist across CLI sessions.

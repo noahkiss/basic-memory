@@ -284,8 +284,13 @@ class ProjectService:
                         #      absent from config — and reconciliation deletes such rows —
                         #      so a database default unknown to config cannot be repointed to.
                         # Outcome: config is repointed at a usable database default when one
-                        #      exists; otherwise the added project becomes the default.
+                        #      exists; else the configured default is materialized (see
+                        #      below); only a default named by neither source promotes the
+                        #      added project.
                         db_default = await self.repository.get_default_project(session)
+                        configured_default_name, configured_default_path = (
+                            self.config_manager.get_project(config_default)
+                        )
                         if (
                             db_default is not None
                             and self.config_manager.get_project(db_default.name)[0] is not None
@@ -296,6 +301,34 @@ class ProjectService:
                                 "database default '%s'",
                                 config_default,
                                 db_default.name,
+                            )
+                        elif configured_default_name is not None:
+                            # Trigger: the configured default is still a registered project,
+                            #      it just has no database row yet — the state of every fresh
+                            #      config, where 'main' is written to config.json but not
+                            #      materialized until the first synchronize_projects run.
+                            # Why: config.json is the registry's source of truth.
+                            #      synchronize_projects creates database rows from it and
+                            #      deletes rows absent from it, so a missing row is index
+                            #      drift, not a missing project. Promoting the just-added
+                            #      project instead repointed the default on *every* add,
+                            #      which is unusable when adding a project per tracked repo.
+                            # Outcome: the configured default is materialized and keeps the
+                            #      default; the added project is not promoted.
+                            repaired_default = await self.repository.create(
+                                session,
+                                {
+                                    "name": configured_default_name,
+                                    "path": configured_default_path,
+                                    "permalink": generate_permalink(configured_default_name),
+                                    "is_active": True,
+                                },
+                            )
+                            await self.repository.set_as_default(session, repaired_default.id)
+                            logger.info(
+                                "Materialized configured default project '%s' that had no "
+                                "database row; default left unchanged",
+                                configured_default_name,
                             )
                         else:
                             await self.repository.set_as_default(session, created_project.id)

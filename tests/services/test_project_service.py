@@ -463,10 +463,19 @@ async def test_add_project_with_set_default_false(project_service: ProjectServic
 
 
 @pytest.mark.asyncio
-async def test_add_project_promotes_when_config_default_missing_from_db(
+async def test_add_project_materializes_config_default_instead_of_promoting(
     config_home, app_config, config_manager, engine_factory
 ):
-    """Regression #974: config default exists only in config, not DB — promote on add."""
+    """A configured default that lacks a database row must be repaired, not replaced (T5).
+
+    Regression #974 unwedged a fresh config — where ``main`` is registered in
+    config.json but has no database row until the first sync — by promoting the
+    just-added project to default. That repoints the default on *every* add, which
+    is unusable when a project is added per tracked repo. config.json is the
+    registry's source of truth (``synchronize_projects`` creates database rows from
+    it and deletes rows absent from it), so the repair is to materialize the
+    configured default's row, leaving the default where the user put it.
+    """
     from basic_memory import config as config_module
     from basic_memory.config import ProjectEntry
     from basic_memory.markdown.entity_parser import EntityParser
@@ -504,11 +513,15 @@ async def test_add_project_promotes_when_config_default_missing_from_db(
 
     await service.add_project("qa", str(qa_path), set_default=False)
 
-    assert service.default_project == "qa"
+    assert service.default_project == "main"
     qa_project = await _get_project(service, "qa")
     assert qa_project is not None
-    assert qa_project.is_default is True
-    assert await _get_project(service, "main") is None
+    assert qa_project.is_default is not True
+
+    # The wedge #974 described is gone because the configured default now has a row.
+    main_project = await _get_project(service, "main")
+    assert main_project is not None
+    assert main_project.is_default is True
 
 
 @pytest.mark.asyncio
