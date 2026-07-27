@@ -1028,6 +1028,26 @@ neither has been checked against this tree.
 
 Found in: sweep-beans.md:7, sweep-transcript.md:55.
 
+### O7 — `add_project`'s default-repair logging is unformatted, and one of its branches is now dead
+**Found:** 2026-07-27, while repairing the W12 cloud strip.
+
+Two independent defects in `ProjectService.add_project`'s default-repair block
+(`src/basic_memory/services/project_service.py`, ~lines 274–341), both cheap to fix:
+
+1. **The log messages never interpolate.** Four calls there use `logger.info("… '%s' …", value)`.
+   loguru formats with `str.format`, not `%`, so the operator sees the literal `'%s'`:
+   `Materialized configured default project '%s' that had no database row`. Verified directly.
+   These are the only `'%s'` log placeholders in `src/`.
+2. **The promote-the-new-project branch is unreachable.** It fires only when `default_project` names
+   a project present in neither the database nor `config.json`. `BasicMemoryConfig.model_post_init`
+   repairs exactly that state on every load, and the strip removed the only bypass
+   (`skip_local_initialization`, a cloud/stateless flag), so nothing can now reach it. It was covered
+   by `test_add_project_response_reflects_promoted_default`, which the repair replaced with
+   `test_add_project_materializes_configured_default` — the branch that actually runs. Decide whether
+   to delete the branch or to keep it as a defensive invariant with a `# pragma: no cover`.
+
+Related: **T5** covers the user-facing half of the same area (the CLI has no `--set-default` flag).
+
 ---
 
 ## Docs swept

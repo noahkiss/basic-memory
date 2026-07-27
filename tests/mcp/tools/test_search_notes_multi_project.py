@@ -9,18 +9,18 @@ from basic_memory.schemas.search import SearchItemType, SearchResponse, SearchRe
 
 
 @pytest.mark.asyncio
-async def test_search_notes_search_all_projects_qualifies_result_permalinks(monkeypatch):
-    """Multi-project search belongs to search_notes and keeps result ids routable."""
+async def test_search_notes_search_all_projects_merges_and_ranks_results(monkeypatch):
+    """Multi-project search belongs to search_notes and merges pages by score."""
     clients_mod = importlib.import_module("basic_memory.mcp.clients")
     search_mod = importlib.import_module("basic_memory.mcp.tools.search")
 
     project_refs = [
         {
-            "project": "personal/main",
+            "project": "personal",
             "project_id": "11111111-1111-1111-1111-111111111111",
         },
         {
-            "project": "team-paul/main",
+            "project": "team-paul",
             "project_id": "22222222-2222-2222-2222-222222222222",
         },
     ]
@@ -82,12 +82,12 @@ async def test_search_notes_search_all_projects_qualifies_result_permalinks(monk
 
     assert isinstance(result, dict)
     assert searched_projects == [
-        ("personal/main", "11111111-1111-1111-1111-111111111111"),
-        ("team-paul/main", "22222222-2222-2222-2222-222222222222"),
+        ("personal", "11111111-1111-1111-1111-111111111111"),
+        ("team-paul", "22222222-2222-2222-2222-222222222222"),
     ]
-    assert [item["permalink"] for item in result["results"]] == [
-        "team-paul/main/tests/mcp-test-note",
-        "personal/main/tests/mcp-test-note",
+    assert [item["title"] for item in result["results"]] == [
+        "Team MCP Test Note",
+        "Personal MCP Test Note",
     ]
     assert result["total_is_exact"] is True
 
@@ -177,11 +177,11 @@ async def test_search_notes_search_all_projects_continues_after_project_failure(
 
     project_refs = [
         {
-            "project": "personal/main",
+            "project": "personal",
             "project_id": "11111111-1111-1111-1111-111111111111",
         },
         {
-            "project": "team-paul/main",
+            "project": "team-paul",
             "project_id": "22222222-2222-2222-2222-222222222222",
         },
     ]
@@ -248,10 +248,10 @@ async def test_search_notes_search_all_projects_continues_after_project_failure(
     )
 
     assert isinstance(result, dict)
-    assert [item["permalink"] for item in result["results"]] == [
-        "personal/main/tests/mcp-test-note",
+    assert [item["title"] for item in result["results"]] == [
+        "Personal MCP Test Note",
     ]
     assert result["total"] == 1
     assert result["total_is_exact"] is False
-    assert any("team-paul/main" in warning for warning in warnings)
+    assert any("team-paul" in warning for warning in warnings)
     assert any("team index unavailable" in warning for warning in warnings)

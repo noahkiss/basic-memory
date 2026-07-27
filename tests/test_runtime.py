@@ -160,19 +160,11 @@ class TestRuntimeMode:
     def test_local_mode_properties(self):
         mode = RuntimeMode.LOCAL
         assert mode.is_local is True
-        assert mode.is_cloud is False
-        assert mode.is_test is False
-
-    def test_cloud_mode_properties(self):
-        mode = RuntimeMode.CLOUD
-        assert mode.is_local is False
-        assert mode.is_cloud is True
         assert mode.is_test is False
 
     def test_test_mode_properties(self):
         mode = RuntimeMode.TEST
         assert mode.is_local is False
-        assert mode.is_cloud is False
         assert mode.is_test is True
 
 
@@ -188,11 +180,6 @@ class TestResolveRuntimeMode:
         """Non-test environments resolve to LOCAL mode."""
         mode = resolve_runtime_mode(is_test_env=False)
         assert mode == RuntimeMode.LOCAL
-
-    def test_never_resolves_to_cloud_in_local_app_context(self):
-        """Resolver no longer returns CLOUD for local app composition roots."""
-        mode = resolve_runtime_mode(is_test_env=False)
-        assert mode is not RuntimeMode.CLOUD
 
 
 class TestRuntimeContracts:

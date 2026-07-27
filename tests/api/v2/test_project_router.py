@@ -81,35 +81,22 @@ async def test_get_project_by_id_not_found(client: AsyncClient, v2_projects_url)
 
 
 @pytest.mark.asyncio
-async def test_add_project_response_reflects_promoted_default(
+async def test_add_project_materializes_configured_default(
     client: AsyncClient,
     v2_projects_url,
-    app_config,
-    config_manager,
     config_home,
     project_repository,
     session_maker,
 ):
-    """Regression #974/#985: POST response should echo persisted default promotion.
+    """Regression #974/#985: adding a project must not steal the configured default.
 
-    Reaching the promotion requires a default named by *neither* config nor database.
-    A default that is registered in config but has no database row is repaired in
-    place instead (see the `elif` in ProjectService.add_project), so the scenario
-    here is a *dangling* default. BasicMemoryConfig normally repairs a dangling
-    default during validation, and that repair is skipped only for stateless/cloud
-    configs — hence skip_initialization_sync, which is what makes 'ghost' survive.
+    A fresh config names 'main' as default but has no database row for it until the
+    first reconciliation, so the add path has to repair that drift. It materializes
+    the configured default rather than promoting the project being added (see the
+    `elif` in ProjectService.add_project).
     """
     qa_path = config_home / "qa-notes"
     qa_path.mkdir(parents=True, exist_ok=True)
-
-    fresh_config = app_config.model_copy(
-        update={
-            "projects": {},
-            "default_project": "ghost",
-            "skip_initialization_sync": True,
-        }
-    )
-    config_manager.save_config(fresh_config)
 
     for project in await _find_projects(project_repository, session_maker):
         await _delete_project(project_repository, session_maker, project.id)
@@ -122,10 +109,14 @@ async def test_add_project_response_reflects_promoted_default(
     assert response.status_code == 201
     status_response = ProjectStatusResponse.model_validate(response.json())
     assert status_response.status == "success"
-    assert status_response.default is True
+    assert status_response.default is False
     new_project = _project_item(status_response.new_project)
     assert new_project.name == "qa"
-    assert new_project.is_default is True
+    assert new_project.is_default is False
+
+    default_project = await _get_default_project(project_repository, session_maker)
+    assert default_project is not None
+    assert default_project.name != "qa"
 
 
 @pytest.mark.asyncio
@@ -542,21 +533,6 @@ async def test_resolve_project_by_permalink(
     assert resolved.name == test_project.name
     # Resolution method could be "name" or "permalink" depending on implementation
     assert resolved.resolution_method in ["name", "permalink"]
-
-
-@pytest.mark.asyncio
-async def test_resolve_project_by_workspace_qualified_permalink(
-    client: AsyncClient, test_project: Project, v2_projects_url
-):
-    """Resolve the workspace/project form shown by MCP disambiguation errors."""
-    resolve_data = {"identifier": f"personal/{test_project.name}"}
-    response = await client.post(f"{v2_projects_url}/resolve", json=resolve_data)
-
-    assert response.status_code == 200
-    resolved = ProjectResolveResponse.model_validate(response.json())
-    assert resolved.external_id == test_project.external_id
-    assert resolved.name == test_project.name
-    assert resolved.resolution_method == "permalink"
 
 
 @pytest.mark.asyncio

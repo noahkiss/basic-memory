@@ -61,6 +61,7 @@ async def test_list_memory_projects_lists_names_with_external_ids(app, client, t
     ):
         result = await list_memory_projects()
 
+    assert isinstance(result, str)
     assert "- main [00000000-0000-0000-0000-000000000001]" in result
     assert "- alpha\n" in result
     # Sorted by permalink, so alpha precedes main.

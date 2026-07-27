@@ -123,21 +123,14 @@ def test_setup_logging_honors_basic_memory_config_dir(monkeypatch, tmp_path) -> 
 def test_setup_logging_test_env_uses_stderr_only(monkeypatch) -> None:
     """Test mode should add one stderr sink and return before other branches run."""
     added_sinks: list[object] = []
-    configured_calls: list[dict] = []
 
     monkeypatch.setenv("BASIC_MEMORY_ENV", "test")
     monkeypatch.setattr(utils.logger, "remove", lambda *args, **kwargs: None)
     monkeypatch.setattr(utils.logger, "add", lambda sink, **kwargs: added_sinks.append(sink))
-    monkeypatch.setattr(
-        utils.logger,
-        "configure",
-        lambda **kwargs: configured_calls.append(kwargs),
-    )
 
-    utils.setup_logging(log_to_file=True, log_to_stdout=True, structured_context=True)
+    utils.setup_logging(log_to_file=True, log_to_stdout=True)
 
     assert added_sinks == [sys.stderr]
-    assert configured_calls == []
 
 
 def test_setup_logging_log_to_stdout(monkeypatch) -> None:
@@ -152,36 +145,6 @@ def test_setup_logging_log_to_stdout(monkeypatch) -> None:
     utils.setup_logging(log_to_stdout=True)
 
     assert added_sinks == [sys.stderr]
-
-
-def test_setup_logging_structured_context(monkeypatch) -> None:
-    """Structured context should bind cloud metadata into loguru extras."""
-    configured_extras: list[dict[str, str]] = []
-
-    monkeypatch.setenv("BASIC_MEMORY_ENV", "dev")
-    monkeypatch.setenv("BASIC_MEMORY_TENANT_ID", "tenant-123")
-    monkeypatch.setenv("FLY_APP_NAME", "bm-app")
-    monkeypatch.setenv("FLY_MACHINE_ID", "machine-123")
-    monkeypatch.setenv("FLY_REGION", "ord")
-    monkeypatch.setattr(utils.logger, "remove", lambda *args, **kwargs: None)
-    monkeypatch.setattr(utils.logger, "add", lambda *args, **kwargs: None)
-    monkeypatch.setattr(utils.telemetry, "get_logfire_handler", lambda: None)
-    monkeypatch.setattr(
-        utils.logger,
-        "configure",
-        lambda **kwargs: configured_extras.append(kwargs["extra"]),
-    )
-
-    utils.setup_logging(structured_context=True)
-
-    assert configured_extras == [
-        {
-            "tenant_id": "tenant-123",
-            "fly_app_name": "bm-app",
-            "fly_machine_id": "machine-123",
-            "fly_region": "ord",
-        }
-    ]
 
 
 def test_setup_logging_suppresses_noisy_loggers(monkeypatch) -> None:

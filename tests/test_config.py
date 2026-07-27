@@ -17,8 +17,8 @@ from basic_memory.config import (
 from pathlib import Path
 
 
-def _migrate_legacy_projects(data: dict[str, Any]) -> dict[str, Any]:
-    return cast(dict[str, Any], cast(Any, BasicMemoryConfig.migrate_legacy_projects)(data))
+def _migrate_legacy_projects(data: Any) -> Any:
+    return cast(Any, BasicMemoryConfig.migrate_legacy_projects)(data)
 
 
 def _migrate_legacy_sync_changes(data: Any) -> Any:

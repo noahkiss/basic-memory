@@ -973,278 +973,7 @@ async def test_edit_note_detects_project_from_memory_url(client, test_project):
 
 
 @pytest.mark.asyncio
-async def test_edit_note_workspace_qualified_memory_url_keeps_complete_permalink(
-    client,
-    test_project,
-):
-    from basic_memory.workspace_context import workspace_permalink_context
-
-    expected_permalink = f"team-paul/{test_project.name}/team/tool-edit-note"
-
-    with workspace_permalink_context(workspace_slug="team-paul", workspace_type="organization"):
-        await write_note(
-            project=test_project.name,
-            title="Tool Edit Note",
-            directory="team",
-            content="# Tool Edit Note\nOriginal content.",
-        )
-
-        result = await edit_note(
-            project=test_project.name,
-            identifier=f"memory://{expected_permalink}",
-            operation="append",
-            content="\nAppended in team workspace.",
-        )
-
-    assert isinstance(result, str)
-    assert "Edited note (append)" in result
-    assert f"permalink: {expected_permalink}" in result
-
-
-@pytest.mark.asyncio
-async def test_edit_note_workspace_qualified_plain_permalink_requires_explicit_route(
-    monkeypatch,
-    test_project,
-):
-    """Plain workspace-qualified write identifiers should stop before mutating."""
-    import importlib
-    from contextlib import asynccontextmanager
-
-    edit_note_module = importlib.import_module("basic_memory.mcp.tools.edit_note")
-    workspace_slug = "team-acme"
-    qualified_identifier = f"{workspace_slug}/{test_project.name}/team/plain-edit-note"
-    detected_identifiers: list[str] = []
-
-    async def detect_workspace_project(identifier, config, context=None):
-        detected_identifiers.append(identifier)
-        return f"{workspace_slug}/{test_project.name}"
-
-    @asynccontextmanager
-    async def fail_if_called(*args, **kwargs):
-        raise AssertionError("ambiguous plain identifiers should not select a project client")
-        yield
-
-    monkeypatch.setattr(
-        edit_note_module,
-        "_workspace_identifier_discovery_available",
-        lambda identifier, config: True,
-    )
-    monkeypatch.setattr(
-        edit_note_module,
-        "detect_project_from_workspace_identifier_prefix",
-        detect_workspace_project,
-        raising=False,
-    )
-    monkeypatch.setattr(edit_note_module, "get_project_client", fail_if_called)
-
-    result = await edit_note(
-        identifier=qualified_identifier,
-        operation="append",
-        content="\nAppended via plain workspace-qualified permalink.",
-        project=None,
-    )
-
-    assert detected_identifiers == [qualified_identifier]
-    assert isinstance(result, str)
-    assert "# Edit Failed - Ambiguous Identifier" in result
-    assert f"`{qualified_identifier}` could refer to a local note path" in result
-    assert f'project="{workspace_slug}/{test_project.name}"' in result
-    assert f"memory://{qualified_identifier}" in result
-
-
-@pytest.mark.asyncio
-async def test_edit_note_workspace_qualified_plain_permalink_json_error(
-    monkeypatch,
-    test_project,
-):
-    """Ambiguous plain write identifiers should stay machine-readable in JSON mode."""
-    import importlib
-
-    edit_note_module = importlib.import_module("basic_memory.mcp.tools.edit_note")
-    workspace_slug = "team-acme"
-    qualified_identifier = f"{workspace_slug}/{test_project.name}/team/plain-edit-note"
-
-    async def detect_workspace_project(identifier, config, context=None):
-        assert identifier == qualified_identifier
-        return f"{workspace_slug}/{test_project.name}"
-
-    monkeypatch.setattr(
-        edit_note_module,
-        "_workspace_identifier_discovery_available",
-        lambda identifier, config: True,
-    )
-    monkeypatch.setattr(
-        edit_note_module,
-        "detect_project_from_workspace_identifier_prefix",
-        detect_workspace_project,
-        raising=False,
-    )
-
-    result = await edit_note(
-        identifier=qualified_identifier,
-        operation="append",
-        content="\nAppended via plain workspace-qualified permalink.",
-        output_format="json",
-        project=None,
-    )
-
-    assert isinstance(result, dict)
-    assert result["error"] == "AMBIGUOUS_IDENTIFIER"
-    assert result["project"] == f"{workspace_slug}/{test_project.name}"
-    assert result["fileCreated"] is False
-
-
-@pytest.mark.asyncio
-async def test_edit_note_ambiguous_namespace_identifier_returns_guidance(
-    monkeypatch,
-    test_project,
-):
-    """Namespace-style workspace identifiers should still return ambiguity guidance."""
-    import importlib
-
-    edit_note_module = importlib.import_module("basic_memory.mcp.tools.edit_note")
-    workspace_slug = "team-acme"
-    identifier = f"{workspace_slug}::{test_project.name}/team/plain-edit-note"
-    normalized_identifier = f"{workspace_slug}/{test_project.name}/team/plain-edit-note"
-
-    async def detect_workspace_project(raw_identifier, config, context=None):
-        assert raw_identifier == identifier
-        return f"{workspace_slug}/{test_project.name}"
-
-    monkeypatch.setattr(
-        edit_note_module,
-        "_workspace_identifier_discovery_available",
-        lambda identifier, config: True,
-    )
-    monkeypatch.setattr(
-        edit_note_module,
-        "detect_project_from_workspace_identifier_prefix",
-        detect_workspace_project,
-        raising=False,
-    )
-
-    result = await edit_note(
-        identifier=identifier,
-        operation="append",
-        content="\nAppended via namespace-style plain identifier.",
-        project=None,
-    )
-
-    assert isinstance(result, str)
-    assert "# Edit Failed - Ambiguous Identifier" in result
-    assert f"`{identifier}` could refer to a local note path" in result
-    assert f"memory://{normalized_identifier}" in result
-
-
-@pytest.mark.asyncio
-async def test_edit_note_workspace_project_args_compose_explicit_route(monkeypatch):
-    """workspace plus project should route like project='workspace/project'."""
-    from contextlib import asynccontextmanager
-    from types import SimpleNamespace
-
-    import importlib
-
-    edit_note_module = importlib.import_module("basic_memory.mcp.tools.edit_note")
-    captured_routes: list[tuple[str | None, str | None]] = []
-
-    @asynccontextmanager
-    async def fake_get_project_client(project, context=None, project_id=None):
-        captured_routes.append((project, project_id))
-        yield object(), SimpleNamespace(name="setup")
-
-    monkeypatch.setattr(edit_note_module, "get_project_client", fake_get_project_client)
-
-    with pytest.raises(ValueError, match="Invalid operation"):
-        await edit_note(
-            identifier="install",
-            operation="invalid",
-            content="content",
-            workspace="docs",
-            project="setup",
-        )
-
-    assert captured_routes == [("docs/setup", None)]
-
-
-@pytest.mark.asyncio
-async def test_edit_note_plain_workspace_route_returns_guidance_with_local_config(
-    monkeypatch,
-    config_manager,
-    test_project,
-):
-    """Mixed local+cloud configs should still stop ambiguous plain write routes."""
-    from contextlib import asynccontextmanager
-    import importlib
-
-    import basic_memory.mcp.project_context as project_context
-    from basic_memory.config import ProjectEntry
-    from basic_memory.mcp.project_context import (
-        WorkspaceProjectEntry,
-        _build_workspace_project_index,
-    )
-    from basic_memory.schemas.cloud import WorkspaceInfo
-    from basic_memory.schemas.project_info import ProjectItem
-
-    edit_note_module = importlib.import_module("basic_memory.mcp.tools.edit_note")
-    config = config_manager.load_config()
-    config.projects["hermes-memory"] = ProjectEntry(
-        path=str(config_manager.config_dir.parent / "hermes-memory")
-    )
-    config.cloud_api_key = "bmc_test123"
-    config_manager.save_config(config)
-
-    personal = WorkspaceInfo(
-        tenant_id="personal-tenant",
-        workspace_type="personal",
-        slug="personal",
-        name="Personal",
-        role="owner",
-        is_default=True,
-    )
-    index = _build_workspace_project_index(
-        (personal,),
-        (
-            WorkspaceProjectEntry(
-                workspace=personal,
-                project=ProjectItem(
-                    id=1,
-                    external_id="11111111-1111-1111-1111-111111111111",
-                    name="main",
-                    path="/tmp/main",
-                    is_default=False,
-                ),
-            ),
-        ),
-    )
-
-    async def fake_index(context=None):
-        return index
-
-    @asynccontextmanager
-    async def fail_if_called(*args, **kwargs):
-        raise AssertionError("ambiguous plain identifiers should not select a project client")
-        yield
-
-    monkeypatch.setattr(project_context, "_ensure_workspace_project_index", fake_index)
-    monkeypatch.setattr("basic_memory.mcp.async_client.is_factory_mode", lambda: False)
-    monkeypatch.setattr("basic_memory.mcp.async_client._explicit_routing", lambda: False)
-    monkeypatch.setattr("basic_memory.mcp.async_client._force_local_mode", lambda: False)
-    monkeypatch.setattr(edit_note_module, "get_project_client", fail_if_called)
-
-    result = await edit_note(
-        identifier="personal/main/team/plain-edit-note",
-        operation="append",
-        content="\nAppended via plain workspace-qualified permalink.",
-        project=None,
-    )
-
-    assert isinstance(result, str)
-    assert "# Edit Failed - Ambiguous Identifier" in result
-    assert 'project="personal/main"' in result
-
-
-@pytest.mark.asyncio
-async def test_edit_note_three_segment_plain_path_stays_local_without_workspace_discovery(
+async def test_edit_note_three_segment_plain_path_stays_local(
     monkeypatch,
     client,
     test_project,
@@ -1262,18 +991,9 @@ async def test_edit_note_three_segment_plain_path_stays_local_without_workspace_
     )
 
     async def fail_if_called(*args, **kwargs):
-        raise AssertionError("local three-segment paths should not trigger workspace detection")
+        raise AssertionError("plain local paths must not trigger memory URL project detection")
 
-    monkeypatch.setattr(
-        edit_note_module,
-        "_workspace_identifier_discovery_available",
-        lambda identifier, config: False,
-    )
-    monkeypatch.setattr(
-        edit_note_module,
-        "detect_project_from_workspace_identifier_prefix",
-        fail_if_called,
-    )
+    monkeypatch.setattr(edit_note_module, "detect_project_from_memory_url_prefix", fail_if_called)
 
     result = await edit_note(
         identifier="folder/subdir/local-three-segment",
@@ -1300,12 +1020,9 @@ async def test_edit_note_skips_detection_for_plain_path(client, test_project):
     A plain path like 'research/note' should not be misrouted to a project
     named 'research' — the 'research' segment is a directory, not a project.
     """
-    with (
-        patch("basic_memory.mcp.tools.edit_note.detect_project_from_memory_url_prefix") as mock_url,
-        patch(
-            "basic_memory.mcp.tools.edit_note.detect_project_from_workspace_identifier_prefix"
-        ) as mock_workspace,
-    ):
+    with patch(
+        "basic_memory.mcp.tools.edit_note.detect_project_from_memory_url_prefix"
+    ) as mock_url:
         # Use a plain path (no memory:// prefix) — detection should not be called
         await edit_note(
             identifier="test/some-note",
@@ -1315,18 +1032,14 @@ async def test_edit_note_skips_detection_for_plain_path(client, test_project):
         )
 
         mock_url.assert_not_called()
-        mock_workspace.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_edit_note_skips_detection_when_project_provided(client, test_project):
     """edit_note should skip URL detection when project is explicitly provided."""
-    with (
-        patch("basic_memory.mcp.tools.edit_note.detect_project_from_memory_url_prefix") as mock_url,
-        patch(
-            "basic_memory.mcp.tools.edit_note.detect_project_from_workspace_identifier_prefix"
-        ) as mock_workspace,
-    ):
+    with patch(
+        "basic_memory.mcp.tools.edit_note.detect_project_from_memory_url_prefix"
+    ) as mock_url:
         await edit_note(
             identifier=f"memory://{test_project.name}/test/some-note",
             operation="append",
@@ -1335,7 +1048,6 @@ async def test_edit_note_skips_detection_when_project_provided(client, test_proj
         )
 
         mock_url.assert_not_called()
-        mock_workspace.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -1359,11 +1071,6 @@ async def test_edit_note_skips_detection_when_project_id_provided(
 
     edit_note_module = importlib.import_module("basic_memory.mcp.tools.edit_note")
     monkeypatch.setattr(edit_note_module, "detect_project_from_memory_url_prefix", fail_if_called)
-    monkeypatch.setattr(
-        edit_note_module,
-        "detect_project_from_workspace_identifier_prefix",
-        fail_if_called,
-    )
 
     result = await edit_note(
         identifier=f"memory://{test_project.name}/test/project-id-memory-url-edit",
