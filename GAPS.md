@@ -903,7 +903,15 @@ sweep and any "what is open everywhere" question both need one read across all s
 
 Found in: sweep-inv-plan.md:25.
 
-### W12 — delete the cloud / multi-tenancy surface
+### W12 — delete the cloud / multi-tenancy surface — **SHIPPED `ba2bc67e`**
+**Done 2026-07-27.** ~30,300 lines deleted across 175 files: `cli/commands/cloud/`,
+`cli/commands/workspace.py`, `schemas/cloud.py`, `mcp/tools/cloud_info.py`, the `RuntimeMode` CLOUD
+branch, `skip_local_initialization`, the cloud config fields, and all cloud tests. Verified on a
+stable tree: `just fast-check` clean, `just test-unit-sqlite` = **3483 passed / 33 skipped / 0
+failed** (down from 4066 — the delta is deleted cloud tests), `bm --help` and `bm --version` both
+construct. Zero over-deletions found during the repair audit; nothing needed restoring.
+
+*Original rationale, kept because it is the precedent for W13/W14/W15:*
 **Scheduled deletion, decided 2026-07-27 (user).** Cloud sync, rclone, bisync, cloud auth, and the
 CLI routing flags that select them. Not "when it costs us twice" — proactively, because it is
 *already* costing us: it generated the open question of whether the promote branch should exist for
