@@ -344,6 +344,77 @@ must be hyphenated, or every link silently targets a different string than the o
 Found in: sweep-spike.md:7, sweep-schema.md:13, sweep-schema.md:19, sweep-schema.md:25,
 sweep-localhist.md:61, sweep-status-agents.md:13, sweep-status-agents.md:31, sweep-decisions.md:7.
 
+**AMENDED 2026-07-26 — captured at last, and two of the three findings were wrong as stated.**
+Finding 2 is CONFIRMED with both halves (the half that was missing). Findings 1 and 3 hold only for
+*derived* permalinks — the case the design does not use.
+
+*Finding 2, now captured (negative + positive control).* An id in a custom field never resolves:
+
+```
+tnd-id: tnd-aaaa1111 on A, `- supersedes [[tnd-aaaa1111]]` on B
+  -> b-links-to-custom-field/supersedes/tnd-aaaa1111   to_entity=None
+permalink: tnd-hhhh8888 on C, `- supersedes [[tnd-hhhh8888]]` on D
+  -> d-links-to-permalink/supersedes/tnd-hhhh8888      to_entity=tnd-hhhh8888
+```
+
+The link is *parsed and stored* and merely fails to resolve — so this is a resolution failure, not
+an indexing failure. That distinction is why the positive control was required.
+
+*Finding 3 (`_` → `-`) is FALSE for an explicit `permalink:`.* Verified directly in this session:
+
+```
+$ bm tool search-notes "**" --project vproj --permalink
+      "permalink": "tnd_uuuu1111",      # written as tnd_uuuu1111 — UNDERSCORE PRESERVED
+      "permalink": "tnd-vvvv2222",
+```
+
+Slugification and the project-name prefix of finding 1 apply **only to derived permalinks** (notes
+with no `permalink:` field). An explicit permalink is stored byte-for-byte and carries no project
+prefix. **§12's conclusion survives and is strengthened; only its stated reason was wrong.** Keep
+ids hyphenated anyway — relation rows *are* slugified, so `_` and `-` targets collide into one row,
+and `memory://` normalization makes underscore permalinks unreliable to address.
+
+*The rename cost is BACKWARDS.* There is **no project rename verb at all** (`bm project` has
+`list add remove default move set-cloud set-local ls info`), and `bm project move` is path-only —
+it updates config and tells you to move the files yourself. DB and `config.json` agreed afterward,
+so no B2 drift. A de-facto rename (`remove` + re-`add`) leaves **every permalink unchanged**,
+because BM writes the derived permalink back into the note's frontmatter on first index, freezing
+it. So permalinks are not "rewritten wholesale on rename" — they are frozen and silently retain a
+dead project name, while links keep resolving. The ~2×/year × 66-dirs rewrite cost this entry used
+to justify itself **does not exist**. `update_permalinks_on_move` (config_models.py:489, default
+`False`) was NOT tested.
+
+### T10 — `build-context` silently resolves a miss to an arbitrary note
+**Found:** 2026-07-26, while capturing T9. **Verified twice, independently.**
+
+A `memory://` URI that matches nothing returns a real note with `exit 0` and no error, and the
+response does not even echo the URI you asked for — it is rewritten to whatever was matched:
+
+```
+$ bm tool build-context "memory://tnd-zzzz9999-does-not-exist" --project vproj
+        "permalink": "tnd_uuuu1111",
+        "title": "X Underscore",
+    "uri": "tnd_uuuu1111",            # <-- not the URI requested
+    "primary_count": 1,
+```
+
+There is a silent fuzzy fallback on this path, so **a hit and a miss are indistinguishable to the
+caller.** (Two observers disagreed on *which* note comes back for a given miss — arbitrary, not
+deterministic-wrong — which is itself the point.)
+
+**Why it matters:** this is the worst failure shape for this project. Every `tend` verb doing reverse
+traversal or supersession lookup by id calls exactly this path, and on a typo, a stale id, or a
+deleted record it gets a confidently wrong record instead of a not-found. A verifier built on top of
+it would validate fabricated links as real. It also makes T9's dangling-relation problem invisible
+from the read side.
+
+**Fix:** exact-match `memory://` resolution must fail loudly. If a fuzzy fallback is wanted, it must
+be opt-in and must mark the result as inexact. Upstream states a "fail-fast / no-silent-fallback"
+house style (see #1151), so this is arguably an upstream bug worth reporting.
+
+**NOT TESTED:** whether the fallback is FTS or vector (semantic search was on), and whether
+`read_note` / `search-notes` share it. Both are worth knowing before building on this path.
+
 ---
 
 ## BLOCKERS / gaps in capability
