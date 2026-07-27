@@ -408,12 +408,44 @@ deleted record it gets a confidently wrong record instead of a not-found. A veri
 it would validate fabricated links as real. It also makes T9's dangling-relation problem invisible
 from the read side.
 
-**Fix:** exact-match `memory://` resolution must fail loudly. If a fuzzy fallback is wanted, it must
-be opt-in and must mark the result as inexact. Upstream states a "fail-fast / no-silent-fallback"
-house style (see #1151), so this is arguably an upstream bug worth reporting.
+**Both unknowns are now answered, and both make this smaller than it looked:**
 
-**NOT TESTED:** whether the fallback is FTS or vector (semantic search was on), and whether
-`read_note` / `search-notes` share it. Both are worth knowing before building on this path.
+- **The fallback is FTS, not vector.** `SearchQuery.retrieval_mode` defaults to `FTS`
+  (`schemas/search.py:72`) and `link_resolver.py:453` never overrides it. Semantic search being on
+  was irrelevant. The arbitrariness has a specific cause, visible in the debug log:
+  `Strict SQLite FTS returned 0 results; retrying relaxed FTS query strict='root-does-not-exist'
+  relaxed='root* OR not* OR exist*'` — the miss is re-run as an **OR of prefix terms**, and
+  `results[0]` of that is returned. Which note wins depends on BM25 ranking over whatever the corpus
+  happens to contain, which is why two observers got different notes for the same miss.
+- **`read_note` and `search-notes` do not share it.** Every MCP read caller resolves with
+  `strict=True` (`read_note.py:351,411`, `edit_note.py:140`, `delete_note.py:425`,
+  `move_note.py:707`, `write_note.py:332`); `search-notes` queries the search repository directly
+  and never resolves at all. `resolve_link`'s *default* is `strict=False`, but the only explicit
+  non-strict call in the tree was `context_service.py:193`. **One call site, not a shared path.**
+
+**FIXED 2026-07-27 in `829e5af5`** — `context_service.py` now resolves that fallback with `strict=True,
+use_search=False`. Exact permalink, title, and file-path resolution all survive (a `memory://`
+URI may legitimately name a note by title); only the relaxed-FTS guess is gone. A miss now returns
+`primary_count 0`.
+
+Regression test: `tests/services/test_context_service.py::test_build_context_miss_does_not_fuzzy_match_a_different_note`.
+Note the pre-existing `test_build_context_fallback_not_found` did **not** catch this — its
+identifier (`completely-nonexistent-note-xyz`) shares no tokens with the test corpus, so relaxed FTS
+found nothing to guess with and it passed by vocabulary luck. The new test uses an identifier
+containing `root`, which the old code resolved to the Root entity. **A negative test over a corpus
+that cannot produce a false positive proves nothing** — the same lesson as T9 finding 2's positive
+control.
+
+**Design rule that survives the fix (decided 2026-07-27, user):** `tend` verbs must *still* assert
+that the permalink they get back equals the id they asked for, and treat a mismatch as not-found.
+Strict resolution can still legitimately rewrite the URI — resolving a title or file path to a
+different permalink string is an exact match, not a guess — so the caller cannot infer identity from
+a non-empty result alone. Fork fix removes the lie; the verb-level check enforces identity.
+
+**Phase 1's verifier is unblocked by this.** It was gated on T10 and is no longer.
+
+Upstream states a "fail-fast / no-silent-fallback" house style (see #1151) and would probably take
+this, but we do not track upstream — reporting it is a courtesy, not a dependency.
 
 ---
 
@@ -697,6 +729,35 @@ sweep and any "what is open everywhere" question both need one read across all s
 `~/bin/projects` is the only cross-project view and it reads line 2 and mtime, nothing more.
 
 Found in: sweep-inv-plan.md:25.
+
+### W12 — delete the cloud / multi-tenancy surface
+**Scheduled deletion, decided 2026-07-27 (user).** Cloud sync, rclone, bisync, cloud auth, and the
+CLI routing flags that select them. Not "when it costs us twice" — proactively, because it is
+*already* costing us: it generated the open question of whether the promote branch should exist for
+local installs (see the T1/B1 divergence), which is a design question with no answer worth having.
+It also keeps `skip_local_initialization` / `BASIC_MEMORY_CLOUD_MODE` alive as a second
+configuration reality that every registry change has to be reasoned about twice.
+
+See AGENTS.md → "We do not track upstream" → "Strip policy" for the rule this falls under.
+
+### W13 — delete the Postgres backend
+**Scheduled deletion, decided 2026-07-27 (user).** Postgres is an alternative *index* backend, not
+an alternative format — files stay authoritative and the DB is disposable. It exists for the hosted
+multi-tenant deployment and buys a local single-user install nothing; SQLite is what `sqlite-vec`
+(semantic search, which we want on) plugs into and what AGENTS.md's whole baseline table was
+measured against.
+
+It has already met the default strip bar of "made you write the same thing twice": `43d1a3a4`
+changed 27 lines of `postgres_search_repository.py` purely to mirror a SQLite fix. Deleting it
+halves every future search-repository change — the dual-repository shape is the single most
+duplicated surface in this tree.
+
+**Until this lands**, run the Postgres tests on any commit touching `postgres_search_repository.py`:
+`BASIC_MEMORY_TEST_POSTGRES=1` over the two metadata-filter files and
+`tests/repository/test_postgres_search_repository.py`. Testcontainers pulls
+`pgvector/pgvector:pg16` — verify it ran by filtering `docker ps` on that image or on label
+`org.testcontainers=true`, **not** `--filter ancestor=postgres`, which cannot match and produced a
+false "Postgres never ran" conclusion on 2026-07-26.
 
 ---
 
