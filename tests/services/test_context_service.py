@@ -648,6 +648,26 @@ async def test_build_context_fallback_not_found(context_service):
 
 
 @pytest.mark.asyncio
+async def test_build_context_miss_does_not_fuzzy_match_a_different_note(
+    context_service, test_graph
+):
+    """A miss that shares tokens with a real note must stay a miss (GAPS T10).
+
+    test_build_context_fallback_not_found above only passes by vocabulary luck: its
+    identifier shares no terms with the corpus, so FTS finds nothing to guess with.
+    This identifier deliberately contains 'root', so the old non-strict fallback
+    resolved it to the Root entity and reported primary_count 1 — a miss and a hit
+    were indistinguishable to the caller, and build_context rewrote the requested
+    URI to whatever it matched.
+    """
+    url = memory_url.validate_strings("memory://root-does-not-exist")
+    context_result = await context_service.build_context(url)
+
+    assert context_result.metadata.primary_count == 0
+    assert len(context_result.results) == 0
+
+
+@pytest.mark.asyncio
 async def test_build_context_without_link_resolver(
     search_repository, entity_repository, observation_repository, test_graph, session_maker
 ):

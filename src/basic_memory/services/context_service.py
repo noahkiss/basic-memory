@@ -185,12 +185,22 @@ class ContextService:
                             permalink=normalized_path, limit=fetch_limit, offset=offset
                         )
 
+                        # Trigger: an exact permalink lookup matched nothing.
+                        # Why: a memory:// URI is also allowed to name a note by title or
+                        #   file path, so one more *exact* resolution pass is warranted.
+                        # Outcome: strict resolution only. A non-strict resolve falls through
+                        #   to a relaxed FTS retry (`root* OR not* OR exist*`) and returns
+                        #   results[0], so a miss came back as a real note with exit 0 and the
+                        #   requested URI rewritten to whatever matched — a hit and a miss were
+                        #   indistinguishable to the caller, and which note came back was
+                        #   arbitrary. Every tend verb doing reverse traversal by id calls this
+                        #   path, where that shape blesses fabricated links. See GAPS.md T10.
                         if not primary and self.link_resolver:
                             async with db.scoped_session(self._require_session_maker()) as session:
                                 entity = await self.link_resolver.resolve_link(
                                     path,
-                                    use_search=True,
-                                    strict=False,
+                                    use_search=False,
+                                    strict=True,
                                     session=session,
                                 )
                             if entity:
