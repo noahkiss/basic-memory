@@ -106,6 +106,44 @@ real problem, not a second problem — see W1, which carries the four requiremen
 produced. Full working notes and the reproduction scripts (`o1_repro.py`, `o1_rule_out.py`) were
 scratch artifacts; everything load-bearing is reproduced above and in W1.
 
+### R-T6 — "a second frontmatter block is prepended to unindexed notes" does not exist in this tree
+
+**Opened as T6 (inherited from the BM spike). Closed 2026-07-26. No defect at any point in this
+fork's history — upstream fixed it before our fork point.**
+
+The claim was silent data loss: edit a note that is on disk but not yet indexed, and 8 frontmatter
+keys go in while `permalink:` alone comes out, exit 0. Retested against the fork build
+(`uv run --project . bm`, editable install verified) with a hand-written 8-key note, never indexed,
+no watcher — the state the defect requires:
+
+```
+$ bm status --project t6throw
+│ └── 1 observed file is NOT indexed — invisible to search and read until 'basic-memory reindex'
+$ bm tool edit-note notes/t6-probe --operation append --content "Appended line."
+{"operation": "append", "fileCreated": false}   exit 0
+```
+
+One frontmatter block after the edit. **All 8 keys survived as authoritative frontmatter**, including
+the invented `record-kind:`, `review-by:`, `owner:`. Same for `prepend` and `find_replace`.
+
+Also retested on `2b19f1ff` (before this session's fix cluster) — **no corruption there either**,
+which rules out "our change fixed it." The write path is byte-identical across the cluster:
+
+```
+$ git diff 2b19f1ff HEAD -- src/basic_memory/mcp/tools/edit_note.py src/basic_memory/markdown/ \
+    src/basic_memory/services/file_service.py src/basic_memory/services/entity_service.py \
+    src/basic_memory/file_utils.py
+                                        # empty — none of the 13 changed src files is in the write path
+```
+
+**Nothing was reverted, because nothing was ever written for T6.** See the label-swap note in T3.
+
+**What survives:** the *design* rule this defect motivated is unaffected and still stands —
+schema-draft §8's "only `tend` may create or write files in the store, never `Write` then reach for a
+BM tool." It now rests on the drop-in-files-are-not-indexed finding (see T2) rather than on this
+corruption, which is a weaker but still sufficient basis. Keep the regression test in
+`tests/mcp/test_tool_edit_note.py` (`7a09c015`) as a guard against reintroduction.
+
 ---
 
 ## TRAPS — silent failures, highest priority
@@ -174,6 +212,16 @@ both self-report `0.22.1`, so you cannot tell from `bm` alone whether you are te
 Every measurement taken without checking `uv tool list` is unattributable. **Fix:** report the real
 distribution version.
 
+**FIXED 2026-07-26 in `9e4f3c8c`** (`__init__.py`, `cli/app.py`, `tests/test_version.py`). Verified
+at HEAD: `bm --version` → `Basic Memory version: 0.22.2.dev120+79dc916e`, and a source tree that is
+not installed now says so explicitly rather than reporting a stale number.
+
+> **LABEL SWAP — `git log` will send you to the wrong commit, in both directions.** `9e4f3c8c`'s
+> message calls this work **T6**; it is T3. `7a09c015`'s message calls its frontmatter regression
+> test **T3**; it is T6 (now R-T6). Both commits are pushed, so the messages cannot be corrected
+> without rewriting published history — this note is the correction. Anyone auditing "was T3 fixed?"
+> from the log alone lands on the wrong commit either way.
+
 ### T4 — dangling wikilink relations are stored silently
 **Found:** 2026-07-26, schema §11 Q3 testing.
 
@@ -215,27 +263,10 @@ the choice as a parameter: `create_memory_project(project_name, project_path, se
 `project add` path exposes no equivalent, so the fix is most likely a flag on `project add` rather
 than a service-layer change. Found in: sweep-status-agents.md:67.
 
-### T6 — a second frontmatter block is prepended to unindexed notes (data loss)
-**Found:** BM spike, pre-dates this session. Carried here because it is a code gap, not a design one.
-
-BM's editing tools, applied to a note that exists on disk but is not yet indexed, prepend a *second*
-frontmatter block: 8 keys go in, `permalink:` alone comes out, everything else is demoted to prose —
-and it exits 0 with a success payload. **This is silent data loss.**
-
-Note this is the same root cause as T2 seen from the other side. **Fix:** detect an existing
-frontmatter block before writing one; treat a doubled block as a hard error in `check`.
-
-**Amended 2026-07-26 — this may already be fixed at our fork point. Retest before spending a fix.**
-A rerun of the same test on upstream `main` on 2026-07-25 — one day *before* our fork point SHA
-`232f2c2f` — showed no corruption, and custom frontmatter keys were preserved:
-
-```
-frontmatter corruption on unindexed edit: FIXED (same test, no watcher, no corruption,
-custom keys preserved). RETRACT the 'report upstream' action
-```
-
-The entry stays because the retest was not run against this tree. Confirm against the installed fork
-build (`uv tool list`, per T3) before treating T6 as live work. Found in: sweep-status-agents.md:43.
+### T6 — RESOLVED, no defect. See **R-T6** in the RESOLVED section.
+The number is retained as a tombstone so existing cross-references do not silently retarget. Retested
+against both the fork build and `2b19f1ff`: no corruption in either, and the write path is unchanged
+across the whole fix cluster. Nothing was reverted because nothing was ever written for it.
 
 ### T7 — `search-notes` rejects an empty or `*` query; metadata-only queries need a `**` idiom
 **Found:** BM spike, re-confirmed 2026-07-26.
