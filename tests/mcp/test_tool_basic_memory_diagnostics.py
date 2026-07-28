@@ -232,67 +232,67 @@ def test_diagnostics_output_sections():
 
 
 def test_redact_url_strips_password():
-    url = "postgresql://user:secret@localhost/mydb"
+    url = "https://user:secret@localhost/v1"
     result = _redact_url(url)
     assert "secret" not in result
     assert "user" not in result
     assert "localhost" in result
-    assert "mydb" in result
+    assert "v1" in result
     assert "***" in result
 
 
 def test_redact_url_strips_only_password_when_no_username():
     # password-only userinfo (unusual but valid per RFC)
-    url = "postgresql://:secret@db.example.com/app"
-    assert _redact_url(url) == "postgresql://***@db.example.com/app"
+    url = "https://:secret@api.example.com/v1"
+    assert _redact_url(url) == "https://***@api.example.com/v1"
 
 
 def test_redact_url_preserves_port():
-    url = "postgresql://admin:pw@db.internal:5432/prod"
-    assert _redact_url(url) == "postgresql://***@db.internal:5432/prod"
+    url = "https://admin:pw@api.internal:8443/v1"
+    assert _redact_url(url) == "https://***@api.internal:8443/v1"
 
 
 def test_redact_url_preserves_ipv6_brackets():
-    url = "postgresql://admin:pw@[::1]:5432/prod"
-    assert _redact_url(url) == "postgresql://***@[::1]:5432/prod"
+    url = "https://admin:pw@[::1]:8443/v1"
+    assert _redact_url(url) == "https://***@[::1]:8443/v1"
 
 
 def test_redact_url_scrubs_credentials_from_malformed_url():
-    url = "postgresql://admin:pw@[::1"
-    assert _redact_url(url) == "postgresql://***@[::1"
+    url = "https://admin:pw@[::1"
+    assert _redact_url(url) == "https://***@[::1"
 
 
 def test_redact_url_scrubs_query_credentials_from_malformed_url():
-    url = "postgresql://[::1?sslpassword=query-secret"
-    assert _redact_url(url) == "postgresql://[::1?sslpassword=%2A%2A%2A"
+    url = "https://[::1?api_key=query-secret"
+    assert _redact_url(url) == "https://[::1?api_key=%2A%2A%2A"
 
 
 def test_redact_url_leaves_malformed_url_without_credentials_unchanged():
-    url = "postgresql://[::1"
+    url = "https://[::1"
     assert _redact_url(url) == url
 
 
 def test_redact_url_no_credentials_unchanged():
-    url = "postgresql://db.internal:5432/prod"
+    url = "https://api.internal:8443/v1"
     assert _redact_url(url) == url
 
 
 def test_redact_url_masks_query_password_and_preserves_safe_options():
-    url = "postgresql://db.internal/prod?sslmode=require&sslpassword=query-secret"
+    url = "https://api.internal/v1?timeout=30&api_key=query-secret"
     result = _redact_url(url)
 
     assert "query-secret" not in result
-    assert result == "postgresql://db.internal/prod?sslmode=require&sslpassword=%2A%2A%2A"
+    assert result == "https://api.internal/v1?timeout=30&api_key=%2A%2A%2A"
 
 
 def test_redact_url_masks_userinfo_and_query_secrets_together():
-    url = "postgresql://dbuser:user-secret@db.internal/prod?password=query-secret"
+    url = "https://apiuser:user-secret@api.internal/v1?password=query-secret"
     result = _redact_url(url)
 
-    assert "dbuser" not in result
+    assert "apiuser" not in result
     assert "user-secret" not in result
     assert "query-secret" not in result
-    assert result == "postgresql://***@db.internal/prod?password=%2A%2A%2A"
+    assert result == "https://***@api.internal/v1?password=%2A%2A%2A"
 
 
 def test_redact_url_non_url_string_unchanged():
@@ -302,50 +302,50 @@ def test_redact_url_non_url_string_unchanged():
 
 
 # ---------------------------------------------------------------------------
-# _redact_config tests for database_url
+# _redact_config tests for URL-valued fields
 # ---------------------------------------------------------------------------
 
 
-def test_redact_config_scrubs_database_url_credentials():
+def test_redact_config_scrubs_url_field_credentials_preserving_host_and_port():
     raw = {
         "default_project": "main",
-        "database_url": "postgresql://dbuser:dbpass@host.example.com:5432/bm",
+        "semantic_embedding_api_base": "https://apiuser:apipass@host.example.com:8443/v1",
         "projects": {},
     }
     result = _redact_config(raw)
-    # Exact match: credentials replaced, host/port/db preserved for diagnostics.
-    assert result["database_url"] == "postgresql://***@host.example.com:5432/bm"
+    # Exact match: credentials replaced, host/port/path preserved for diagnostics.
+    assert result["semantic_embedding_api_base"] == "https://***@host.example.com:8443/v1"
 
 
-def test_redact_config_leaves_database_url_without_credentials():
-    raw = {"database_url": "sqlite:////tmp/basic-memory/main.db"}
+def test_redact_config_leaves_url_field_without_credentials():
+    raw = {"semantic_embedding_api_base": "http://localhost:11434/v1"}
     result = _redact_config(raw)
-    assert result["database_url"] == "sqlite:////tmp/basic-memory/main.db"
+    assert result["semantic_embedding_api_base"] == "http://localhost:11434/v1"
 
 
 def test_redact_config_drops_secret_fields_independently():
     raw = {
         "semantic_embedding_api_key": "provider-top-secret",
-        "database_url": "postgresql://dbuser:dbpassword@host/db",
+        "semantic_embedding_api_base": "https://apiuser:apipassword@host/v1",
         "default_project": "main",
     }
     result = _redact_config(raw)
     assert "semantic_embedding_api_key" not in result
-    assert "dbpassword" not in result["database_url"]
-    assert "dbuser" not in result["database_url"]
+    assert "apipassword" not in result["semantic_embedding_api_base"]
+    assert "apiuser" not in result["semantic_embedding_api_base"]
     assert "main" == result["default_project"]
 
 
 # ---------------------------------------------------------------------------
-# Integration: database_url redaction surfaces in diagnostic output
+# Integration: URL-field redaction surfaces in diagnostic output
 # ---------------------------------------------------------------------------
 
 
-def test_diagnostics_redacts_database_url_password(tmp_path):
-    """Postgres password in database_url must not appear in diagnostic output."""
+def test_diagnostics_redacts_url_field_password(tmp_path):
+    """A password embedded in a URL-valued setting must not reach diagnostic output."""
     config_data = {
         "default_project": "main",
-        "database_url": "postgresql://pguser:supersecret@db.internal:5432/basicmemory",
+        "semantic_embedding_api_base": "https://apiuser:supersecret@api.internal:8443/v1",
         "projects": {},
     }
     config_file = tmp_path / "config.json"
@@ -354,19 +354,18 @@ def test_diagnostics_redacts_database_url_password(tmp_path):
     result = basic_memory_diagnostics()
 
     assert "supersecret" not in result
-    assert "pguser" not in result
+    assert "apiuser" not in result
     # Host and port remain visible for diagnostics.
-    assert "db.internal" in result
-    assert "5432" in result
+    assert "api.internal" in result
+    assert "8443" in result
 
 
-def test_diagnostics_redacts_database_url_query_password(tmp_path):
+def test_diagnostics_redacts_url_field_query_password(tmp_path):
     """Query-string credentials must not escape through diagnostic output."""
     config_data = {
         "default_project": "main",
-        "database_url": (
-            "postgresql://db.internal:5432/basicmemory"
-            "?sslmode=require&sslpassword=query-supersecret"
+        "semantic_embedding_api_base": (
+            "https://api.internal:8443/v1?timeout=30&api_key=query-supersecret"
         ),
         "projects": {},
     }
@@ -376,5 +375,5 @@ def test_diagnostics_redacts_database_url_query_password(tmp_path):
     result = basic_memory_diagnostics()
 
     assert "query-supersecret" not in result
-    assert "sslmode=require" in result
-    assert "sslpassword=%2A%2A%2A" in result
+    assert "timeout=30" in result
+    assert "api_key=%2A%2A%2A" in result

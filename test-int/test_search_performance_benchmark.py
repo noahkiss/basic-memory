@@ -15,7 +15,6 @@ import pytest
 from sqlalchemy import text
 
 from basic_memory import db
-from basic_memory.config import DatabaseBackend
 from basic_memory.repository.fastembed_provider import FastEmbedEmbeddingProvider
 from basic_memory.repository.sqlite_search_repository import SQLiteSearchRepository
 from basic_memory.schemas.search import SearchItemType, SearchQuery, SearchRetrievalMode
@@ -67,11 +66,6 @@ QUALITY_QUERY_SUITES: dict[str, list[QualityQueryCase]] = {
         ),
     ],
 }
-
-
-def _skip_if_not_sqlite(app_config) -> None:
-    if app_config.database_backend != DatabaseBackend.SQLITE:
-        pytest.skip("These benchmarks target local SQLite semantic search.")
 
 
 def _enable_semantic_for_benchmark(search_service, app_config) -> None:
@@ -283,7 +277,6 @@ async def _sqlite_size_bytes(search_service) -> int:
 @pytest.mark.benchmark
 async def test_benchmark_search_index_cold_start_300_notes(search_service, app_config):
     """Benchmark end-to-end indexing throughput for a cold local search index."""
-    _skip_if_not_sqlite(app_config)
     _enable_semantic_for_benchmark(search_service, app_config)
 
     note_count = 300
@@ -319,7 +312,6 @@ async def test_benchmark_search_index_cold_start_300_notes(search_service, app_c
 @pytest.mark.benchmark
 async def test_benchmark_search_query_latency_by_mode(search_service, app_config):
     """Benchmark search latency for fts/vector/hybrid retrieval modes."""
-    _skip_if_not_sqlite(app_config)
     _enable_semantic_for_benchmark(search_service, app_config)
 
     await _seed_benchmark_notes(search_service, note_count=240)
@@ -377,7 +369,6 @@ async def test_benchmark_search_query_latency_by_mode(search_service, app_config
 @pytest.mark.slow
 async def test_benchmark_search_incremental_reindex_80_of_800_notes(search_service, app_config):
     """Benchmark incremental re-index throughput for changed notes only."""
-    _skip_if_not_sqlite(app_config)
     _enable_semantic_for_benchmark(search_service, app_config)
 
     entities = await _seed_benchmark_notes(search_service, note_count=800)
@@ -432,7 +423,6 @@ async def test_benchmark_search_incremental_reindex_80_of_800_notes(search_servi
 @pytest.mark.benchmark
 async def test_benchmark_search_quality_recall_by_mode(search_service, app_config):
     """Benchmark retrieval quality (hit/recall/MRR) for lexical and paraphrase query suites."""
-    _skip_if_not_sqlite(app_config)
     _enable_semantic_for_benchmark(search_service, app_config)
 
     await _seed_benchmark_notes(search_service, note_count=240)

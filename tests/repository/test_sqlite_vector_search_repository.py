@@ -11,7 +11,7 @@ import pytest
 from sqlalchemy import text
 
 from basic_memory import db
-from basic_memory.config import BasicMemoryConfig, DatabaseBackend
+from basic_memory.config import BasicMemoryConfig
 from basic_memory.repository.embedding_provider import EmbeddingProvider
 from basic_memory.repository.litellm_provider import LiteLLMEmbeddingProvider
 from basic_memory.repository.prefixing_provider import PrefixingEmbeddingProvider
@@ -128,7 +128,6 @@ def _make_sqlite_repo_for_unit_tests() -> SQLiteSearchRepository:
         env="test",
         projects={"test-project": "/tmp/test"},
         default_project="test-project",
-        database_backend=DatabaseBackend.SQLITE,
         semantic_search_enabled=True,
         semantic_embedding_sync_batch_size=8,
     )

@@ -19,7 +19,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def _table_exists(connection, table_name: str) -> bool:
-    """Inspector-based table check, dialect agnostic.
+    """Inspector-based table check.
 
     Trigger: SQLite creates search_index as an FTS5 virtual table at runtime
     via SearchRepository.init_search_index, not through Alembic, so fresh
@@ -46,8 +46,7 @@ def upgrade() -> None:
     repository applies, so leftover rows surface under the wrong project on
     every search.
     Outcome: a one-time sweep deletes both shapes, from the FTS index and
-    from search_vector_chunks. Postgres already cascaded on FK delete, so
-    these statements are no-ops there.
+    from search_vector_chunks.
     """
     connection = op.get_bind()
 

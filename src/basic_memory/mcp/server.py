@@ -72,8 +72,7 @@ async def lifespan(app: FastMCP):
     ):
         logger.info(f"Starting Basic Memory MCP server (mode={container.mode.name})")
         logger.info(
-            f"Config: database_backend={config.database_backend.value}, "
-            f"semantic_search_enabled={config.semantic_search_enabled}, "
+            f"Config: semantic_search_enabled={config.semantic_search_enabled}, "
             f"default_project={config.default_project}"
         )
         if config.semantic_search_enabled:

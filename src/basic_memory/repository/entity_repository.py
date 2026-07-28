@@ -430,14 +430,8 @@ class EntityRepository(Repository[Entity]):
                 session.add(entity)
                 await session.flush()
         except IntegrityError as e:
-            # Check if this is a FOREIGN KEY constraint failure
-            # SQLite: "FOREIGN KEY constraint failed"
-            # Postgres: "violates foreign key constraint"
-            error_str = str(e)
-            if (
-                "FOREIGN KEY constraint failed" in error_str
-                or "violates foreign key constraint" in error_str
-            ):
+            # SQLite reports FK violations only in the message text, so match on it.
+            if "FOREIGN KEY constraint failed" in str(e):
                 # Import locally to avoid circular dependency (repository -> services -> repository)
                 from basic_memory.services.exceptions import SyncFatalError
 
@@ -615,14 +609,8 @@ class EntityRepository(Repository[Entity]):
         try:
             await session.flush()
         except IntegrityError as e:  # pragma: no cover
-            # Check if this is a FOREIGN KEY constraint failure
-            # SQLite: "FOREIGN KEY constraint failed"
-            # Postgres: "violates foreign key constraint"
-            error_str = str(e)
-            if (
-                "FOREIGN KEY constraint failed" in error_str
-                or "violates foreign key constraint" in error_str
-            ):
+            # SQLite reports FK violations only in the message text, so match on it.
+            if "FOREIGN KEY constraint failed" in str(e):
                 # Import locally to avoid circular dependency (repository -> services -> repository)
                 from basic_memory.services.exceptions import SyncFatalError
 

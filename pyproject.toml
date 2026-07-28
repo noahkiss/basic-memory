@@ -34,10 +34,10 @@ dependencies = [
     "python-dotenv>=1.1.0",
     "pytest-aio>=1.9.0",
     "aiofiles>=24.1.0",
-    "asyncpg>=0.30.0",
-    "nest-asyncio>=1.6.0", # For Alembic migrations with Postgres
+    # alembic/env.py applies it (on Python < 3.14) so migrations can run from
+    # inside an already-running event loop. Not backend-specific.
+    "nest-asyncio>=1.6.0",
     "pytest-asyncio>=1.2.0",
-    "psycopg==3.3.1",
     "mdformat>=0.7.22",
     "mdformat-gfm>=0.3.7",
     "mdformat-frontmatter>=2.0.8",
@@ -52,10 +52,6 @@ dependencies = [
     "litellm>=1.60.0,<1.92.0",
     "logfire>=4.19.0",
     "psutil>=5.9.0",
-    # uvloop's C event loop has no self._ready.popleft() codepath, so the
-    # asyncpg engine-dispose race ("IndexError: pop from an empty deque") that
-    # crashes the Postgres backend cannot fire under it. Not available on Windows.
-    "uvloop>=0.21.0; sys_platform != 'win32'",
 ]
 
 [project.urls]
@@ -77,12 +73,11 @@ addopts = "--cov=basic_memory --cov-report term-missing"
 testpaths = ["tests", "test-int"]
 asyncio_mode = "strict"
 asyncio_default_fixture_loop_scope = "function"
-# Any test hanging >120s fails with a stack dump instead of stalling the CI job
-# until the runner times out (the FastMCP/asyncpg cleanup-hang family).
+# Any test hanging >120s fails with a stack dump instead of stalling on a
+# deadlock until the whole run is abandoned.
 timeout = 120
 timeout_method = "thread"
 filterwarnings = [
-    "ignore:The @wait_container_is_ready decorator is deprecated.*:DeprecationWarning:testcontainers\\.core\\.waiting_utils",
     "ignore:The default datetime adapter is deprecated as of Python 3\\.12.*:DeprecationWarning:aiosqlite\\.core",
     "ignore:codecs\\.open\\(\\) is deprecated\\. Use open\\(\\) instead\\.:DeprecationWarning:frontmatter",
     "ignore:Parsing dates involving a day of month without a year specified is ambiguous.*:DeprecationWarning:dateparser\\.utils\\.strptime",
@@ -90,7 +85,6 @@ filterwarnings = [
 markers = [
     "benchmark: Performance benchmark tests (deselect with '-m \"not benchmark\"')",
     "slow: Slow-running tests (deselect with '-m \"not slow\"')",
-    "postgres: Tests that run against Postgres backend (deselect with '-m \"not postgres\"')",
     "windows: Windows-specific tests (deselect with '-m \"not windows\"')",
     "smoke: Fast end-to-end smoke tests for MCP flows",
     "semantic: Tests requiring semantic dependencies (fastembed, sqlite-vec, openai)",
@@ -113,8 +107,6 @@ dev = [
     "pytest-xdist>=3.0.0",
     "ruff>=0.1.6",
     "freezegun>=1.5.5",
-    "testcontainers[postgres]>=4.0.0",
-    "psycopg>=3.2.0",
     "pyright>=1.1.408",
     "pytest-testmon>=2.2.0",
     "ty>=0.0.18",
@@ -175,7 +167,6 @@ omit = [
     "*/watch_service.py",           # File system watching - complex integration testing
     "*/background_sync.py",         # Background processes
     "*/cli/**",                    # CLI is an interactive wrapper; core logic is covered via API/MCP/service tests
-    "*/db.py",                     # Backend/runtime-dependent (sqlite/postgres/windows tuning); validated via integration tests
     "*/services/initialization.py", # Startup orchestration + background tasks (watchers); exercised indirectly in entrypoints
     "*/sync/sync_service.py",      # Heavy filesystem/db integration; covered by integration suite, not enforced in unit coverage
     "*/services/migration_service.py", # Complex migration scenarios

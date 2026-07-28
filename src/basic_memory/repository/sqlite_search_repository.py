@@ -777,8 +777,8 @@ class SQLiteSearchRepository(SearchRepositoryBase):
                 # Use _prepare_search_term to handle both Boolean and non-Boolean queries
                 processed_text = self._prepare_search_term(search_text.strip())
                 params["text"] = processed_text
-                # content_stems is capped for Postgres index-row compatibility, while
-                # SQLite stores the complete note body in its FTS5 content_snippet column.
+                # content_stems is capped, so the complete note body lives in the
+                # FTS5 content_snippet column and must be matched too.
                 match_conditions.append(
                     "(search_index.title MATCH :text OR search_index.content_stems MATCH :text "
                     "OR search_index.content_snippet MATCH :text)"

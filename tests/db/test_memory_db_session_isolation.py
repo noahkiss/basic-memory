@@ -21,7 +21,7 @@ import pytest
 from sqlalchemy import text
 
 from basic_memory import db
-from basic_memory.config import BasicMemoryConfig, DatabaseBackend, ProjectEntry
+from basic_memory.config import BasicMemoryConfig, ProjectEntry
 from basic_memory.models import Base
 
 
@@ -102,7 +102,6 @@ async def test_windows_memory_engine_respects_explicit_rollback(monkeypatch):
         env="test",
         projects={"test-project": ProjectEntry(path=".")},
         default_project="test-project",
-        database_backend=DatabaseBackend.SQLITE,
     )
     monkeypatch.setattr(db.os, "name", "nt")
 

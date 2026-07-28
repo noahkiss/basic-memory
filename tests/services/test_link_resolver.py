@@ -86,7 +86,7 @@ async def test_entities(entity_service, file_service):
                 note_type="file",
                 content_type="image/png",
                 file_path="Image.png",
-                permalink="image",  # Required for Postgres NOT NULL constraint
+                permalink="image",  # NOT NULL in the entity table
                 created_at=datetime.now(timezone.utc),
                 updated_at=datetime.now(timezone.utc),
                 project_id=entity_service.repository.project_id,
@@ -1108,8 +1108,8 @@ async def test_resolve_link_non_uuid_falls_through(link_resolver, test_entities,
 async def test_fuzzy_search_selects_first_result(link_resolver, project_prefix):
     """Test that fuzzy search uses results[0] (best-ranked by the DB) regardless of score sign.
 
-    Both SQLite (BM25, negative scores, ASC) and Postgres (ts_rank, positive scores, DESC)
-    return the best match first. Using results[0] is backend-agnostic and correct.
+    SQLite BM25 ranks ascending with negative scores, so the best match is still
+    first; using results[0] is correct without inspecting the sign.
     """
     result = await link_resolver.resolve_link("Auth Serv")
     assert result is not None

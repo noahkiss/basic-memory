@@ -8,7 +8,7 @@ Covers three confirmed bugs found by the integration-test bug hunt:
   supports overwrite=True to replace an existing note.
 
 These are integration tests: real CliRunner -> CLI command -> MCP tool ->
-in-process ASGI API -> real SQLite/Postgres DB and filesystem. No mocks.
+in-process ASGI API -> real SQLite DB and filesystem. No mocks.
 """
 
 import asyncio

@@ -13,7 +13,7 @@ SECRET_FIELDS = frozenset({"semantic_embedding_api_key"})
 
 # Fields whose values are URLs that may embed user:password credentials.
 # The userinfo component is stripped before surfacing.
-URL_FIELDS = frozenset({"database_url", "semantic_embedding_api_base"})
+URL_FIELDS = frozenset({"semantic_embedding_api_base"})
 
 _SECRET_QUERY_KEYS = frozenset(
     {
@@ -50,8 +50,8 @@ def redact_url(url: str) -> str:
     """Strip userinfo and credential-bearing query values from a URL string.
 
     Replaces any credentials with *** so the host/path remain visible for
-    diagnostics (e.g. ``postgresql://***@localhost/mydb``).  If the value
-    cannot be parsed as a URL it is returned unchanged.
+    diagnostics (e.g. ``https://***@localhost/v1``).  If the value cannot be
+    parsed as a URL it is returned unchanged.
     """
     try:
         parsed = urlparse(url)

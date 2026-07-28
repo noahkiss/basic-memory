@@ -190,9 +190,8 @@ async def test_remove_project_purges_search_rows(project_service: ProjectService
     SQLite stores search_index as an FTS5 virtual table, which cannot carry a
     foreign key, so without an explicit purge the FTS rows survive the project
     and leak into the next project that reuses the same auto-increment id.
-    Postgres has the cascade FK, but we expect the same end-state on either
-    backend. This test fails on the pre-fix code: search_index still holds the
-    project's rows after remove_project completes.
+    This test fails on the pre-fix code: search_index still holds the project's
+    rows after remove_project completes.
     """
     test_project_name = f"test-search-cleanup-{os.urandom(4).hex()}"
     with tempfile.TemporaryDirectory() as temp_dir:

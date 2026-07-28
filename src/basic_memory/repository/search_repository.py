@@ -1,9 +1,7 @@
 """Repository for search operations.
 
-This module provides the search repository interface.
-The actual repository implementations are backend-specific:
-- SQLiteSearchRepository: Uses FTS5 virtual tables
-- PostgresSearchRepository: Uses tsvector/tsquery with GIN indexes
+This module provides the search repository interface, implemented by
+SQLiteSearchRepository on top of FTS5 virtual tables.
 """
 
 from datetime import datetime
@@ -12,9 +10,8 @@ from typing import Any, Callable, List, Optional, Protocol
 from sqlalchemy import Result
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from basic_memory.config import BasicMemoryConfig, DatabaseBackend
+from basic_memory.config import BasicMemoryConfig
 from basic_memory.repository.embedding_provider_factory import create_embedding_provider
-from basic_memory.repository.postgres_search_repository import PostgresSearchRepository
 from basic_memory.repository.search_index_row import SearchIndexRow
 from basic_memory.repository.search_repository_base import VectorSyncBatchResult
 from basic_memory.repository.sqlite_search_repository import SQLiteSearchRepository
@@ -22,10 +19,7 @@ from basic_memory.schemas.search import SearchItemType, SearchRetrievalMode
 
 
 class SearchRepository(Protocol):
-    """Protocol defining the search repository interface.
-
-    Both SQLite and Postgres implementations must satisfy this protocol.
-    """
+    """Protocol defining the search repository interface."""
 
     project_id: int
 
@@ -113,24 +107,18 @@ def create_search_repository(
     session_maker: async_sessionmaker[AsyncSession],
     project_id: int,
     app_config: BasicMemoryConfig,
-    database_backend: Optional[DatabaseBackend] = None,
 ) -> SearchRepository:
-    """Factory function to create the appropriate search repository based on database backend.
+    """Build a search repository with the shared embedding provider injected.
 
     Args:
         session_maker: SQLAlchemy async session maker
         project_id: Project ID for the repository
-        app_config: Application config from the caller's composition root; backend
-            detection and the shared embedding provider both derive from it
-        database_backend: Optional explicit backend override
+        app_config: Application config from the caller's composition root; the shared
+            embedding provider derives from it
 
     Returns:
-        SearchRepository: Backend-appropriate search repository instance
+        SearchRepository: a search repository bound to the project
     """
-    config = app_config
-    if database_backend is None:
-        database_backend = config.database_backend
-
     # Trigger: every request, sync batch, and project builds its own search repo.
     # Why: each repo __init__ would otherwise call create_embedding_provider(), and
     # the process-wide cache can be bypassed if its key ever drifts (#872), reloading
@@ -138,23 +126,15 @@ def create_search_repository(
     # Outcome: resolve the cached singleton here once and inject it, so the provider
     # is the single source of truth across all callers of this factory.
     embedding_provider = None
-    if config.semantic_search_enabled:
-        embedding_provider = create_embedding_provider(config)
+    if app_config.semantic_search_enabled:
+        embedding_provider = create_embedding_provider(app_config)
 
-    if database_backend == DatabaseBackend.POSTGRES:  # pragma: no cover
-        return PostgresSearchRepository(  # pragma: no cover
-            session_maker,
-            project_id=project_id,
-            app_config=app_config,
-            embedding_provider=embedding_provider,
-        )
-    else:
-        return SQLiteSearchRepository(
-            session_maker,
-            project_id=project_id,
-            app_config=app_config,
-            embedding_provider=embedding_provider,
-        )
+    return SQLiteSearchRepository(
+        session_maker,
+        project_id=project_id,
+        app_config=app_config,
+        embedding_provider=embedding_provider,
+    )
 
 
 __all__ = [

@@ -58,17 +58,11 @@ type SearchIndexKey = tuple[str, int]
 
 
 class SearchRepositoryBase(ABC):
-    """Abstract base class for backend-specific search repository implementations.
-
-    This class defines the common interface that all search repositories must implement,
-    regardless of whether they use SQLite FTS5 or Postgres tsvector for full-text search.
+    """Abstract base class for search repository implementations.
 
     Shared semantic search logic (chunking, embedding orchestration, hybrid score-based fusion)
-    lives here. Backend-specific operations are delegated to abstract hooks.
-
-    Concrete implementations:
-    - SQLiteSearchRepository: Uses FTS5 virtual tables with MATCH queries
-    - PostgresSearchRepository: Uses tsvector/tsquery with GIN indexes
+    lives here. Storage-specific operations are delegated to abstract hooks, implemented by
+    SQLiteSearchRepository on FTS5 virtual tables with MATCH queries.
     """
 
     # --- Subclass-populated attributes ---
@@ -97,33 +91,24 @@ class SearchRepositoryBase(ABC):
         self.project_id = project_id
 
     # ------------------------------------------------------------------
-    # Abstract methods — FTS and schema (backend-specific)
+    # Abstract methods — FTS and schema (storage-specific)
     # ------------------------------------------------------------------
 
     @abstractmethod
     async def init_search_index(self) -> None:
-        """Create or recreate the search index.
-
-        Backend-specific implementations:
-        - SQLite: CREATE VIRTUAL TABLE using FTS5
-        - Postgres: CREATE TABLE with tsvector column and GIN indexes
-        """
+        """Create or recreate the search index (SQLite: CREATE VIRTUAL TABLE using FTS5)."""
         pass
 
     @abstractmethod
     def _prepare_search_term(self, term: str, is_prefix: bool = True) -> str:
-        """Prepare a search term for backend-specific query syntax.
+        """Prepare a search term for the index's query syntax.
 
         Args:
             term: The search term to prepare
             is_prefix: Whether to add prefix search capability
 
         Returns:
-            Formatted search term for the backend
-
-        Backend-specific implementations:
-        - SQLite: Quotes FTS5 special characters, adds * wildcards
-        - Postgres: Converts to tsquery syntax with :* prefix operator
+            Formatted search term (SQLite: FTS5 special characters quoted, * wildcards added)
         """
         pass
 
@@ -162,10 +147,7 @@ class SearchRepositoryBase(ABC):
 
         Returns:
             List of SearchIndexRow results with relevance scores
-
-        Backend-specific implementations:
-        - SQLite: Uses MATCH operator and bm25() for scoring
-        - Postgres: Uses @@ operator and ts_rank() for scoring
+            (SQLite: MATCH operator with bm25() scoring)
         """
         pass
 
@@ -233,8 +215,7 @@ class SearchRepositoryBase(ABC):
     ) -> None:
         """Delete all chunk + embedding rows for an entity.
 
-        SQLite must explicitly delete embeddings first (no CASCADE).
-        Postgres relies on ON DELETE CASCADE from the FK.
+        SQLite must explicitly delete embeddings first — the vec0 virtual table has no CASCADE.
         """
         pass
 
@@ -250,11 +231,9 @@ class SearchRepositoryBase(ABC):
 
     @abstractmethod
     def _distance_to_similarity(self, distance: float) -> float:
-        """Convert a backend-specific vector distance to cosine similarity in [0, 1].
+        """Convert a raw vector distance to cosine similarity in [0, 1].
 
-        Backend-specific implementations:
-        - SQLite (vec0): L2/Euclidean distance → cosine similarity via 1 - d²/2
-        - Postgres (pgvector <=>): Cosine distance → cosine similarity via 1 - d
+        SQLite (vec0): L2/Euclidean distance → cosine similarity via 1 - d²/2
         """
         pass  # pragma: no cover
 
@@ -263,10 +242,7 @@ class SearchRepositoryBase(ABC):
     # ------------------------------------------------------------------
 
     async def index_item(self, search_index_row: SearchIndexRow) -> None:
-        """Index or update a single item.
-
-        This implementation is shared across backends as it uses standard SQL INSERT.
-        """
+        """Index or update a single item."""
 
         async with db.scoped_session(self.session_maker) as session:
             # Delete existing record if any
@@ -277,9 +253,7 @@ class SearchRepositoryBase(ABC):
                 {"permalink": search_index_row.permalink, "project_id": self.project_id},
             )
 
-            # When using text() raw SQL, always serialize JSON to string
-            # Both SQLite (TEXT) and Postgres (JSONB) accept JSON strings in raw SQL
-            # The database driver/column type will handle conversion
+            # text() raw SQL bypasses the column type, so JSON must be serialized here
             insert_data = search_index_row.to_insert(serialize_json=True)
             insert_data["project_id"] = self.project_id
 
@@ -308,8 +282,6 @@ class SearchRepositoryBase(ABC):
     async def bulk_index_items(self, search_index_rows: List[SearchIndexRow]) -> None:
         """Index multiple items in a single batch operation.
 
-        This implementation is shared across backends as it uses standard SQL INSERT.
-
         Note: This method assumes that any existing records for the entity_id
         have already been deleted (typically via delete_by_entity_id).
 
@@ -321,9 +293,7 @@ class SearchRepositoryBase(ABC):
             return  # pragma: no cover
 
         async with db.scoped_session(self.session_maker) as session:
-            # When using text() raw SQL, always serialize JSON to string
-            # Both SQLite (TEXT) and Postgres (JSONB) accept JSON strings in raw SQL
-            # The database driver/column type will handle conversion
+            # text() raw SQL bypasses the column type, so JSON must be serialized here
             insert_data_list = []
             for row in search_index_rows:
                 insert_data = row.to_insert(serialize_json=True)
@@ -690,10 +660,7 @@ class SearchRepositoryBase(ABC):
         pass
 
     def _timestamp_now_expr(self) -> str:
-        """SQL expression for 'now' in the backend.
-
-        SQLite uses CURRENT_TIMESTAMP, Postgres uses NOW().
-        """
+        """SQL expression for 'now'."""
         return "CURRENT_TIMESTAMP"
 
     # ------------------------------------------------------------------
@@ -1087,8 +1054,7 @@ class SearchRepositoryBase(ABC):
         # Vector scores are used raw — already calibrated [0, 1] by _distance_to_similarity().
         rows_by_key: dict[SearchIndexKey, SearchIndexRow] = {}
 
-        # Normalize FTS scores to [0, 1] — handles both SQLite (negative bm25)
-        # and Postgres (positive ts_rank) by using absolute values
+        # Normalize FTS scores to [0, 1]; bm25 ranks are negative, so use absolute values
         fts_abs = [abs(row.score or 0.0) for row in fts_results]
         fts_max = max(fts_abs) if fts_abs else 1.0
 

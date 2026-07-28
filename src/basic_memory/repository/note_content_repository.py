@@ -224,9 +224,9 @@ class NoteContentRepository(Repository[NoteContent]):
         # Optimistic concurrency guard. write.db_version was planned as
         # prior_db_version + 1 from a plain read earlier in this transaction, so a
         # concurrent accepted write could have advanced the row in between. A
-        # conditional UPDATE guarded on the expected prior version is the portable
-        # compare-and-set (with_for_update is a no-op on SQLite; a rowcount check
-        # works on both SQLite and Postgres): if it matches zero rows the write
+        # conditional UPDATE guarded on the expected prior version is the compare-and-set
+        # SQLite can actually honour (with_for_update is a no-op there, but rowcount is
+        # exact): if it matches zero rows the write
         # lost the race and we refuse instead of clobbering the winner. Only guard
         # updates that were planned against a prior version (db_version > 1);
         # db_version == 1 is only reached with no prior row, handled above.
@@ -292,8 +292,7 @@ class NoteContentRepository(Repository[NoteContent]):
         if expected_db_version is not None:
             # Compare-and-set on db_version. Identity fields are read straight
             # from the entity (rather than mutating the ORM row) so the whole
-            # write is the single conditional UPDATE whose rowcount decides the
-            # race, portably across SQLite and Postgres.
+            # write is the single conditional UPDATE whose rowcount decides the race.
             entity = await self._load_entity_identity(session, entity_id)
             result = cast(
                 CursorResult[Any],

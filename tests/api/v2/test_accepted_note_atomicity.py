@@ -120,15 +120,11 @@ class InspectingNoteContentMaterializer:
 async def test_create_and_update_persist_complete_snapshot_at_materialization_boundary(
     app: FastAPI,
     client: AsyncClient,
-    db_backend: str,
     session_maker: async_sessionmaker[AsyncSession],
     test_project: Project,
     v2_project_url: str,
 ) -> None:
     """Create and replace expose complete committed state before the file write starts."""
-    if db_backend != "sqlite":
-        pytest.skip("This regression intentionally inspects the SQLite FTS row")
-
     materializer = InspectingNoteContentMaterializer(
         session_maker=session_maker,
         project_id=test_project.id,

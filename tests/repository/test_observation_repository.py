@@ -60,7 +60,7 @@ async def test_create_observation_entity_does_not_exist(
     """Test creating a new observation"""
     observation_data = {
         "project_id": sample_entity.project_id,
-        "entity_id": 99999,  # Non-existent entity ID (integer for Postgres compatibility)
+        "entity_id": 99999,  # Non-existent entity ID
         "content": "Test content",
         "context": "test-context",
     }
@@ -401,7 +401,7 @@ async def test_observation_permalink_truncates_long_content(
 
     This test validates the fix for issue #446 where:
     - Long observation content (like transcript dialogue) created permalinks
-      exceeding PostgreSQL's btree index limit of 2704 bytes.
+      far exceeding any sane index key size.
     - Content is now truncated to 200 chars in the permalink property.
     """
     async with db.scoped_session(session_maker) as session:
@@ -493,7 +493,7 @@ async def test_observation_permalink_disambiguates_truncated_content(
 ):
     """Regression test for issue #909: shared 200-char prefixes must not collide.
 
-    Truncating content to 200 chars (PostgreSQL btree limit) made two distinct
+    Truncating content to 200 chars made two distinct
     observations with the same category and an identical 200-char prefix produce
     the same synthetic permalink, silently dropping the second from the search
     index. A digest of the full content now disambiguates them.
@@ -531,7 +531,7 @@ async def test_observation_permalink_disambiguates_truncated_content(
         # Distinct content must yield distinct permalinks despite the shared prefix
         assert obs_alpha.permalink != obs_beta.permalink
 
-        # The digest suffix must keep permalinks under the PostgreSQL btree budget
+        # The digest suffix must stay short enough to keep permalinks index-sized
         assert len(obs_alpha.permalink) < 300
         assert len(obs_beta.permalink) < 300
 

@@ -10,7 +10,7 @@ import yaml
 from sqlalchemy import text
 
 from basic_memory import db
-from basic_memory.config import ProjectConfig, BasicMemoryConfig, DatabaseBackend
+from basic_memory.config import ProjectConfig, BasicMemoryConfig
 from basic_memory.markdown import EntityParser
 from basic_memory.models import Entity as EntityModel
 from basic_memory.repository import EntityRepository
@@ -71,16 +71,10 @@ class _DeleteTestEmbeddingProvider:
 
 async def _count_entity_search_state(
     session_maker,
-    app_config: BasicMemoryConfig,
     project_id: int,
     entity_id: int,
 ) -> tuple[int, int, int]:
     """Return counts for all derived search rows tied to one entity."""
-    embedding_join = (
-        "e.chunk_id = c.id"
-        if app_config.database_backend == DatabaseBackend.POSTGRES
-        else "e.rowid = c.id"
-    )
     params = {"project_id": project_id, "entity_id": entity_id}
 
     async with db.scoped_session(session_maker) as session:
@@ -101,8 +95,7 @@ async def _count_entity_search_state(
         vector_embedding_rows = await session.execute(
             text(
                 "SELECT COUNT(*) FROM search_vector_embeddings e "
-                "JOIN search_vector_chunks c ON "
-                f"{embedding_join} "
+                "JOIN search_vector_chunks c ON e.rowid = c.id "
                 "WHERE c.project_id = :project_id AND c.entity_id = :entity_id"
             ),
             params,
@@ -355,11 +348,9 @@ async def test_delete_entity_removes_search_and_vector_state(
     entity_service_with_search: EntityService,
     search_service: SearchService,
     session_maker,
-    app_config: BasicMemoryConfig,
 ):
     """Deleting an entity should clear all of its full-text and semantic search state."""
-    if app_config.database_backend == DatabaseBackend.SQLITE:
-        pytest.importorskip("sqlite_vec")
+    pytest.importorskip("sqlite_vec")
 
     repository = cast(Any, search_service.repository)
     repository._semantic_enabled = True
@@ -387,7 +378,6 @@ async def test_delete_entity_removes_search_and_vector_state(
 
     search_rows, chunk_rows, embedding_rows = await _count_entity_search_state(
         session_maker,
-        app_config,
         search_service.repository.project_id,
         entity.id,
     )
@@ -399,7 +389,6 @@ async def test_delete_entity_removes_search_and_vector_state(
 
     assert await _count_entity_search_state(
         session_maker,
-        app_config,
         search_service.repository.project_id,
         entity.id,
     ) == (0, 0, 0)

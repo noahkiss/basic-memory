@@ -14,11 +14,8 @@ def _first_value(row):
 
 
 @pytest.mark.asyncio
-async def test_wal_mode_enabled(engine_factory, db_backend):
+async def test_wal_mode_enabled(engine_factory):
     """Test that WAL mode is enabled on filesystem database connections."""
-    if db_backend == "postgres":
-        pytest.skip("SQLite-specific test - PRAGMA commands not supported in Postgres")
-
     engine, _ = engine_factory
 
     # Execute a query to verify WAL mode is enabled
@@ -31,11 +28,8 @@ async def test_wal_mode_enabled(engine_factory, db_backend):
 
 
 @pytest.mark.asyncio
-async def test_busy_timeout_configured(engine_factory, db_backend):
+async def test_busy_timeout_configured(engine_factory):
     """Test that busy timeout is configured for database connections."""
-    if db_backend == "postgres":
-        pytest.skip("SQLite-specific test - PRAGMA commands not supported in Postgres")
-
     engine, _ = engine_factory
 
     async with engine.connect() as conn:
@@ -47,12 +41,9 @@ async def test_busy_timeout_configured(engine_factory, db_backend):
 
 
 @pytest.mark.asyncio
-async def test_synchronous_mode_configured(engine_factory, db_backend):
+async def test_synchronous_mode_configured(engine_factory):
     """Synchronous defaults to NORMAL — safe with WAL, and OFF showed no
     measurable throughput gain in benchmarks. See config.sqlite_synchronous."""
-    if db_backend == "postgres":
-        pytest.skip("SQLite-specific test - PRAGMA commands not supported in Postgres")
-
     engine, _ = engine_factory
 
     async with engine.connect() as conn:
@@ -87,11 +78,8 @@ async def test_sqlite_synchronous_follows_config(tmp_path, value, expected):
 
 
 @pytest.mark.asyncio
-async def test_cache_size_configured(engine_factory, db_backend):
+async def test_cache_size_configured(engine_factory):
     """Test that cache size is configured for performance."""
-    if db_backend == "postgres":
-        pytest.skip("SQLite-specific test - PRAGMA commands not supported in Postgres")
-
     engine, _ = engine_factory
 
     async with engine.connect() as conn:
@@ -103,11 +91,8 @@ async def test_cache_size_configured(engine_factory, db_backend):
 
 
 @pytest.mark.asyncio
-async def test_temp_store_configured(engine_factory, db_backend):
+async def test_temp_store_configured(engine_factory):
     """Test that temp_store is set to MEMORY."""
-    if db_backend == "postgres":
-        pytest.skip("SQLite-specific test - PRAGMA commands not supported in Postgres")
-
     engine, _ = engine_factory
 
     async with engine.connect() as conn:
@@ -126,10 +111,6 @@ async def test_temp_store_configured(engine_factory, db_backend):
 async def test_windows_locking_mode_when_on_windows(tmp_path, monkeypatch, config_manager):
     """Test that Windows-specific locking mode is set when running on Windows."""
     from basic_memory.db import engine_session_factory, DatabaseType
-    from basic_memory.config import DatabaseBackend
-
-    # Force SQLite backend for this SQLite-specific test
-    config_manager.config.database_backend = DatabaseBackend.SQLITE
 
     # Set HOME environment variable
     monkeypatch.setenv("HOME", str(tmp_path))

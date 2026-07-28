@@ -25,7 +25,6 @@ from basic_memory.schemas import (
     SystemStatus,
 )
 from basic_memory.config import (
-    DatabaseBackend,
     WATCH_STATUS_JSON,
     ConfigManager,
     ProjectEntry,
@@ -365,11 +364,9 @@ class ProjectService:
 
             project_path = project.path
 
-            # Check if project is default. The database is the source of truth; the
-            # SQLite backend also honours the default recorded in the config file.
-            is_default = project.is_default
-            if self.config_manager.config.database_backend != DatabaseBackend.POSTGRES:
-                is_default = is_default or name == self.config_manager.config.default_project
+            # Check if project is default. The database is the source of truth, but a
+            # default recorded only in the config file still counts as one.
+            is_default = project.is_default or name == self.config_manager.config.default_project
             if is_default:
                 raise ValueError(f"Cannot remove the default project '{name}'")  # pragma: no cover
 
@@ -963,16 +960,10 @@ class ProjectService:
             )
 
             # Query for monthly entity creation (project filtered)
-            # Use different date formatting for SQLite vs Postgres
-            from basic_memory.config import DatabaseBackend
+            date_format = "strftime('%Y-%m', created_at)"
 
-            is_postgres = self.config_manager.config.database_backend == DatabaseBackend.POSTGRES
-            date_format = (
-                "to_char(created_at, 'YYYY-MM')" if is_postgres else "strftime('%Y-%m', created_at)"
-            )
-
-            # Postgres needs datetime objects, SQLite needs ISO strings
-            six_months_param = six_months_ago if is_postgres else six_months_ago.isoformat()
+            # SQLite compares datetimes as ISO-8601 text.
+            six_months_param = six_months_ago.isoformat()
 
             entity_growth_result = await self.repository.execute_query(
                 session,
@@ -990,11 +981,7 @@ class ProjectService:
             entity_growth = {row[0]: row[1] for row in entity_growth_result.fetchall()}
 
             # Query for monthly observation creation (project filtered)
-            date_format_entity = (
-                "to_char(entity.created_at, 'YYYY-MM')"
-                if is_postgres
-                else "strftime('%Y-%m', entity.created_at)"
-            )
+            date_format_entity = "strftime('%Y-%m', entity.created_at)"
 
             observation_growth_result = await self.repository.execute_query(
                 session,
@@ -1071,21 +1058,13 @@ class ProjectService:
         document_prefix_set = bool(config.semantic_embedding_document_prefix)
         query_prefix_set = bool(config.semantic_embedding_query_prefix)
 
-        is_postgres = config.database_backend == DatabaseBackend.POSTGRES
-
         # --- Check vector table existence ---
         # Both search_vector_chunks and search_vector_embeddings must exist
         # for the detailed stats queries (JOINs between them) to work.
-        if is_postgres:
-            table_check_sql = text(
-                "SELECT COUNT(*) FROM information_schema.tables "
-                "WHERE table_name IN ('search_vector_chunks', 'search_vector_embeddings')"
-            )
-        else:
-            table_check_sql = text(
-                "SELECT COUNT(*) FROM sqlite_master "
-                "WHERE type = 'table' AND name IN ('search_vector_chunks', 'search_vector_embeddings')"
-            )
+        table_check_sql = text(
+            "SELECT COUNT(*) FROM sqlite_master "
+            "WHERE type = 'table' AND name IN ('search_vector_chunks', 'search_vector_embeddings')"
+        )
 
         async with db.scoped_session(self.session_maker) as session:
             table_result = await self.repository.execute_query(session, table_check_sql, {})
@@ -1158,31 +1137,17 @@ class ProjectService:
                 )
                 total_entities_with_chunks = entities_with_chunks_result.scalar() or 0
 
-                # Embeddings count — join pattern differs between SQLite and Postgres
-                if is_postgres:
-                    embeddings_sql = text(
-                        "SELECT COUNT(*) FROM search_vector_chunks c "
-                        "JOIN search_vector_embeddings e ON e.chunk_id = c.id "
-                        f"WHERE c.project_id = :project_id {chunk_entity_exists}"
-                    )
-                else:
-                    embeddings_sql = text(
-                        "SELECT COUNT(*) FROM search_vector_chunks c "
-                        "JOIN search_vector_embeddings e ON e.rowid = c.id "
-                        f"WHERE c.project_id = :project_id {chunk_entity_exists}"
-                    )
+                embeddings_sql = text(
+                    "SELECT COUNT(*) FROM search_vector_chunks c "
+                    "JOIN search_vector_embeddings e ON e.rowid = c.id "
+                    f"WHERE c.project_id = :project_id {chunk_entity_exists}"
+                )
 
                 # The embeddings/orphan JOINs read search_vector_embeddings, a vec0
-                # virtual table. On SQLite that table is only visible on a connection
-                # that loaded sqlite-vec, so route these through scalar_vec_query which
-                # loads the extension first. Postgres has no per-connection extension
-                # and uses the bare pooled session.
+                # virtual table. That table is only visible on a connection that loaded
+                # sqlite-vec, so route these through scalar_vec_query which loads the
+                # extension first.
                 async def _vec_scalar(vec_sql) -> int:
-                    if is_postgres:
-                        result = await self.repository.execute_query(
-                            session, vec_sql, {"project_id": project_id}
-                        )
-                        return result.scalar() or 0
                     count = await self.repository.scalar_vec_query(
                         session, vec_sql, {"project_id": project_id}
                     )
@@ -1199,18 +1164,11 @@ class ProjectService:
                 total_embeddings = await _vec_scalar(embeddings_sql)
 
                 # Orphaned chunks (chunks without embeddings — indicates interrupted indexing)
-                if is_postgres:
-                    orphan_sql = text(
-                        "SELECT COUNT(*) FROM search_vector_chunks c "
-                        "LEFT JOIN search_vector_embeddings e ON e.chunk_id = c.id "
-                        f"WHERE c.project_id = :project_id AND e.chunk_id IS NULL {chunk_entity_exists}"
-                    )
-                else:
-                    orphan_sql = text(
-                        "SELECT COUNT(*) FROM search_vector_chunks c "
-                        "LEFT JOIN search_vector_embeddings e ON e.rowid = c.id "
-                        f"WHERE c.project_id = :project_id AND e.rowid IS NULL {chunk_entity_exists}"
-                    )
+                orphan_sql = text(
+                    "SELECT COUNT(*) FROM search_vector_chunks c "
+                    "LEFT JOIN search_vector_embeddings e ON e.rowid = c.id "
+                    f"WHERE c.project_id = :project_id AND e.rowid IS NULL {chunk_entity_exists}"
+                )
                 orphaned_chunks = await _vec_scalar(orphan_sql)
             except SAOperationalError as exc:
                 # Trigger: sqlite_master can list vec0 virtual tables even when sqlite-vec
@@ -1218,7 +1176,7 @@ class ProjectService:
                 # Why: project info should degrade gracefully instead of crashing on stats queries.
                 # Outcome: report vector tables as unavailable and point the user to install the
                 # missing dependency before rebuilding embeddings.
-                if is_postgres or "no such module: vec0" not in str(exc).lower():
+                if "no such module: vec0" not in str(exc).lower():
                     raise
 
                 return EmbeddingStatus(

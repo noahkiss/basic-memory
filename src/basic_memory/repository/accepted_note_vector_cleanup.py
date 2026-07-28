@@ -15,21 +15,16 @@ DELETE_PROJECT_INDEX_VECTOR_CHUNKS_SQL = text("""
       AND entity_id IN :deleted_entity_ids
 """).bindparams(bindparam("deleted_entity_ids", expanding=True))
 
-SELECT_PROJECT_INDEX_SQLITE_VECTOR_TABLES_SQL = text("""
+SELECT_PROJECT_INDEX_VECTOR_TABLES_SQL = text("""
     SELECT name
     FROM sqlite_master
     WHERE type = 'table'
       AND name IN ('search_vector_chunks', 'search_vector_embeddings')
 """)
 
-SELECT_PROJECT_INDEX_POSTGRES_VECTOR_TABLES_SQL = text("""
-    SELECT table_name
-    FROM information_schema.tables
-    WHERE table_schema = ANY (current_schemas(false))
-      AND table_name IN ('search_vector_chunks', 'search_vector_embeddings')
-""")
-
-DELETE_PROJECT_INDEX_SQLITE_VECTOR_EMBEDDINGS_SQL = text("""
+# Embeddings live in a vec0 virtual table addressed by its rowid pseudocolumn,
+# which is why this joins on rowid rather than a real FK column.
+DELETE_PROJECT_INDEX_VECTOR_EMBEDDINGS_SQL = text("""
     DELETE FROM search_vector_embeddings
     WHERE rowid IN (
         SELECT id
@@ -39,32 +34,10 @@ DELETE_PROJECT_INDEX_SQLITE_VECTOR_EMBEDDINGS_SQL = text("""
     )
 """).bindparams(bindparam("deleted_entity_ids", expanding=True))
 
-DELETE_PROJECT_INDEX_POSTGRES_VECTOR_EMBEDDINGS_SQL = text("""
-    DELETE FROM search_vector_embeddings
-    WHERE chunk_id IN (
-        SELECT id
-        FROM search_vector_chunks
-        WHERE project_id = :project_id
-          AND entity_id IN :deleted_entity_ids
-    )
-""").bindparams(bindparam("deleted_entity_ids", expanding=True))
-
-
-def project_index_session_dialect_name(session: AsyncSession) -> str:
-    """Return the SQLAlchemy dialect name for project-index maintenance."""
-    return session.get_bind().dialect.name
-
 
 async def project_index_vector_table_names(session: AsyncSession) -> frozenset[str]:
-    """Return available vector table names for the current database backend."""
-    dialect_name = project_index_session_dialect_name(session)
-    if dialect_name == "sqlite":
-        result = await session.execute(SELECT_PROJECT_INDEX_SQLITE_VECTOR_TABLES_SQL)
-    elif dialect_name == "postgresql":
-        result = await session.execute(SELECT_PROJECT_INDEX_POSTGRES_VECTOR_TABLES_SQL)
-    else:
-        raise RuntimeError(f"Unsupported project-index database dialect: {dialect_name}")
-
+    """Return the vector tables that currently exist; they are created lazily."""
+    result = await session.execute(SELECT_PROJECT_INDEX_VECTOR_TABLES_SQL)
     return frozenset(str(table_name) for table_name in result.scalars())
 
 
@@ -74,7 +47,7 @@ async def delete_project_index_vector_rows(
     project_id: ProjectId,
     entity_ids: Sequence[int],
 ) -> None:
-    """Delete backend vector rows for project-index entity deletes when tables exist."""
+    """Delete vector rows for project-index entity deletes when the tables exist."""
     deleted_entity_ids = tuple(entity_ids)
     if not deleted_entity_ids:
         return
@@ -87,20 +60,13 @@ async def delete_project_index_vector_rows(
         "project_id": project_id,
         "deleted_entity_ids": deleted_entity_ids,
     }
+    # Extension loading is per-connection, so vec0 must be loaded on *this* session
+    # before the DELETE or the embeddings are silently left behind.
     if "search_vector_embeddings" in vector_table_names:
-        dialect_name = project_index_session_dialect_name(session)
-        if dialect_name == "sqlite":
-            if await _load_sqlite_vec_on_session(session):
-                await session.execute(
-                    DELETE_PROJECT_INDEX_SQLITE_VECTOR_EMBEDDINGS_SQL,
-                    delete_params,
-                )
-        elif dialect_name == "postgresql":
+        if await _load_sqlite_vec_on_session(session):
             await session.execute(
-                DELETE_PROJECT_INDEX_POSTGRES_VECTOR_EMBEDDINGS_SQL,
+                DELETE_PROJECT_INDEX_VECTOR_EMBEDDINGS_SQL,
                 delete_params,
             )
-        else:
-            raise RuntimeError(f"Unsupported project-index database dialect: {dialect_name}")
 
     await session.execute(DELETE_PROJECT_INDEX_VECTOR_CHUNKS_SQL, delete_params)

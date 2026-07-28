@@ -30,16 +30,10 @@ def test_app_callback_registers_command_operation(monkeypatch) -> None:
     resource = object()
 
     monkeypatch.setattr(cli_app, "init_cli_logging", lambda: None)
-    # Container needs a `config` attribute because app_callback passes it to the
-    # uvloop policy installer; the helper itself is stubbed below for this
-    # telemetry-focused test.
     monkeypatch.setattr(
         cli_app.CliContainer, "create", staticmethod(lambda: SimpleNamespace(config=object()))
     )
     monkeypatch.setattr(cli_app, "set_container", lambda container: None)
-    # app_callback installs the uvloop policy for the Postgres backend; stub the
-    # helper so this telemetry test does not depend on event-loop policy state.
-    monkeypatch.setattr("basic_memory.db.maybe_install_uvloop", lambda config: False)
 
     def fake_span(name: str, **attrs):
         operations.append((name, attrs))

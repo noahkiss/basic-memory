@@ -15,7 +15,7 @@ from basic_memory.schemas import (
     SystemStatus,
 )
 from basic_memory.services.project_service import ProjectService
-from basic_memory.config import ConfigManager, DatabaseBackend
+from basic_memory.config import ConfigManager
 
 
 async def _get_project(project_service: ProjectService, name: str) -> Project | None:
@@ -1528,68 +1528,12 @@ async def test_remove_project_delete_notes_missing_directory(project_service: Pr
 
 
 @pytest.mark.asyncio
-async def test_remove_project_postgres_backend_uses_database_not_config(
+async def test_remove_project_checks_both_config_and_database(
     project_service: ProjectService,
 ):
-    """Test that in Postgres backend, remove_project only checks database for default status.
+    """Test that remove_project checks both config AND database for default status.
 
-    Regression test for bug where cloud backend checked config file (stale) instead of
-    database (source of truth) when determining if a project is the default.
-    """
-    test_project_name = f"test-cloud-default-{os.urandom(4).hex()}"
-    test_project_path = f"/tmp/test-cloud-{os.urandom(8).hex()}"
-
-    # Save original backend/default settings
-    config = project_service.config_manager.config
-    original_backend = config.database_backend
-    original_default = config.default_project
-
-    try:
-        # Add a test project (not default)
-        await project_service.add_project(test_project_name, test_project_path, set_default=False)
-
-        # Verify project exists and is NOT default in database
-        db_project = await _get_project(project_service, test_project_name)
-        assert db_project is not None
-        assert db_project.is_default is not True  # Should be None or False
-
-        # Simulate stale config: manually set this project as default in config only
-        # (This simulates what happens when config isn't updated after API calls)
-        config.default_project = test_project_name
-
-        # Use Postgres backend semantics (database is source of truth)
-        config.database_backend = DatabaseBackend.POSTGRES
-        project_service.config_manager.save_config(config)
-
-        # In Postgres backend, should be able to remove because database says it's not default
-        # (even though stale config says it is) - this should NOT raise ValueError
-        await project_service.remove_project(test_project_name, delete_notes=False)
-
-        # Verify project was removed from database
-        db_project = await _get_project(project_service, test_project_name)
-        assert db_project is None
-
-    finally:
-        # Restore original settings
-        config = project_service.config_manager.config
-        config.database_backend = original_backend
-        config.default_project = original_default
-        project_service.config_manager.save_config(config)
-
-        # Cleanup from config if test failed partway
-        try:
-            project_service.config_manager.remove_project(test_project_name)
-        except (ValueError, KeyError):
-            pass  # Project may not be in config
-
-
-@pytest.mark.asyncio
-async def test_remove_project_local_mode_checks_both_config_and_database(
-    project_service: ProjectService,
-):
-    """Test that in SQLite backend, remove_project checks both config AND database for default status.
-
-    In SQLite backend, we check both sources to be safe - if either says the project is default,
+    We check both sources to be safe - if either says the project is default,
     we prevent deletion.
     """
     test_project_name = f"test-local-default-{os.urandom(4).hex()}"
@@ -1597,15 +1541,10 @@ async def test_remove_project_local_mode_checks_both_config_and_database(
 
     # Save original settings
     config = project_service.config_manager.config
-    original_backend = config.database_backend
     original_default = config.default_project
 
     try:
-        # Ensure we're in SQLite backend before adding project
-        config.database_backend = DatabaseBackend.SQLITE
-        project_service.config_manager.save_config(config)
-
-        # Add a test project (not default) - this will add to both DB and config in SQLite mode
+        # Add a test project (not default) - this adds it to both the DB and the config
         await project_service.add_project(test_project_name, test_project_path, set_default=False)
 
         # Verify project exists and is NOT default in database
@@ -1620,7 +1559,7 @@ async def test_remove_project_local_mode_checks_both_config_and_database(
         config.default_project = test_project_name
         project_service.config_manager.save_config(config)
 
-        # In SQLite backend, should NOT be able to remove because config says it's default
+        # Should NOT be able to remove because config says it's default
         with pytest.raises(ValueError, match="Cannot remove the default project"):
             await project_service.remove_project(test_project_name, delete_notes=False)
 
@@ -1631,7 +1570,6 @@ async def test_remove_project_local_mode_checks_both_config_and_database(
     finally:
         # Restore original settings
         config = project_service.config_manager.config
-        config.database_backend = original_backend
         config.default_project = original_default
         project_service.config_manager.save_config(config)
 
@@ -1643,18 +1581,14 @@ async def test_remove_project_local_mode_checks_both_config_and_database(
 
 
 @pytest.mark.asyncio
-async def test_remove_project_rejects_database_default_in_both_modes(
+async def test_remove_project_rejects_database_default(
     project_service: ProjectService,
 ):
-    """Test that remove_project rejects deletion when project is default in database.
-
-    This should be blocked in BOTH cloud mode and local mode.
-    """
+    """Test that remove_project rejects deletion when project is default in database."""
     test_project_name = f"test-db-default-{os.urandom(4).hex()}"
     test_project_path = f"/tmp/test-db-default-{os.urandom(8).hex()}"
 
     # Save original settings
-    original_backend = project_service.config_manager.config.database_backend
     original_default = project_service.config_manager.config.default_project
 
     try:
@@ -1666,28 +1600,15 @@ async def test_remove_project_rejects_database_default_in_both_modes(
         assert db_project is not None
         assert db_project.is_default is True
 
-        # Test in Postgres backend - should reject
-        config = project_service.config_manager.config
-        config.database_backend = DatabaseBackend.POSTGRES
-        project_service.config_manager.save_config(config)
-
         with pytest.raises(ValueError, match="Cannot remove the default project"):
             await project_service.remove_project(test_project_name, delete_notes=False)
 
-        # Test in SQLite backend - should also reject
-        config.database_backend = DatabaseBackend.SQLITE
-        project_service.config_manager.save_config(config)
-
-        with pytest.raises(ValueError, match="Cannot remove the default project"):
-            await project_service.remove_project(test_project_name, delete_notes=False)
-
-        # Verify project still exists in both cases
+        # Verify project still exists
         assert test_project_name in project_service.projects
 
     finally:
         # Restore original settings
         config = project_service.config_manager.config
-        config.database_backend = original_backend
         config.default_project = original_default
         project_service.config_manager.save_config(config)
 

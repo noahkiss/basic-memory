@@ -558,10 +558,9 @@ def vector_prepare_window_size(
     """Return the number of entities to prepare in one orchestration window."""
     # Trigger: the shared window path batches reads and then fans back out
     # into per-entity prepare work.
-    # Why: SQLite benefits from concurrency too, but letting the default path
-    # explode to the full embed batch size creates unnecessary write contention.
-    # Outcome: local backends get a small bounded window, while Postgres keeps
-    # its explicit higher concurrency override.
+    # Why: SQLite benefits from concurrency too, but letting the window grow to
+    # the full embed batch size creates unnecessary write contention.
+    # Outcome: the window stays small and bounded.
     return max(
         1,
         min(repository._semantic_embedding_sync_batch_size, max_window_size),

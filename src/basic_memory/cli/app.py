@@ -66,13 +66,6 @@ def app_callback(
             )
             container = CliContainer.create()
             set_container(container)
-            # uvloop must own the event-loop policy before `brief` runs its query
-            # through asyncio.run(), or a Postgres backend hits the asyncpg
-            # engine-dispose race (#831/#877). No-op for SQLite, so brief startup
-            # stays light.
-            from basic_memory.db import maybe_install_uvloop
-
-            maybe_install_uvloop(container.config)
         except (Exception, SystemExit):
             pass
         return
@@ -91,14 +84,6 @@ def app_callback(
     # Create container and read config (single point of config access)
     container = CliContainer.create()
     set_container(container)
-
-    # Trigger: Postgres backend resolved at CLI startup, before any asyncio.run().
-    # Why: uvloop must own the event-loop policy before the loop is created so the
-    # asyncpg engine-dispose race (#831/#877) cannot fire. No-op for SQLite.
-    # Outcome: subsequent asyncio.run() calls in CLI commands use uvloop on Postgres.
-    from basic_memory.db import maybe_install_uvloop
-
-    maybe_install_uvloop(container.config)
 
     # Run initialization for commands that don't use the API
     # Skip for 'mcp' command - it has its own lifespan that handles initialization

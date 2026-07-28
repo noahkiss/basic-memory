@@ -207,8 +207,3 @@ def build_sqlite_json_path(parts: List[str]) -> str:
     for part in parts:
         path += f'."{part}"'
     return path
-
-
-def build_postgres_json_path(parts: List[str]) -> str:
-    """Build a Postgres JSON path for #>>/#> operators."""
-    return "{" + ",".join(parts) + "}"

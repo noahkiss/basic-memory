@@ -7,7 +7,7 @@ from typing import Protocol
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from basic_memory.config import BasicMemoryConfig, DatabaseBackend
+from basic_memory.config import BasicMemoryConfig
 from basic_memory.indexing.relation_resolution import RepositoryRelationResolutionRuntime
 from basic_memory.markdown import EntityParser
 from basic_memory.repository import (
@@ -74,7 +74,6 @@ def build_default_project_search_bundle(
     session_maker: async_sessionmaker[AsyncSession],
     file_service: FileService,
     app_config: BasicMemoryConfig,
-    database_backend: DatabaseBackend | None = None,
 ) -> BasicMemoryProjectSearchBundle:
     """Compose default project-scoped search services without entity/indexing services."""
     entity_repository = EntityRepository(project_id=project_id)
@@ -82,7 +81,6 @@ def build_default_project_search_bundle(
         session_maker,
         project_id=project_id,
         app_config=app_config,
-        database_backend=database_backend,
     )
     search_service = SearchService(
         search_repository,
@@ -105,7 +103,6 @@ def build_default_project_runtime_bundle(
     entity_parser: EntityParser,
     file_service: FileService,
     app_config: BasicMemoryConfig,
-    database_backend: DatabaseBackend | None = None,
     entity_service_factory: ProjectEntityServiceFactory | None = None,
     relation_resolution_repository: RelationRepository | None = None,
     project_repository: ProjectRepository | None = None,
@@ -120,7 +117,6 @@ def build_default_project_runtime_bundle(
         session_maker,
         project_id=project_id,
         app_config=app_config,
-        database_backend=database_backend,
     )
     search_service = SearchService(
         search_repository,

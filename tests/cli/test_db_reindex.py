@@ -9,7 +9,6 @@ import pytest
 from typer.testing import CliRunner
 
 from basic_memory.cli.app import app
-from basic_memory.config import DatabaseBackend
 import basic_memory.cli.commands.db as db_cmd  # noqa: F401
 
 
@@ -21,8 +20,6 @@ def _stub_app_config(*, semantic_search_enabled: bool = True) -> SimpleNamespace
     return SimpleNamespace(
         semantic_search_enabled=semantic_search_enabled,
         database_path=Path("/tmp/basic-memory.db"),
-        # app_callback reads this to decide whether to install the uvloop policy.
-        database_backend=DatabaseBackend.SQLITE,
     )
 
 

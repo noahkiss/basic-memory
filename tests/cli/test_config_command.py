@@ -1,6 +1,7 @@
 """Tests for the `bm config` command group (issue #991)."""
 
 import json
+from enum import Enum
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -66,7 +67,7 @@ def test_configurable_fields_excludes_structured_types():
 
 def test_configurable_fields_includes_scalar_settings():
     """Scalar settings (str/bool/int/float/Literal/Enum) are derived from the model."""
-    for expected in ("cli_output_style", "log_level", "kebab_filenames", "database_backend"):
+    for expected in ("cli_output_style", "log_level", "kebab_filenames", "sqlite_synchronous"):
         assert expected in config_cmd.CONFIGURABLE_FIELDS
 
 
@@ -98,15 +99,13 @@ def test_config_get_unknown_key(runner, write_config):
     assert "not a recognized setting" in result.output
 
 
-def test_config_get_renders_enum_value_not_repr(runner, write_config):
-    """Enum-typed settings (e.g. database_backend) must show their value, not `Class.MEMBER`."""
-    write_config(_base_config())
+def test_render_value_renders_enum_value_not_repr():
+    """Enum-typed settings must display their value, not `Class.MEMBER`."""
 
-    result = runner.invoke(app, ["config", "get", "database_backend"])
+    class Flavor(Enum):
+        VANILLA = "vanilla"
 
-    assert result.exit_code == 0, result.output
-    assert "database_backend = sqlite" in result.output
-    assert "DatabaseBackend" not in result.output
+    assert config_cmd._render_value("flavor", Flavor.VANILLA) == "vanilla"
 
 
 def test_config_list_shows_default_source(runner, write_config):
@@ -227,7 +226,7 @@ def test_config_unset_unknown_key(runner, write_config):
 
 
 # ---------------------------------------------------------------------------
-# Redaction: secrets must never print, database_url credentials masked
+# Redaction: secrets must never print, URL credentials masked
 # ---------------------------------------------------------------------------
 
 
@@ -252,17 +251,19 @@ def test_config_list_never_prints_secret_field(runner, write_config):
     assert rows["semantic_embedding_api_key"]["value"] == "********"
 
 
-def test_config_get_masks_database_url_credentials(runner, write_config):
-    write_config(_base_config(database_url="postgresql://dbuser:dbpass@host.example.com:5432/bm"))
+def test_config_get_masks_url_field_credentials(runner, write_config):
+    write_config(
+        _base_config(semantic_embedding_api_base="https://apiuser:apipass@host.example.com:5432/v1")
+    )
 
-    result = runner.invoke(app, ["config", "get", "database_url"])
+    result = runner.invoke(app, ["config", "get", "semantic_embedding_api_base"])
 
     assert result.exit_code == 0, result.output
-    assert "dbpass" not in result.output
-    assert "dbuser" not in result.output
+    assert "apipass" not in result.output
+    assert "apiuser" not in result.output
     # Parse the masked URL and compare the hostname exactly — a bare substring
     # check trips CodeQL's incomplete-URL-sanitization rule and proves less.
-    masked_url = result.output.split("database_url = ", 1)[1].strip()
+    masked_url = result.output.split("semantic_embedding_api_base = ", 1)[1].strip()
     assert urlsplit(masked_url).hostname == "host.example.com"
 
 

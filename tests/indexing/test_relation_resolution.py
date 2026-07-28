@@ -54,8 +54,9 @@ class FakeSession:
     def __init__(self) -> None:
         type(self).created_count += 1
 
-    def get_bind(self) -> object:
-        return type("Bind", (), {"dialect": type("Dialect", (), {"name": "postgresql"})()})()
+    async def execute(self, statement: object, params: object | None = None) -> None:
+        """scoped_session issues ``PRAGMA foreign_keys=ON`` on every owned session."""
+        return None
 
     async def commit(self) -> None:
         pass

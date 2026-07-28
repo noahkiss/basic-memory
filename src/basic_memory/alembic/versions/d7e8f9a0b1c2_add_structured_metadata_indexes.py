@@ -15,16 +15,6 @@ from sqlalchemy import text
 
 def column_exists(connection, table: str, column: str) -> bool:
     """Check if a column exists in a table (idempotent migration support)."""
-    if connection.dialect.name == "postgresql":
-        result = connection.execute(
-            text(
-                "SELECT 1 FROM information_schema.columns "
-                "WHERE table_name = :table AND column_name = :column"
-            ),
-            {"table": table, "column": column},
-        )
-        return result.fetchone() is not None
-    # SQLite
     result = connection.execute(text(f"PRAGMA table_info({table})"))
     columns = [row[1] for row in result]
     return column in columns
@@ -32,13 +22,6 @@ def column_exists(connection, table: str, column: str) -> bool:
 
 def index_exists(connection, index_name: str) -> bool:
     """Check if an index exists (idempotent migration support)."""
-    if connection.dialect.name == "postgresql":
-        result = connection.execute(
-            text("SELECT 1 FROM pg_indexes WHERE indexname = :index_name"),
-            {"index_name": index_name},
-        )
-        return result.fetchone() is not None
-    # SQLite
     result = connection.execute(
         text("SELECT 1 FROM sqlite_master WHERE type='index' AND name = :index_name"),
         {"index_name": index_name},
@@ -54,46 +37,9 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    """Add JSONB/GiN indexes for Postgres and generated columns for SQLite."""
+    """Add generated columns and indexes for common frontmatter fields."""
     connection = op.get_bind()
-    dialect = connection.dialect.name
 
-    if dialect == "postgresql":
-        # Ensure JSONB for efficient indexing
-        result = connection.execute(
-            text(
-                "SELECT data_type FROM information_schema.columns "
-                "WHERE table_name = 'entity' AND column_name = 'entity_metadata'"
-            )
-        ).fetchone()
-        if result and result[0] != "jsonb":
-            op.execute(
-                "ALTER TABLE entity ALTER COLUMN entity_metadata "
-                "TYPE jsonb USING entity_metadata::jsonb"
-            )
-
-        # General JSONB GIN index
-        op.execute(
-            "CREATE INDEX IF NOT EXISTS idx_entity_metadata_gin "
-            "ON entity USING GIN (entity_metadata jsonb_path_ops)"
-        )
-
-        # Common field indexes
-        op.execute(
-            "CREATE INDEX IF NOT EXISTS idx_entity_tags_json "
-            "ON entity USING GIN ((entity_metadata -> 'tags'))"
-        )
-        op.execute(
-            "CREATE INDEX IF NOT EXISTS idx_entity_frontmatter_type "
-            "ON entity ((entity_metadata ->> 'type'))"
-        )
-        op.execute(
-            "CREATE INDEX IF NOT EXISTS idx_entity_frontmatter_status "
-            "ON entity ((entity_metadata ->> 'status'))"
-        )
-        return
-
-    # SQLite: add generated columns for common frontmatter fields
     # Constraint: SQLite ALTER TABLE ADD COLUMN only supports VIRTUAL generated columns,
     # not STORED. json_extract is deterministic so VIRTUAL columns can still be indexed.
     if not column_exists(connection, "entity", "tags_json"):
@@ -134,21 +80,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Best-effort downgrade (drop indexes, revert JSONB on Postgres)."""
-    connection = op.get_bind()
-    dialect = connection.dialect.name
-
-    if dialect == "postgresql":
-        op.execute("DROP INDEX IF EXISTS idx_entity_frontmatter_status")
-        op.execute("DROP INDEX IF EXISTS idx_entity_frontmatter_type")
-        op.execute("DROP INDEX IF EXISTS idx_entity_tags_json")
-        op.execute("DROP INDEX IF EXISTS idx_entity_metadata_gin")
-        op.execute(
-            "ALTER TABLE entity ALTER COLUMN entity_metadata TYPE json USING entity_metadata::json"
-        )
-        return
-
-    # SQLite: drop indexes (dropping generated columns requires table rebuild)
+    """Best-effort downgrade: drop indexes (dropping generated columns needs a rebuild)."""
     op.execute("DROP INDEX IF EXISTS idx_entity_frontmatter_status")
     op.execute("DROP INDEX IF EXISTS idx_entity_frontmatter_type")
     op.execute("DROP INDEX IF EXISTS idx_entity_tags_json")

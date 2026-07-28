@@ -24,16 +24,23 @@ def migrate_legacy_sync_fields(
     return data
 
 
-# Keys that older releases wrote into config.json for the retired cloud/routing
-# surface. They are dropped rather than translated: nothing reads them now, and
-# leaving them in would fail validation or resurrect a routing concept that no
-# longer exists.
+# Keys that older releases wrote into config.json for surfaces this fork has
+# retired: cloud/routing, and the multi-backend database settings left over from
+# when Postgres was selectable. They are dropped rather than translated: nothing
+# reads them now, and leaving them in would fail validation or resurrect a
+# concept that no longer exists.
 RETIRED_TOP_LEVEL_KEYS = frozenset(
     {
         "default_project_mode",
         "cloud_mode",
         "project_modes",
         "cloud_projects",
+        "database_backend",
+        "database_url",
+        "db_pool_size",
+        "db_pool_overflow",
+        "db_pool_recycle",
+        "semantic_postgres_prepare_concurrency",
     }
 )
 

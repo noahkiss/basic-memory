@@ -14,7 +14,6 @@ from typing import Any, cast
 import pytest
 
 from basic_memory import db
-from basic_memory.config import DatabaseBackend
 from basic_memory.schemas.search import SearchItemType, SearchQuery, SearchRetrievalMode
 
 from semantic.conftest import (
@@ -26,7 +25,7 @@ from semantic.conftest import (
 
 
 # Use a single combo for focused diagnostics — sqlite + fastembed
-DIAG_COMBO = SearchCombo("sqlite-fastembed", DatabaseBackend.SQLITE, "fastembed", 384)
+DIAG_COMBO = SearchCombo("sqlite-fastembed", "fastembed", 384)
 
 
 # --- Helpers ---
@@ -315,10 +314,9 @@ async def test_score_fusion_preserves_strong_vector_match(sqlite_engine_factory,
 async def test_similarity_formula_analysis(sqlite_engine_factory, tmp_path):
     """Analyze the raw distance-to-similarity mapping for real queries.
 
-    Production formulas are backend-specific:
-    - SQLite: similarity = max(0, 1 - L2²/2) for normalized embeddings
-    - Postgres: similarity = max(0, 1 - cosine_distance)
-    This test compares old and new mappings for diagnostics.
+    Production maps L2 distance to similarity as max(0, 1 - L2²/2) for the
+    normalized embeddings sqlite-vec stores. This test compares old and new
+    mappings for diagnostics.
     """
     skip_if_needed(DIAG_COMBO)
     provider = _create_fastembed_provider()

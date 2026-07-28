@@ -181,8 +181,8 @@ async def test_malformed_frontmatter(tmp_path):
 async def test_null_bytes_stripped(tmp_path):
     """Test that null bytes are stripped from content before parsing.
 
-    PostgreSQL rejects null bytes (0x00) in text columns. Some files
-    (e.g. Claude agent definitions) can contain embedded nulls.
+    Embedded null bytes (0x00) corrupt text storage and FTS indexing. Some files
+    (e.g. Claude agent definitions) can contain them.
     """
     content = "---\ntitle: Test\ntype: note\n---\n\nSome content\x00with nulls\x00inside\n"
 

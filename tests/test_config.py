@@ -175,29 +175,6 @@ class TestBasicMemoryConfig:
         assert Path(config.projects["other"].path) == other_path
         assert config.default_project == "other"
 
-    def test_model_post_init_seeds_default_for_postgres(self, config_home, monkeypatch):
-        """A Postgres backend seeds a default project exactly like SQLite.
-
-        Without it a fresh Postgres install has no default project and
-        create_memory_project raises "No default project configured".
-        """
-        monkeypatch.delenv("BASIC_MEMORY_HOME", raising=False)
-
-        config = BasicMemoryConfig(database_backend="postgres")
-
-        assert "main" in config.projects
-        assert config.default_project == "main"
-
-    def test_postgres_creates_project_directories(self, config_home, tmp_path):
-        """Postgres creates its project directories like SQLite."""
-        proj = tmp_path / "pg-project"
-        BasicMemoryConfig(
-            database_backend="postgres",
-            projects={"main": {"path": str(proj)}},
-            default_project="main",
-        )
-        assert proj.exists()
-
     def test_basic_memory_home_with_relative_path(self, config_home, monkeypatch):
         """Test that BASIC_MEMORY_HOME works with relative paths."""
         relative_path = "relative/memory/path"
@@ -1153,27 +1130,6 @@ class TestSemanticSearchConfig:
         )
         assert config.semantic_embedding_document_prefix == "title: none | text: "
         assert config.semantic_embedding_query_prefix == "task: search result | query: "
-
-    def test_semantic_postgres_prepare_concurrency_defaults_to_4(self):
-        """Postgres prepare concurrency should default to a conservative window of 4."""
-        config = BasicMemoryConfig()
-        assert config.semantic_postgres_prepare_concurrency == 4
-
-    def test_semantic_postgres_prepare_concurrency_validation(self):
-        """Postgres prepare concurrency must stay within the bounded safe range."""
-        config = BasicMemoryConfig(semantic_postgres_prepare_concurrency=8)
-        assert config.semantic_postgres_prepare_concurrency == 8
-
-        with pytest.raises(Exception):
-            BasicMemoryConfig(semantic_postgres_prepare_concurrency=0)
-
-        with pytest.raises(Exception):
-            BasicMemoryConfig(semantic_postgres_prepare_concurrency=17)
-
-    def test_semantic_search_enabled_description_mentions_both_backends(self):
-        """Description should not say 'SQLite only' anymore."""
-        field_info = BasicMemoryConfig.model_fields["semantic_search_enabled"]
-        assert "SQLite only" not in (field_info.description or "")
 
     def test_semantic_min_similarity_defaults_to_055(self):
         """Threshold defaults to 0.55 to filter irrelevant vector results."""

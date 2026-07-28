@@ -612,7 +612,7 @@ async def test_factory_loads_native_model_once_across_repo_constructions(monkeyp
     """
     from typing import Any, cast
 
-    from basic_memory.config import BasicMemoryConfig, DatabaseBackend, ProjectEntry
+    from basic_memory.config import BasicMemoryConfig, ProjectEntry
     from basic_memory.repository import embedding_provider_factory as factory_module
     from basic_memory.repository.embedding_provider_factory import (
         create_embedding_provider,
@@ -631,7 +631,6 @@ async def test_factory_loads_native_model_once_across_repo_constructions(monkeyp
         env="test",
         projects={"test-project": ProjectEntry(path="/tmp/basic-memory-test")},
         default_project="test-project",
-        database_backend=DatabaseBackend.SQLITE,
         semantic_search_enabled=True,
         semantic_embedding_provider="fastembed",
         semantic_embedding_model="stub-model",

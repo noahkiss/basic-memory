@@ -185,19 +185,14 @@ class ProjectRepository(Repository[Project]):
     async def delete(self, session: AsyncSession, entity_id: int) -> bool:
         """Delete a project and its derived search rows in one transaction.
 
-        The cascade picture differs by backend:
+        No derived table cascades from project, so each is cleaned up explicitly:
 
-        - search_index → project: Postgres has ON DELETE CASCADE FK; SQLite
-          stores search_index as an FTS5 virtual table and can't carry FKs,
-          so it needs explicit cleanup.
-        - search_vector_chunks → project: neither backend has an FK here, so
-          both need an explicit DELETE.
-        - search_vector_embeddings → search_vector_chunks: Postgres has an FK
-          (chunk_id REFERENCES … ON DELETE CASCADE); SQLite stores embeddings
-          in a vec0 virtual table keyed by rowid with no cascade. On SQLite
-          the embeddings must be purged before the chunk rows, otherwise
-          `_run_vector_query` keeps returning stale vectors that crowd out
-          live results.
+        - search_index is an FTS5 virtual table and can't carry FKs.
+        - search_vector_chunks has no FK to project.
+        - search_vector_embeddings lives in a vec0 virtual table keyed by rowid
+          with no cascade, so it must be purged *before* the chunk rows;
+          otherwise `_run_vector_query` keeps returning stale vectors that
+          crowd out live results.
 
         Each derived table is created lazily (search_index by
         SearchRepository.init_search_index, the vector tables once semantic
@@ -212,28 +207,20 @@ class ProjectRepository(Repository[Project]):
             logger.debug(f"No Project found to delete: {entity_id}")
             return False
 
-        dialect_name = session.bind.dialect.name if session.bind else "sqlite"
-        is_sqlite = dialect_name == "sqlite"
-
         existing_tables = await session.run_sync(
             lambda sync_session: set(sa_inspect(sync_session.connection()).get_table_names())
         )
 
-        # search_index: SQLite has no FK on the FTS5 virtual table; Postgres
-        # cascades from the project FK, so the explicit DELETE is redundant.
-        if is_sqlite and "search_index" in existing_tables:
+        if "search_index" in existing_tables:
             await session.execute(
                 text("DELETE FROM search_index WHERE project_id = :project_id"),
                 {"project_id": entity_id},
             )
 
-        # search_vector_chunks: no FK to project on either backend, so both
-        # backends need this. SQLite must purge vec0 embeddings first
-        # (rowid pseudocolumn — Postgres uses chunk_id and would 500 here);
-        # Postgres' chunk_id FK CASCADE handles its embeddings cleanup when
-        # we delete the chunk rows below.
+        # Embeddings are keyed by the vec0 rowid, so they can only be found via the
+        # chunk rows — purge them before the chunks disappear.
         if "search_vector_chunks" in existing_tables:
-            if is_sqlite and "search_vector_embeddings" in existing_tables:
+            if "search_vector_embeddings" in existing_tables:
                 # Extension loading is per-connection. We must load vec0 on
                 # *this* session before the DELETE; otherwise a different
                 # pooled connection might have written embeddings that we'd

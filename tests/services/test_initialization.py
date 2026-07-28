@@ -1,7 +1,7 @@
 """Integration-style tests for the initialization service.
 
 Goal: avoid brittle deep mocking; assert real behavior using the existing
-test config + dual-backend fixtures.
+test config fixtures.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from basic_memory import db
-from basic_memory.config import BasicMemoryConfig, DatabaseBackend
+from basic_memory.config import BasicMemoryConfig
 from basic_memory.indexing.project_index_coordinator import ProjectIndexCoordinatorResult
 from basic_memory.index.local_runtime import LocalWatchEventIndexRuntimeFactory
 from basic_memory.repository.project_repository import ProjectRepository
@@ -39,24 +39,6 @@ async def test_initialize_database_creates_engine_and_allows_queries(app_config:
         async with db.scoped_session(session_maker) as session:
             result = await session.execute(db.text("SELECT 1"))
             assert result.scalar() == 1
-    finally:
-        await db.shutdown_db()
-
-
-@pytest.mark.asyncio
-async def test_initialize_database_raises_on_invalid_postgres_config(
-    app_config: BasicMemoryConfig, config_manager
-):
-    """If config selects Postgres but has no DATABASE_URL, initialization should fail."""
-    await db.shutdown_db()
-    try:
-        bad_config = app_config.model_copy(
-            update={"database_backend": DatabaseBackend.POSTGRES, "database_url": None}
-        )
-        config_manager.save_config(bad_config)
-
-        with pytest.raises(ValueError):
-            await initialize_database(bad_config)
     finally:
         await db.shutdown_db()
 
@@ -143,7 +125,6 @@ def test_ensure_initialization_runs_and_cleans_up(app_config: BasicMemoryConfig,
 async def test_initialize_app_warns_on_frontmatter_permalink_precedence(
     app_config: BasicMemoryConfig, monkeypatch
 ):
-    app_config.database_backend = DatabaseBackend.SQLITE
     app_config.ensure_frontmatter_on_sync = True
     app_config.disable_permalinks = True
 

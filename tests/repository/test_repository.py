@@ -246,9 +246,7 @@ async def test_update_model_not_found(repository, session_maker):
     async with db.scoped_session(session_maker) as session:
         await repository.add(session, instance)
 
-        modified = await repository.update(
-            session, "0", {}
-        )  # Use string ID for Postgres compatibility
+        modified = await repository.update(session, "0", {})
     assert modified is None
 
 

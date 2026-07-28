@@ -28,7 +28,8 @@ OBSERVED_AT = datetime(2026, 4, 12, 12, 0, tzinfo=UTC)
 
 
 class _FakeSession:
-    def get_bind(self) -> Mock:
+    async def execute(self, statement: object, params: object | None = None) -> Mock:
+        """scoped_session issues ``PRAGMA foreign_keys=ON`` on every owned session."""
         return Mock()
 
     async def commit(self) -> None:

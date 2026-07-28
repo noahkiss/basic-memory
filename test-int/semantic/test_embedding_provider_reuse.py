@@ -12,13 +12,9 @@ These tests use the *real* composition paths — ``create_embedding_provider``, 
 ONNX model lazily on first embed, so constructing providers/repositories here is
 cheap and never touches the native model.
 
-They deliberately use the semantic suite's ``sqlite_engine_factory`` (not the
-parent ``engine_factory``): the parent fixture depends on ``postgres_engine``,
-which this directory overrides to spin up a Docker testcontainer gated only by a
-``docker`` binary on PATH. On Windows CI that binary exists without a usable
-daemon, so requesting the parent factory aborts these SQLite-only tests with a
-testcontainers Ryuk error (#872 follow-up). Staying on the SQLite factory keeps
-them backend-correct and Docker-free.
+They use the semantic suite's ``sqlite_engine_factory`` rather than the parent
+``engine_factory`` so each test gets a throwaway on-disk database without the
+parent suite's project/config wiring.
 """
 
 from __future__ import annotations
@@ -27,7 +23,7 @@ from typing import cast
 
 import pytest
 
-from basic_memory.config import BasicMemoryConfig, DatabaseBackend, ProjectEntry
+from basic_memory.config import BasicMemoryConfig, ProjectEntry
 from basic_memory.deps.repositories import get_search_repository_v2_external
 from basic_memory.repository.embedding_provider_factory import (
     create_embedding_provider,
@@ -44,7 +40,6 @@ def _semantic_config(project_path) -> BasicMemoryConfig:
         env="test",
         projects={"test-project": ProjectEntry(path=str(project_path))},
         default_project="test-project",
-        database_backend=DatabaseBackend.SQLITE,
         semantic_search_enabled=True,
         semantic_embedding_provider="fastembed",
     )
@@ -111,7 +106,6 @@ async def test_factory_skips_provider_when_semantic_disabled(tmp_path, sqlite_en
         env="test",
         projects={"test-project": ProjectEntry(path=str(tmp_path))},
         default_project="test-project",
-        database_backend=DatabaseBackend.SQLITE,
         semantic_search_enabled=False,
     )
 

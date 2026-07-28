@@ -3,7 +3,6 @@
 import importlib.util
 import os
 from dataclasses import dataclass
-from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Dict, Literal, Optional, List
 
@@ -39,13 +38,6 @@ def _secure_config_file(path: Path) -> None:
     """Restrict config file permissions because config can contain API credentials."""
     if os.name != "nt":
         path.chmod(CONFIG_FILE_MODE)
-
-
-class DatabaseBackend(str, Enum):
-    """Supported database backends."""
-
-    SQLITE = "sqlite"
-    POSTGRES = "postgres"
 
 
 def _default_semantic_search_enabled() -> bool:
@@ -204,21 +196,10 @@ class BasicMemoryConfig(BaseSettings):
         description="Optional override for Logfire environment. Defaults to env when unset.",
     )
 
-    # Database configuration
-    database_backend: DatabaseBackend = Field(
-        default=DatabaseBackend.SQLITE,
-        description="Database backend to use (sqlite or postgres)",
-    )
-
-    database_url: Optional[str] = Field(
-        default=None,
-        description="Database connection URL. For Postgres, use postgresql+asyncpg://user:pass@host:port/db. If not set, SQLite will use default path.",
-    )
-
     # Semantic search configuration
     semantic_search_enabled: bool = Field(
         default_factory=_default_semantic_search_enabled,
-        description="Enable semantic search (vector/hybrid retrieval). Works on both SQLite and Postgres backends. Requires semantic dependencies (included by default).",
+        description="Enable semantic search (vector/hybrid retrieval). Requires semantic dependencies (included by default).",
     )
     semantic_embedding_provider: str = Field(
         default="fastembed",
@@ -308,12 +289,6 @@ class BasicMemoryConfig(BaseSettings):
         description="Batch size for vector sync orchestration flushes.",
         gt=0,
     )
-    semantic_postgres_prepare_concurrency: int = Field(
-        default=4,
-        description="Number of Postgres entity prepare tasks to run concurrently during vector sync. Postgres only; keep this low to avoid overdriving the database connection pool.",
-        gt=0,
-        le=16,
-    )
     semantic_embedding_cache_dir: str | None = Field(
         default=None,
         description=(
@@ -357,23 +332,6 @@ class BasicMemoryConfig(BaseSettings):
         description="Default search type for search_notes when not specified per-query. "
         "Valid values: text, vector, hybrid. "
         "When unset, defaults to 'hybrid' if semantic search is enabled, otherwise 'text'.",
-    )
-
-    # Database connection pool configuration (Postgres only)
-    db_pool_size: int = Field(
-        default=20,
-        description="Number of connections to keep in the pool (Postgres only)",
-        gt=0,
-    )
-    db_pool_overflow: int = Field(
-        default=40,
-        description="Max additional connections beyond pool_size under load (Postgres only)",
-        gt=0,
-    )
-    db_pool_recycle: int = Field(
-        default=180,
-        description="Recycle connections after N seconds to prevent stale connections. Default 180s works well with Neon's ~5 minute scale-to-zero (Postgres only)",
-        gt=0,
     )
 
     # Background materialization (local runtime)

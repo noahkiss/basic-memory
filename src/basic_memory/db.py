@@ -6,7 +6,7 @@ from enum import Enum, auto
 from pathlib import Path
 from typing import AsyncGenerator, Optional
 
-from basic_memory.config import BasicMemoryConfig, ConfigManager, DatabaseBackend
+from basic_memory.config import BasicMemoryConfig, ConfigManager
 from alembic import command
 from alembic.config import Config
 
@@ -21,7 +21,6 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.pool import AsyncAdaptedQueuePool, NullPool
 
-from basic_memory.repository.postgres_search_repository import PostgresSearchRepository
 from basic_memory.repository.sqlite_search_repository import SQLiteSearchRepository
 
 # -----------------------------------------------------------------------------
@@ -40,43 +39,6 @@ if sys.platform == "win32":  # pragma: no cover
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 
-def maybe_install_uvloop(config: BasicMemoryConfig) -> bool:
-    """Install the uvloop event-loop policy for the Postgres backend.
-
-    Trigger: process entrypoint starting with database_backend == postgres,
-    uvloop importable, and a non-Windows platform.
-    Why: asyncpg engine teardown (engine.dispose()) races the stdlib asyncio
-    loop shutdown and surfaces "IndexError: pop from an empty deque" from
-    base_events._run_once (see #831/#877). uvloop's C scheduler has no
-    self._ready.popleft() codepath, so that class of crash cannot fire under it.
-    Outcome: Postgres deployments run on uvloop; SQLite users keep the default
-    loop (no behavior change, smaller blast radius). Must run before the event
-    loop is created, i.e. before asyncio.run().
-
-    Returns:
-        True if the uvloop policy was installed, False otherwise.
-    """
-    # uvloop is not available on Windows; the default loop already differs there.
-    if sys.platform == "win32":  # pragma: no cover
-        return False
-
-    # Limit the change to the backend that actually hits the asyncpg dispose race.
-    if config.database_backend != DatabaseBackend.POSTGRES:
-        return False
-
-    # Deferred import: uvloop is an optional, platform-gated dependency and the
-    # default (SQLite) path must not require it to be installed.
-    try:
-        import uvloop
-    except ImportError:  # pragma: no cover
-        logger.warning("uvloop not available - using default event loop for Postgres backend")
-        return False
-
-    asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
-    logger.info("Installed uvloop event-loop policy for Postgres backend")
-    return True
-
-
 # Module level state
 _engine: Optional[AsyncEngine] = None
 _session_maker: Optional[async_sessionmaker[AsyncSession]] = None
@@ -87,41 +49,18 @@ class DatabaseType(Enum):
 
     MEMORY = auto()
     FILESYSTEM = auto()
-    POSTGRES = auto()
 
     @classmethod
-    def get_db_url(
-        cls, db_path: Path, db_type: "DatabaseType", config: Optional[BasicMemoryConfig] = None
-    ) -> str:
+    def get_db_url(cls, db_path: Path, db_type: "DatabaseType") -> str:
         """Get SQLAlchemy URL for database path.
 
         Args:
-            db_path: Path to SQLite database file (ignored for Postgres)
-            db_type: Type of database (MEMORY, FILESYSTEM, or POSTGRES)
-            config: Optional config to check for database backend and URL
+            db_path: Path to SQLite database file
+            db_type: Type of database (MEMORY or FILESYSTEM)
 
         Returns:
             SQLAlchemy connection URL
         """
-        # Load config if not provided
-        if config is None:
-            config = ConfigManager().config
-
-        # Handle explicit Postgres type
-        if db_type == cls.POSTGRES:
-            if not config.database_url:
-                raise ValueError("DATABASE_URL must be set when using Postgres backend")
-            logger.info(f"Using Postgres database: {config.database_url}")
-            return config.database_url
-
-        # Check if Postgres backend is configured (for backward compatibility)
-        if config.database_backend == DatabaseBackend.POSTGRES:
-            if not config.database_url:
-                raise ValueError("DATABASE_URL must be set when using Postgres backend")
-            logger.info(f"Using Postgres database: {config.database_url}")
-            return config.database_url
-
-        # SQLite databases
         if db_type == cls.MEMORY:
             logger.info("Using in-memory SQLite database")
             return "sqlite+aiosqlite://"
@@ -167,13 +106,9 @@ async def scoped_session(
     factory = get_scoped_session_factory(session_maker)
     owned_session = factory()
     try:
-        # Only enable foreign keys for SQLite (Postgres has them enabled by default)
-        # Detect database type from session's bind (engine) dialect
-        engine = owned_session.get_bind()
-        dialect_name = engine.dialect.name
-
-        if dialect_name == "sqlite":
-            await owned_session.execute(text("PRAGMA foreign_keys=ON"))
+        # SQLite disables foreign-key enforcement per connection by default, so the
+        # constraints the models declare only bind if the PRAGMA is set on each session.
+        await owned_session.execute(text("PRAGMA foreign_keys=ON"))
 
         yield owned_session
         await owned_session.commit()
@@ -320,60 +255,6 @@ def _create_sqlite_engine(
     return engine
 
 
-def _create_postgres_engine(db_url: str, config: BasicMemoryConfig) -> AsyncEngine:
-    """Create Postgres async engine with appropriate configuration.
-
-    Args:
-        db_url: Postgres connection URL (postgresql+asyncpg://...)
-        config: BasicMemoryConfig with pool settings
-
-    Returns:
-        Configured async engine for Postgres
-    """
-    # Connection pooling for direct (local / self-hosted) Postgres.
-    #
-    # Trigger: this is the default engine factory. The cloud overrides
-    # get_engine_factory with its own pooled engine (basic_memory_cloud
-    # tenant_engine_pool), so this path serves the LOCAL runtime — which has no
-    # PgBouncer in front of Postgres.
-    # Why: NullPool (a fresh connection per request) was assumed safe because a
-    # pooler would sit in front, but locally there is none. Under concurrent
-    # writes — plus each background materialization opening its own connection —
-    # that stormed max_connections and collapsed (p99 478s, 21% write failures at
-    # C=32; benchmarks/docs/write-load-benchmark.md).
-    # Outcome: a real pool bounds in-use connections to db_pool_size (+
-    # db_pool_overflow under load) and recycles them (Neon scale-to-zero).
-    # statement_cache_size=0 stays so the engine also works behind a PgBouncer
-    # transaction-mode pooler if a user runs one.
-    engine = create_async_engine(
-        db_url,
-        echo=False,
-        poolclass=AsyncAdaptedQueuePool,
-        pool_size=config.db_pool_size,
-        max_overflow=config.db_pool_overflow,
-        pool_recycle=config.db_pool_recycle,
-        connect_args={
-            # Disable statement cache to avoid issues with prepared statements on reconnect
-            "statement_cache_size": 0,
-            # Allow 30s for commands (Neon cold start can take 2-5s, sometimes longer)
-            "command_timeout": 30,
-            # Allow 30s for initial connection (Neon wake-up time)
-            "timeout": 30,
-            "server_settings": {
-                "application_name": "basic-memory",
-                # Statement timeout for queries (30s to allow for cold start)
-                "statement_timeout": "30s",
-            },
-        },
-    )
-    logger.debug(
-        "Created Postgres engine with QueuePool "
-        f"(pool_size={config.db_pool_size}, max_overflow={config.db_pool_overflow})"
-    )
-
-    return engine
-
-
 def _create_engine_and_session(
     db_path: Path,
     db_type: DatabaseType = DatabaseType.FILESYSTEM,
@@ -382,8 +263,8 @@ def _create_engine_and_session(
     """Internal helper to create engine and session maker.
 
     Args:
-        db_path: Path to database file (used for SQLite, ignored for Postgres)
-        db_type: Type of database (MEMORY, FILESYSTEM, or POSTGRES)
+        db_path: Path to database file
+        db_type: Type of database (MEMORY or FILESYSTEM)
         config: Optional explicit config. If not provided, reads from ConfigManager.
             Prefer passing explicitly from composition roots.
 
@@ -393,16 +274,10 @@ def _create_engine_and_session(
     # Prefer explicit parameter; fall back to ConfigManager for backwards compatibility
     if config is None:
         config = ConfigManager().config
-    db_url = DatabaseType.get_db_url(db_path, db_type, config)
+    db_url = DatabaseType.get_db_url(db_path, db_type)
     logger.debug(f"Creating engine for db_url: {db_url}")
 
-    # Delegate to backend-specific engine creation
-    # Check explicit POSTGRES type first, then config setting
-    if db_type == DatabaseType.POSTGRES or config.database_backend == DatabaseBackend.POSTGRES:
-        engine = _create_postgres_engine(db_url, config)
-    else:
-        engine = _create_sqlite_engine(db_url, db_type, config)
-
+    engine = _create_sqlite_engine(db_url, db_type, config)
     session_maker = async_sessionmaker(engine, expire_on_commit=False)
     return engine, session_maker
 
@@ -455,10 +330,11 @@ async def shutdown_db() -> None:  # pragma: no cover
     if _engine:
         # Trigger: teardown can run while the surrounding task is being cancelled
         # (e.g. lifespan shutdown, unshielded CLI cleanup).
-        # Why: a cancellation landing mid-dispose surfaces the asyncpg
-        # "IndexError: pop from an empty deque" race (#831/#877); shielding lets
-        # dispose finish atomically, and suppressing CancelledError keeps a
-        # cancelled shutdown from re-raising the underlying race.
+        # Why: a cancellation landing mid-dispose surfaces the "IndexError: pop
+        # from an empty deque" race in base_events._run_once (#831/#877) — the
+        # same shutdown race the module header documents for Windows aiosqlite.
+        # Shielding lets dispose finish atomically, and suppressing CancelledError
+        # keeps a cancelled shutdown from re-raising the underlying race.
         # Outcome: connections always close cleanly even under cancellation.
         with suppress(asyncio.CancelledError):
             await asyncio.shield(_engine.dispose())
@@ -507,9 +383,9 @@ async def engine_session_factory(
     finally:
         # Trigger: context-manager teardown can run while the surrounding task is
         # being cancelled (e.g. a test aborting mid-fixture).
-        # Why: on the asyncpg backend a cancellation landing mid-dispose surfaces
-        # the "IndexError: pop from an empty deque" race (#831/#877); shield the
-        # dispose and suppress CancelledError to match the other dispose seams.
+        # Why: a cancellation landing mid-dispose surfaces the "IndexError: pop
+        # from an empty deque" shutdown race (#831/#877); shield the dispose and
+        # suppress CancelledError to match the other dispose seams.
         # Outcome: the per-context engine always disposes cleanly under cancellation.
         with suppress(asyncio.CancelledError):
             await asyncio.shield(created_engine.dispose())
@@ -546,9 +422,7 @@ async def run_migrations(
         config.set_main_option("timezone", "UTC")
         config.set_main_option("revision_environment", "false")
 
-        # Get the correct database URL based on backend configuration
-        # No URL conversion needed - env.py now handles both async and sync engines
-        db_url = DatabaseType.get_db_url(app_config.database_path, database_type, app_config)
+        db_url = DatabaseType.get_db_url(app_config.database_path, database_type)
         config.set_main_option("sqlalchemy.url", db_url)
 
         command.upgrade(config, "head")
@@ -562,17 +436,9 @@ async def run_migrations(
         else:
             session_maker = _session_maker
 
-        # Initialize the search index schema
-        # For SQLite: Create FTS5 virtual table
-        # For Postgres: No-op (tsvector column added by migrations)
+        # Initialize the search index schema (create the FTS5 virtual table).
         # The project_id is not used for init_search_index, so we pass a dummy value
-        if (
-            database_type == DatabaseType.POSTGRES
-            or app_config.database_backend == DatabaseBackend.POSTGRES
-        ):
-            await PostgresSearchRepository(session_maker, 1).init_search_index()
-        else:
-            await SQLiteSearchRepository(session_maker, 1).init_search_index()
+        await SQLiteSearchRepository(session_maker, 1).init_search_index()
 
     except Exception as e:  # pragma: no cover
         logger.error(f"Error running migrations: {e}")
@@ -581,10 +447,10 @@ async def run_migrations(
         # Trigger: run_migrations() created a temporary engine while module-level
         # session maker was not initialized.
         # Why: temporary aiosqlite worker threads can outlive CLI command execution
-        # and block process shutdown if the engine is not disposed. On the asyncpg
-        # backend a cancellation landing mid-dispose surfaces the same "IndexError:
-        # pop from an empty deque" race as the other dispose seams (#831/#877), so
-        # shield the dispose and suppress CancelledError to match them.
+        # and block process shutdown if the engine is not disposed. A cancellation
+        # landing mid-dispose surfaces the same "IndexError: pop from an empty
+        # deque" race as the other dispose seams (#831/#877), so shield the dispose
+        # and suppress CancelledError to match them.
         # Outcome: always dispose temporary engines cleanly, even under cancellation.
         if temp_engine is not None:
             with suppress(asyncio.CancelledError):

@@ -1,6 +1,5 @@
 """Tests for ProjectService.get_embedding_status()."""
 
-import os
 from unittest.mock import patch
 
 import pytest
@@ -11,10 +10,6 @@ from basic_memory.schemas.project_info import EmbeddingStatus
 from basic_memory.services.project_service import ProjectService
 
 
-def _is_postgres() -> bool:
-    return os.environ.get("BASIC_MEMORY_TEST_POSTGRES", "").lower() in ("1", "true", "yes")
-
-
 async def _execute(project_service: ProjectService, query, params=None):
     async with db.scoped_session(project_service.session_maker) as session:
         return await project_service.repository.execute_query(session, query, params or {})
@@ -23,9 +18,9 @@ async def _execute(project_service: ProjectService, query, params=None):
 async def _create_embeddings_stub(project_service: ProjectService) -> None:
     """Create a minimal search_vector_embeddings stub so vector_tables_exist is True.
 
-    Test fixtures run with semantic search disabled, so the real vec0/pgvector
-    embeddings table is never created. get_embedding_status only probes table
-    existence and joins on chunk_id (rowid on SQLite), so a plain table suffices.
+    Test fixtures run with semantic search disabled, so the real vec0 embeddings
+    table is never created. get_embedding_status only probes table existence and
+    joins on rowid, so a plain table suffices.
     """
     await _execute(
         project_service,
@@ -66,13 +61,7 @@ async def test_embedding_status_vector_tables_missing(
 ):
     """When vector tables don't exist, recommend reindex."""
     # Drop the chunks table created by the fixture to simulate missing vector tables
-    # Postgres requires CASCADE (due to index dependencies); SQLite doesn't support it
-    drop_sql = (
-        "DROP TABLE IF EXISTS search_vector_chunks CASCADE"
-        if _is_postgres()
-        else "DROP TABLE IF EXISTS search_vector_chunks"
-    )
-    await _execute(project_service, text(drop_sql), {})
+    await _execute(project_service, text("DROP TABLE IF EXISTS search_vector_chunks"), {})
 
     with patch.object(
         type(project_service),
@@ -151,8 +140,7 @@ async def test_embedding_status_orphaned_chunks(
 
     # Create a minimal search_vector_embeddings stub (not a real vector table)
     # so the LEFT JOIN works and finds the orphan.
-    # Uses chunk_id as PK — Postgres queries join on chunk_id,
-    # SQLite queries join on rowid which aliases INTEGER PRIMARY KEY.
+    # Uses chunk_id as PK because the join is on rowid, which INTEGER PRIMARY KEY aliases.
     await _execute(
         project_service,
         text(
@@ -185,12 +173,6 @@ async def test_embedding_status_handles_sqlite_vec_unavailable(
     project_service: ProjectService, test_graph, test_project
 ):
     """When sqlite-vec can't load at all, degrade to unavailable status instead of crashing."""
-    # Trigger: Postgres test matrix executes the same unit suite.
-    # Why: sqlite-vec loading failures are specific to SQLite virtual tables, not Postgres joins.
-    # Outcome: keep the regression focused on the backend that can actually hit this path.
-    if _is_postgres():
-        pytest.skip("sqlite-vec unavailable handling is SQLite-specific.")
-
     # Both vector tables must exist so the status check reaches the vec query;
     # fixtures run with semantic search disabled, so stub the embeddings table.
     await _create_embeddings_stub(project_service)
@@ -231,8 +213,7 @@ async def test_embedding_status_healthy(project_service: ProjectService, test_gr
 
     # Drop any existing virtual table (may have been created by search_service init)
     # and recreate as a simple regular table for testing the join logic.
-    # Uses chunk_id as PK — Postgres queries join on chunk_id,
-    # SQLite queries join on rowid which aliases INTEGER PRIMARY KEY.
+    # Uses chunk_id as PK because the join is on rowid, which INTEGER PRIMARY KEY aliases.
     await _execute(project_service, text("DROP TABLE IF EXISTS search_vector_embeddings"), {})
     await _execute(
         project_service,
@@ -307,8 +288,6 @@ async def test_embedding_status_excludes_stale_entity_ids(
     because stale entity_ids in search_index/search_vector_chunks inflated total_indexed_entities.
     """
     # Insert a stale search_index row for an entity_id that doesn't exist in the entity table.
-    # Include 'id' column — required NOT NULL on Postgres (regular table),
-    # ignored on SQLite (FTS5 virtual table where id is UNINDEXED).
     stale_entity_id = 999999
     # Both vector tables must exist to reach the stale-filtered count queries;
     # fixtures run with semantic search disabled, so stub the embeddings table.

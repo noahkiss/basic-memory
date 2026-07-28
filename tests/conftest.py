@@ -9,17 +9,11 @@ from typing import AsyncGenerator
 
 import pytest
 import pytest_asyncio
-from alembic import command
-from alembic.config import Config
-from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
     async_sessionmaker,
-    create_async_engine,
 )
-from sqlalchemy.pool import NullPool
-from testcontainers.postgres import PostgresContainer
 
 from basic_memory import db
 from basic_memory.config import (
@@ -27,7 +21,6 @@ from basic_memory.config import (
     ProjectEntry,
     BasicMemoryConfig,
     ConfigManager,
-    DatabaseBackend,
 )
 from basic_memory.db import DatabaseType
 from basic_memory.index.local_project import LocalProjectIndexRunner
@@ -50,160 +43,6 @@ from basic_memory.services.directory_service import DirectoryService
 from basic_memory.services.file_service import FileService
 from basic_memory.services.link_resolver import LinkResolver
 from basic_memory.services.search_service import SearchService
-
-
-# =============================================================================
-# Database Backend Selection (env var approach)
-# =============================================================================
-# By default, tests run against SQLite.
-# Set BASIC_MEMORY_TEST_POSTGRES=1 to run against Postgres (uses testcontainers).
-# This allows running sqlite/postgres tests in parallel in CI.
-
-
-@pytest.fixture(scope="session")
-def db_backend():
-    """Determine database backend from environment variable.
-
-    Default: sqlite
-    Set BASIC_MEMORY_TEST_POSTGRES=1 to use postgres
-    """
-    if os.environ.get("BASIC_MEMORY_TEST_POSTGRES", "").lower() in ("1", "true", "yes"):
-        return "postgres"
-    return "sqlite"
-
-
-@pytest.fixture(scope="session")
-def postgres_container(db_backend):
-    """Session-scoped Postgres container for tests.
-
-    Uses testcontainers to spin up a real Postgres instance in Docker.
-    The container is started once per test session and shared across all tests.
-    Only starts if db_backend is "postgres".
-    """
-    if db_backend != "postgres" or _configured_postgres_sync_url():
-        yield None
-        return
-
-    # Use pgvector image so CREATE EXTENSION vector succeeds in search repository
-    with PostgresContainer("pgvector/pgvector:pg16") as postgres:
-        yield postgres
-
-
-POSTGRES_EPHEMERAL_TABLES = [
-    "search_vector_embeddings",
-    "search_vector_index",
-]
-
-
-def _configured_postgres_sync_url() -> str | None:
-    """Prefer an externally managed Postgres server when CI provides one."""
-    configured_url = os.environ.get("BASIC_MEMORY_TEST_POSTGRES_URL") or os.environ.get(
-        "POSTGRES_TEST_URL"
-    )
-    if not configured_url:
-        return None
-
-    return (
-        configured_url.replace("postgresql+asyncpg://", "postgresql+psycopg2://", 1)
-        .replace("postgresql://", "postgresql+psycopg2://", 1)
-        .replace("postgres://", "postgresql+psycopg2://", 1)
-    )
-
-
-def _postgres_alembic_config(async_url: str) -> Config:
-    """Build Alembic config for stamping the shared Postgres test schema."""
-    alembic_dir = Path(db.__file__).parent / "alembic"
-    cfg = Config()
-    cfg.set_main_option("script_location", str(alembic_dir))
-    cfg.set_main_option(
-        "file_template",
-        "%%(year)d_%%(month).2d_%%(day).2d_%%(hour).2d%%(minute).2d-%%(rev)s_%%(slug)s",
-    )
-    cfg.set_main_option("timezone", "UTC")
-    cfg.set_main_option("revision_environment", "false")
-    cfg.set_main_option("sqlalchemy.url", async_url)
-    return cfg
-
-
-def _postgres_reset_tables() -> list[str]:
-    """Resolve the current ORM table set at reset time.
-
-    Some tests declare models after conftest import, so the list must stay dynamic.
-    """
-    return [table.name for table in Base.metadata.sorted_tables] + [
-        "search_index",
-        "search_vector_chunks",
-    ]
-
-
-def _resolve_postgres_sync_url(postgres_container) -> str:
-    """Use CI's shared service when configured, otherwise fall back to testcontainers."""
-    configured_url = _configured_postgres_sync_url()
-    if configured_url:
-        return configured_url
-    assert postgres_container is not None
-    return postgres_container.get_connection_url()
-
-
-async def _reset_postgres_test_schema(engine: AsyncEngine, async_url: str) -> None:
-    """Restore the shared Postgres schema to a clean baseline."""
-    from basic_memory.models.search import (
-        CREATE_POSTGRES_SEARCH_INDEX_FTS,
-        CREATE_POSTGRES_SEARCH_INDEX_METADATA,
-        CREATE_POSTGRES_SEARCH_INDEX_PERMALINK,
-        CREATE_POSTGRES_SEARCH_INDEX_TABLE,
-        CREATE_POSTGRES_SEARCH_VECTOR_CHUNKS_INDEX,
-        CREATE_POSTGRES_SEARCH_VECTOR_CHUNKS_TABLE,
-    )
-
-    async with engine.begin() as conn:
-        # Trigger: several tests intentionally drop or stub search tables to exercise recovery code.
-        # Why: TRUNCATE is much cheaper than drop_all/create_all, but it only works when the schema exists.
-        # Outcome: we recreate any missing core tables once, then clear rows for deterministic test setup.
-        await conn.run_sync(Base.metadata.create_all)
-        await conn.execute(CREATE_POSTGRES_SEARCH_INDEX_TABLE)
-        await conn.execute(CREATE_POSTGRES_SEARCH_INDEX_FTS)
-        await conn.execute(CREATE_POSTGRES_SEARCH_INDEX_METADATA)
-        await conn.execute(CREATE_POSTGRES_SEARCH_INDEX_PERMALINK)
-        await conn.execute(CREATE_POSTGRES_SEARCH_VECTOR_CHUNKS_TABLE)
-        await conn.execute(CREATE_POSTGRES_SEARCH_VECTOR_CHUNKS_INDEX)
-
-        for table_name in POSTGRES_EPHEMERAL_TABLES:
-            await conn.execute(text(f"DROP TABLE IF EXISTS {table_name} CASCADE"))
-
-        await conn.execute(
-            text(f"TRUNCATE TABLE {', '.join(_postgres_reset_tables())} RESTART IDENTITY CASCADE")
-        )
-
-        alembic_version_exists = (
-            await conn.execute(text("SELECT to_regclass('public.alembic_version')"))
-        ).scalar() is not None
-
-    if not alembic_version_exists:
-        command.stamp(_postgres_alembic_config(async_url), "head")
-
-
-@pytest_asyncio.fixture(scope="session", loop_scope="session")
-async def postgres_engine(
-    db_backend, postgres_container
-) -> AsyncGenerator[AsyncEngine | None, None]:
-    """Create the shared Postgres engine once per test session."""
-    if db_backend != "postgres":
-        yield None
-        return
-
-    sync_url = _resolve_postgres_sync_url(postgres_container)
-    async_url = sync_url.replace("postgresql+psycopg2", "postgresql+asyncpg")
-    engine = create_async_engine(
-        async_url,
-        echo=False,
-        poolclass=NullPool,
-    )
-
-    try:
-        yield engine
-    finally:
-        await engine.dispose()
 
 
 @pytest.fixture
@@ -269,29 +108,15 @@ def config_home(tmp_path, monkeypatch) -> Path:
 
 
 @pytest.fixture(scope="function")
-def app_config(config_home, db_backend, postgres_container, monkeypatch) -> BasicMemoryConfig:
-    """Create test app configuration for the appropriate backend."""
+def app_config(config_home, monkeypatch) -> BasicMemoryConfig:
+    """Create test app configuration."""
     projects = {"test-project": ProjectEntry(path=str(config_home))}
-
-    # Set backend based on parameterized db_backend fixture
-    if db_backend == "postgres":
-        backend = DatabaseBackend.POSTGRES
-        # Trigger: CI jobs can provide a shared Postgres service instead of per-session containers.
-        # Why: reusing one pgvector-enabled server avoids Docker startup churn on every job.
-        # Outcome: local runs keep using testcontainers, while CI injects a stable service URL.
-        sync_url = _resolve_postgres_sync_url(postgres_container)
-        database_url = sync_url.replace("postgresql+psycopg2", "postgresql+asyncpg")
-    else:
-        backend = DatabaseBackend.SQLITE
-        database_url = None
 
     app_config = BasicMemoryConfig(
         env="test",
         projects=projects,
         default_project="test-project",
         update_permalinks_on_move=True,
-        database_backend=backend,
-        database_url=database_url,
         # Trigger: semantic_search_enabled defaults to True whenever fastembed/sqlite-vec
         #          are importable, which they are in dev and CI environments.
         # Why: with it on, every test that syncs pays the ONNX embedding stack (~5-7s per
@@ -355,14 +180,8 @@ def test_config(config_home, project_config, app_config, config_manager) -> Test
 async def engine_factory(
     app_config,
     config_manager,
-    db_backend,
-    postgres_container,
-    postgres_engine,
 ) -> AsyncGenerator[tuple[AsyncEngine, async_sessionmaker[AsyncSession]], None]:
-    """Engine factory for SQLite or Postgres tests.
-
-    Uses parameterized db_backend fixture to run tests against both backends.
-    """
+    """In-memory SQLite engine and session maker for tests."""
     from basic_memory.models.search import (
         CREATE_SEARCH_INDEX,
         CREATE_SQLITE_SEARCH_VECTOR_CHUNKS,
@@ -370,57 +189,21 @@ async def engine_factory(
         CREATE_SQLITE_SEARCH_VECTOR_CHUNKS_UNIQUE,
     )
 
-    if db_backend == "postgres":
-        assert postgres_engine is not None
-        sync_url = _resolve_postgres_sync_url(postgres_container)
-        async_url = sync_url.replace("postgresql+psycopg2", "postgresql+asyncpg")
+    db_type = DatabaseType.MEMORY
+    async with db.engine_session_factory(db_path=app_config.database_path, db_type=db_type) as (
+        engine,
+        session_maker,
+    ):
+        # Create all tables via ORM, then add search_index via FTS5 DDL
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+            await conn.execute(CREATE_SEARCH_INDEX)
+            await conn.execute(CREATE_SQLITE_SEARCH_VECTOR_CHUNKS)
+            await conn.execute(CREATE_SQLITE_SEARCH_VECTOR_CHUNKS_PROJECT_ENTITY)
+            await conn.execute(CREATE_SQLITE_SEARCH_VECTOR_CHUNKS_UNIQUE)
 
-        # Trigger: Basic Memory sync/indexing paths can catch database errors,
-        # roll back, and continue through new scoped sessions.
-        # Why: binding every scoped session to one savepoint-backed connection can
-        # leave that connection in PendingRollbackError state for later sessions.
-        # Outcome: keep the session-scoped engine, but use normal Postgres
-        # transaction semantics and reset rows/schema between tests.
-        await _reset_postgres_test_schema(postgres_engine, async_url)
-
-        session_maker = async_sessionmaker(
-            bind=postgres_engine,
-            class_=AsyncSession,
-            expire_on_commit=False,
-            autoflush=False,
-        )
-
-        # Important: wire the engine/session into the global db module state.
-        # Some codepaths (e.g. app initialization / MCP lifespan) call db.get_or_create_db(),
-        # which would otherwise create a separate engine and run migrations, conflicting with
-        # our test-created schema (and causing DuplicateTableError).
-        db._engine = postgres_engine
-        db._session_maker = session_maker
-
-        try:
-            yield postgres_engine, session_maker
-        finally:
-            if db._engine is postgres_engine:
-                db._engine = None
-            if db._session_maker is session_maker:
-                db._session_maker = None
-    else:
-        # SQLite mode
-        db_type = DatabaseType.MEMORY
-        async with db.engine_session_factory(db_path=app_config.database_path, db_type=db_type) as (
-            engine,
-            session_maker,
-        ):
-            # Create all tables via ORM, then add search_index via FTS5 DDL
-            async with engine.begin() as conn:
-                await conn.run_sync(Base.metadata.create_all)
-                await conn.execute(CREATE_SEARCH_INDEX)
-                await conn.execute(CREATE_SQLITE_SEARCH_VECTOR_CHUNKS)
-                await conn.execute(CREATE_SQLITE_SEARCH_VECTOR_CHUNKS_PROJECT_ENTITY)
-                await conn.execute(CREATE_SQLITE_SEARCH_VECTOR_CHUNKS_UNIQUE)
-
-            # Yield after setup is complete
-            yield engine, session_maker
+        # Yield after setup is complete
+        yield engine, session_maker
 
 
 @pytest_asyncio.fixture
@@ -557,22 +340,14 @@ async def directory_service(
 
 @pytest_asyncio.fixture
 async def search_repository(session_maker, test_project: Project, app_config: BasicMemoryConfig):
-    """Create backend-appropriate SearchRepository instance with project context"""
+    """Create a SearchRepository instance with project context"""
     from basic_memory.repository.sqlite_search_repository import SQLiteSearchRepository
-    from basic_memory.repository.postgres_search_repository import PostgresSearchRepository
 
-    if app_config.database_backend == DatabaseBackend.POSTGRES:
-        return PostgresSearchRepository(
-            session_maker,
-            project_id=test_project.id,
-            app_config=app_config,
-        )
-    else:
-        return SQLiteSearchRepository(
-            session_maker,
-            project_id=test_project.id,
-            app_config=app_config,
-        )
+    return SQLiteSearchRepository(
+        session_maker,
+        project_id=test_project.id,
+        app_config=app_config,
+    )
 
 
 @pytest_asyncio.fixture

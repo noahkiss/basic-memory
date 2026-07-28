@@ -8,7 +8,6 @@ from basic_memory.repository.metadata_filters import (
     ParsedMetadataFilter,
     _is_numeric_collection,
     _is_numeric_value,
-    build_postgres_json_path,
     build_sqlite_json_path,
     parse_metadata_filters,
 )
@@ -126,4 +125,3 @@ def test_numeric_helpers():
 
 def test_build_json_paths():
     assert build_sqlite_json_path(["schema", "confidence"]) == '$."schema"."confidence"'
-    assert build_postgres_json_path(["schema", "confidence"]) == "{schema,confidence}"

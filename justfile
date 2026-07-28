@@ -3,9 +3,6 @@
 PYTEST_FLAGS := env_var_or_default("BASIC_MEMORY_PYTEST_FLAGS", "--import-mode=importlib")
 TESTMON_SELECT_FLAGS := env_var_or_default("BASIC_MEMORY_TESTMON_SELECT_FLAGS", "--import-mode=importlib --testmon --testmon-forceselect")
 TESTMON_REFRESH_FLAGS := env_var_or_default("BASIC_MEMORY_TESTMON_REFRESH_FLAGS", "--import-mode=importlib --testmon-noselect")
-# CI shards the Postgres unit suite across parallel jobs via pytest-split
-# (e.g. "--splits 3 --group 2"). Empty locally.
-PYTEST_SPLIT_FLAGS := env_var_or_default("BASIC_MEMORY_PYTEST_SPLIT_FLAGS", "")
 
 # Install dependencies
 install:
@@ -14,66 +11,33 @@ install:
     @echo "💡 Remember to activate the virtual environment by running: source .venv/bin/activate"
 
 # ==============================================================================
-# DATABASE BACKEND TESTING
+# TESTING
 # ==============================================================================
-# Basic Memory supports dual database backends (SQLite and Postgres).
-# By default, tests run against SQLite (fast, no dependencies).
-# Set BASIC_MEMORY_TEST_POSTGRES=1 to run against Postgres (uses testcontainers).
+# SQLite is the only database backend.
 #
 # Quick Start:
 #   just check             # Run static checks only (fix, format, typecheck)
 #   just fast-check        # Fast static check: fix, format, typecheck
 #   just fast-test         # Run pytest-testmon impacted tests
-#   just test              # Run all tests against SQLite and Postgres
-#   just test-sqlite       # Run all tests against SQLite
-#   just test-postgres     # Run all tests against Postgres (testcontainers)
-#   just test-unit-sqlite  # Run unit tests against SQLite
-#   just test-unit-postgres # Run unit tests against Postgres
-#   just test-int-sqlite   # Run integration tests against SQLite
-#   just test-int-postgres # Run integration tests against Postgres
-#
-# CI runs both in parallel for faster feedback.
+#   just test              # Run all tests
+#   just test-unit-sqlite  # Run unit tests
+#   just test-int-sqlite   # Run integration tests
 # ==============================================================================
 
-# Run all tests against SQLite and Postgres
-test: test-sqlite test-postgres
+# Run all tests
+test: test-sqlite
 
 # Run all tests against SQLite
 test-sqlite: test-unit-sqlite test-int-sqlite
-
-# Run all tests against Postgres (uses testcontainers)
-test-postgres: test-unit-postgres test-int-postgres
 
 # Run unit tests against SQLite
 test-unit-sqlite:
     BASIC_MEMORY_ENV=test uv run pytest -p pytest_mock -v --no-cov {{PYTEST_FLAGS}} tests
 
-# Run unit tests against Postgres
-# Exit code 5 (no tests collected) is success: a pytest-split shard can be empty.
-test-unit-postgres:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    BASIC_MEMORY_ENV=test BASIC_MEMORY_TEST_POSTGRES=1 uv run pytest -p pytest_mock -v --no-cov {{PYTEST_FLAGS}} {{PYTEST_SPLIT_FLAGS}} tests || test $? -eq 5
-
 # Run integration tests against SQLite (excludes semantic tests and on-demand benchmarks —
 # use just test-semantic / run benchmark files explicitly)
 test-int-sqlite:
     BASIC_MEMORY_ENV=test uv run pytest -p pytest_mock -v --no-cov {{PYTEST_FLAGS}} -m "not semantic and not benchmark" test-int
-
-# Run integration tests against Postgres
-# Note: Uses timeout due to FastMCP Client + asyncpg cleanup hang (tests pass, process hangs on exit)
-# See: https://github.com/jlowin/fastmcp/issues/1311
-test-int-postgres:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    # Use gtimeout (macOS/Homebrew) or timeout (Linux)
-    TIMEOUT_CMD=$(command -v gtimeout || command -v timeout || echo "")
-    if [[ -n "$TIMEOUT_CMD" ]]; then
-        $TIMEOUT_CMD --signal=KILL 600 bash -c 'BASIC_MEMORY_ENV=test BASIC_MEMORY_TEST_POSTGRES=1 uv run pytest -p pytest_mock -v --no-cov {{PYTEST_FLAGS}} -m "not semantic and not benchmark" test-int' || test $? -eq 137
-    else
-        echo "⚠️  No timeout command found, running without timeout..."
-        BASIC_MEMORY_ENV=test BASIC_MEMORY_TEST_POSTGRES=1 uv run pytest -p pytest_mock -v --no-cov {{PYTEST_FLAGS}} -m "not semantic and not benchmark" test-int
-    fi
 
 # Fast test selection for local iteration; run targeted tests explicitly when possible.
 fast-test *args: testmon-seed
@@ -346,23 +310,6 @@ runtime-refactor-contract-test:
         tests/runtime/test_note_content_read_planning.py
     just index-contract-test
 
-# Reset Postgres test database (drops and recreates schema)
-# Useful when Alembic migration state gets out of sync during development
-# Uses credentials from docker-compose-postgres.yml
-postgres-reset:
-    docker exec basic-memory-postgres psql -U ${POSTGRES_USER:-basic_memory_user} -d ${POSTGRES_TEST_DB:-basic_memory_test} -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
-    @echo "✅ Postgres test database reset"
-
-# Run Alembic migrations manually against Postgres test database
-# Useful for debugging migration issues
-# Uses credentials from docker-compose-postgres.yml (can override with env vars)
-postgres-migrate:
-    @cd src/basic_memory/alembic && \
-    BASIC_MEMORY_DATABASE_BACKEND=postgres \
-    BASIC_MEMORY_DATABASE_URL=${POSTGRES_TEST_URL:-postgresql+asyncpg://basic_memory_user:dev_password@localhost:5433/basic_memory_test} \
-    uv run alembic upgrade head
-    @echo "✅ Migrations applied to Postgres test database"
-
 # Run Windows-specific tests only (only works on Windows platform)
 # These tests verify Windows-specific database optimizations (locking mode, NullPool)
 # Will be skipped automatically on non-Windows platforms
@@ -388,10 +335,6 @@ test-semantic-report:
 test-litellm-live *args:
     BASIC_MEMORY_ENV=test BASIC_MEMORY_RUN_LITELLM_INTEGRATION=1 PYTHONPATH=test-int:src uv run python -m semantic.litellm_live_harness {{args}}
 
-# Run semantic benchmarks (Postgres combos only)
-test-semantic-postgres:
-    BASIC_MEMORY_ENV=test uv run pytest -p pytest_mock -v --no-cov {{PYTEST_FLAGS}} -m semantic -k postgres test-int/semantic/
-
 # View semantic benchmark results (rich formatted table)
 # Usage: just semantic-report [--filter-combo sqlite] [--filter-suite paraphrase] [--sort-by avg_latency_ms]
 semantic-report *args:
@@ -404,8 +347,8 @@ semantic-report *args:
 benchmark-compare baseline candidate *args:
     uv run python test-int/compare_search_benchmarks.py "{{baseline}}" "{{candidate}}" --format table {{args}}
 
-# Run all tests including Windows, Postgres, and Benchmarks (for CI/comprehensive testing)
-# Use this before releasing to ensure everything works across all backends and platforms
+# Run all tests including Windows and Benchmarks (comprehensive testing)
+# Use this before releasing to ensure everything works across platforms
 test-all:
     BASIC_MEMORY_ENV=test uv run pytest -p pytest_mock -v --no-cov {{PYTEST_FLAGS}} tests test-int
 
@@ -418,18 +361,9 @@ coverage:
     
     echo "🔎 Coverage (SQLite)..."
     BASIC_MEMORY_ENV=test uv run coverage run --source=basic_memory -m pytest -p pytest_mock -v --no-cov tests test-int
-    
-    echo "🔎 Coverage (Postgres via testcontainers)..."
-    # Note: Uses timeout due to FastMCP Client + asyncpg cleanup hang (tests pass, process hangs on exit)
-    # See: https://github.com/jlowin/fastmcp/issues/1311
-    TIMEOUT_CMD=$(command -v gtimeout || command -v timeout || echo "")
-    if [[ -n "$TIMEOUT_CMD" ]]; then
-        $TIMEOUT_CMD --signal=KILL 600 bash -c 'BASIC_MEMORY_ENV=test BASIC_MEMORY_TEST_POSTGRES=1 uv run coverage run --source=basic_memory -m pytest -p pytest_mock -v --no-cov -m postgres tests test-int' || test $? -eq 137
-    else
-        echo "⚠️  No timeout command found, running without timeout..."
-        BASIC_MEMORY_ENV=test BASIC_MEMORY_TEST_POSTGRES=1 uv run coverage run --source=basic_memory -m pytest -p pytest_mock -v --no-cov -m postgres tests test-int
-    fi
-    
+
+    # coverage.run sets parallel = true, so the run above still emits per-process
+    # data files that have to be combined before reporting.
     echo "🧩 Combining coverage data..."
     uv run coverage combine
     uv run coverage report -m

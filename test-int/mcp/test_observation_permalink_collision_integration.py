@@ -1,8 +1,8 @@
 """Regression tests for https://github.com/basicmachines-co/basic-memory/issues/909.
 
 Observation content is truncated to 200 chars when building the synthetic
-permalink (Postgres btree index limit), so distinct observations sharing a
-category and a 200-char content prefix used to collide and the second one was
+permalink, so distinct observations sharing a category and a 200-char
+content prefix used to collide and the second one was
 silently dropped from the search index, making it unfindable. #931 fixed this
 by appending a content digest to the truncated permalink.
 

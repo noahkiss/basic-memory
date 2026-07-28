@@ -10,7 +10,7 @@ Basic Memory's search supports both full-text search (FTS) and semantic retrieva
 - **Conceptual queries**: Search for "ways to improve performance" and find notes about caching, indexing, and optimization
 - **Hybrid retrieval**: Combine the precision of keyword search with the recall of semantic similarity
 
-Semantic search is enabled by default when semantic dependencies are available at runtime. It works on both SQLite (local) and Postgres backends.
+Semantic search is enabled by default when semantic dependencies are available at runtime.
 
 ## Installation
 
@@ -286,7 +286,7 @@ bm reindex --embeddings
 
 ### `text` (default)
 
-Full-text keyword search using FTS5 (SQLite) or tsvector (Postgres). Supports boolean operators (`AND`, `OR`, `NOT`), phrase matching, and prefix wildcards.
+Full-text keyword search using SQLite FTS5. Supports boolean operators (`AND`, `OR`, `NOT`), phrase matching, and prefix wildcards.
 
 ```python
 search_notes("project AND planning", search_type="text")
@@ -392,9 +392,7 @@ The dominant signal (whichever source scored higher) is preserved, and dual-sour
 
 Vector and hybrid modes return individual observations and relations as first-class search results, not just parent entities. This means a search for "water temperature for brewing" can surface the specific observation about 205°F without returning the entire "Coffee Brewing Methods" entity.
 
-## Database Backends
-
-### SQLite (local)
+## Vector Storage (SQLite)
 
 - **Vector storage**: [sqlite-vec](https://github.com/asg017/sqlite-vec) virtual table
 - **Table creation**: At runtime when semantic search is first used — no migration needed
@@ -402,13 +400,3 @@ Vector and hybrid modes return individual observations and relations as first-cl
 - **Chunk metadata**: `search_vector_chunks` table stores chunk text, keys, and source hashes
 
 The sqlite-vec extension is loaded per-connection. Vector tables are created lazily on first use.
-
-### Postgres
-
-- **Vector storage**: [pgvector](https://github.com/pgvector/pgvector) with HNSW indexing
-- **Local Docker**: use `docker-compose-postgres.yml` (`pgvector/pgvector:pg17`). Plain `postgres:17` lacks the extension; run `CREATE EXTENSION IF NOT EXISTS vector;` on any external instance before first migration.
-- **Chunk metadata table**: Created via Alembic migration (`search_vector_chunks` with `BIGSERIAL` primary key)
-- **Embedding table**: `search_vector_embeddings` created at runtime (dimension-dependent, same pattern as SQLite)
-- **Index**: HNSW index on the embedding column for fast approximate nearest-neighbour queries
-
-The Alembic migration creates the dimension-independent chunks table. The embeddings table and HNSW index are deferred to runtime because they depend on the configured vector dimensions.

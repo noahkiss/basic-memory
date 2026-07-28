@@ -23,20 +23,9 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def column_exists(connection, table: str, column: str) -> bool:
     """Check if a column exists in a table (idempotent migration support)."""
-    if connection.dialect.name == "postgresql":
-        result = connection.execute(
-            text(
-                "SELECT 1 FROM information_schema.columns "
-                "WHERE table_name = :table AND column_name = :column"
-            ),
-            {"table": table, "column": column},
-        )
-        return result.fetchone() is not None
-    else:
-        # SQLite
-        result = connection.execute(text(f"PRAGMA table_info({table})"))
-        columns = [row[1] for row in result]
-        return column in columns
+    result = connection.execute(text(f"PRAGMA table_info({table})"))
+    columns = [row[1] for row in result]
+    return column in columns
 
 
 def upgrade() -> None:
@@ -57,18 +46,11 @@ def upgrade() -> None:
 def downgrade() -> None:
     """Remove created_by and last_updated_by columns from entity table."""
     connection = op.get_bind()
-    dialect = connection.dialect.name
 
     if column_exists(connection, "entity", "last_updated_by"):
-        if dialect == "postgresql":
-            op.drop_column("entity", "last_updated_by")
-        else:
-            with op.batch_alter_table("entity") as batch_op:
-                batch_op.drop_column("last_updated_by")
+        with op.batch_alter_table("entity") as batch_op:
+            batch_op.drop_column("last_updated_by")
 
     if column_exists(connection, "entity", "created_by"):
-        if dialect == "postgresql":
-            op.drop_column("entity", "created_by")
-        else:
-            with op.batch_alter_table("entity") as batch_op:
-                batch_op.drop_column("created_by")
+        with op.batch_alter_table("entity") as batch_op:
+            batch_op.drop_column("created_by")

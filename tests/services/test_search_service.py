@@ -188,7 +188,7 @@ async def test_after_date(search_service, test_graph):
         )
     )
     for r in results:
-        # Handle both string (SQLite) and datetime (Postgres) formats
+        # SQLite stores timestamps as ISO strings unless the driver already parsed them.
         updated_at = (
             r.updated_at
             if isinstance(r.updated_at, datetime)
@@ -409,20 +409,12 @@ async def test_no_criteria(search_service, test_graph):
 
 
 @pytest.mark.asyncio
-async def test_init_search_index(search_service, session_maker, app_config):
+async def test_init_search_index(search_service, session_maker):
     """Test search index initialization."""
-    from basic_memory.config import DatabaseBackend
-
     async with db.scoped_session(session_maker) as session:
-        # Use database-specific query to check table existence
-        if app_config.database_backend == DatabaseBackend.POSTGRES:
-            result = await session.execute(
-                text("SELECT tablename FROM pg_catalog.pg_tables WHERE tablename='search_index';")
-            )
-        else:
-            result = await session.execute(
-                text("SELECT name FROM sqlite_master WHERE type='table' AND name='search_index';")
-            )
+        result = await session.execute(
+            text("SELECT name FROM sqlite_master WHERE type='table' AND name='search_index';")
+        )
         assert result.scalar() == "search_index"
 
 
@@ -1338,7 +1330,7 @@ async def test_index_entity_long_observations_shared_prefix_both_searchable(
 ):
     """Regression test for issue #909: truncated permalink collisions drop observations.
 
-    Observation permalinks truncate content to 200 chars (PostgreSQL btree limit),
+    Observation permalinks truncate content to 200 chars to stay index-sized,
     so two distinct observations of the same category sharing a 200-char prefix
     collided on the same synthetic permalink and the second was silently skipped
     during indexing. Both must be independently searchable.
@@ -1423,11 +1415,12 @@ async def test_index_entity_markdown_strips_nul_bytes(search_service, session_ma
     """Content with NUL bytes should be stripped before indexing.
 
     rclone preallocation on virtual filesystems (e.g. Google Drive File Stream)
-    can pad files with \\x00 bytes, causing PostgreSQL CharacterNotInRepertoireError.
+    can pad files with \\x00 bytes, which corrupt the FTS index and any consumer
+    that treats the indexed text as a C string.
 
-    Note: NUL bytes arrive via file content read from disk, not from the database.
-    Postgres rejects \\x00 in text columns at the ORM level, so we only test
-    the content path (passed to index_entity) rather than observation creation.
+    Note: NUL bytes arrive via file content read from disk, not from the database,
+    so only the content path (passed to index_entity) is exercised here rather
+    than observation creation.
     """
     from basic_memory.repository import EntityRepository
     from basic_memory.repository.search_repository import SearchRepository
@@ -1475,8 +1468,6 @@ async def test_reindex_vectors(search_service, session_maker, test_project, monk
     # Test fixtures disable semantic search, and delete_stale_vector_rows is the one call
     # in this flow that requires the semantic stack — stub it so the test exercises the
     # reindex wiring (id collection, batch call, stats mapping) without embeddings.
-    # raising=False: the method is SQLite-only; the Postgres purge path never calls it,
-    # so on Postgres this just attaches an unused attribute.
     async def _noop_delete_stale_vector_rows() -> None:
         return None
 
@@ -1484,7 +1475,6 @@ async def test_reindex_vectors(search_service, session_maker, test_project, monk
         search_service.repository,
         "delete_stale_vector_rows",
         _noop_delete_stale_vector_rows,
-        raising=False,
     )
 
     # Create some entities
@@ -1563,8 +1553,6 @@ async def test_reindex_vectors_no_callback(
     # Test fixtures disable semantic search, and delete_stale_vector_rows is the one call
     # in this flow that requires the semantic stack — stub it so the test exercises the
     # reindex wiring without embeddings.
-    # raising=False: the method is SQLite-only; the Postgres purge path never calls it,
-    # so on Postgres this just attaches an unused attribute.
     async def _noop_delete_stale_vector_rows() -> None:
         return None
 
@@ -1572,7 +1560,6 @@ async def test_reindex_vectors_no_callback(
         search_service.repository,
         "delete_stale_vector_rows",
         _noop_delete_stale_vector_rows,
-        raising=False,
     )
 
     entity = await _create_entity(

@@ -7,7 +7,7 @@ from basic_memory.repository.search_index_row import SearchIndexRow
 
 
 def test_from_mapping_normalizes_database_values():
-    """Database rows share one hydration path across SQLite and Postgres."""
+    """Database rows are normalized through one hydration path."""
     now = datetime.now()
     row = SearchIndexRow.from_mapping(
         {

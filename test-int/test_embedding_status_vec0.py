@@ -15,7 +15,6 @@ healthy unit test substitutes a plain regular table for vec0 and therefore does 
 this path.
 """
 
-import os
 import sqlite3
 from unittest.mock import patch
 
@@ -23,15 +22,11 @@ import pytest
 from sqlalchemy import text
 
 from basic_memory import db
-from basic_memory.config import BasicMemoryConfig, ConfigManager, DatabaseBackend
+from basic_memory.config import BasicMemoryConfig, ConfigManager
 from basic_memory.repository.entity_repository import EntityRepository
 from basic_memory.repository.project_repository import ProjectRepository
 from basic_memory.repository.sqlite_search_repository import SQLiteSearchRepository
 from basic_memory.services.project_service import ProjectService
-
-
-def _is_postgres() -> bool:
-    return os.environ.get("BASIC_MEMORY_TEST_POSTGRES", "").lower() in ("1", "true", "yes")
 
 
 def _unit_vector(dimensions: int) -> list[float]:
@@ -51,12 +46,6 @@ async def test_embedding_status_reads_real_vec0_table(engine_factory, test_proje
     raised "no such module: vec0", which the except block mapped to
     vector_tables_exist=False + reindex_recommended=True.
     """
-    # Trigger: Postgres test matrix executes the same suite.
-    # Why: vec0 + per-connection sqlite-vec loading is SQLite-specific.
-    # Outcome: keep the regression on the backend that can actually hit this path.
-    if _is_postgres():
-        pytest.skip("Real vec0 table handling is SQLite-specific.")
-
     # Trigger: Python build without SQLite extension loading (#711 — python.org
     # macOS / some Windows interpreters lack enable_load_extension).
     # Why: this test creates a REAL vec0 virtual table during setup, which is
@@ -80,7 +69,6 @@ async def test_embedding_status_reads_real_vec0_table(engine_factory, test_proje
     # the vec0-backed search_vector_embeddings table (float[384]).
     app_config = BasicMemoryConfig(
         env="test",
-        database_backend=DatabaseBackend.SQLITE,
         semantic_search_enabled=True,
     )
     search_repo = SQLiteSearchRepository(

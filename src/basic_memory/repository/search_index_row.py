@@ -119,8 +119,8 @@ class SearchIndexRow:
         """Convert to dict for database insertion.
 
         Args:
-            serialize_json: If True, converts metadata dict to JSON string (for SQLite).
-                           If False, keeps metadata as dict (for Postgres JSONB).
+            serialize_json: If True, converts metadata dict to a JSON string, as raw
+                           text() SQL requires; if False, keeps metadata as a dict.
         """
         return {
             "id": self.id,

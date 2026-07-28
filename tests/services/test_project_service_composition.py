@@ -4,11 +4,11 @@ from pathlib import Path
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from basic_memory.config import BasicMemoryConfig, DatabaseBackend
+from basic_memory.config import BasicMemoryConfig
 from basic_memory.markdown import EntityParser
 from basic_memory.markdown.markdown_processor import MarkdownProcessor
 from basic_memory.repository import RelationRepository
-from basic_memory.repository.postgres_search_repository import PostgresSearchRepository
+from basic_memory.repository.sqlite_search_repository import SQLiteSearchRepository
 from basic_memory.services import EntityService, FileService
 from basic_memory.services.composition import (
     build_default_project_search_bundle,
@@ -36,7 +36,6 @@ def test_build_default_project_runtime_bundle_wires_sync_free_project_graph(
         entity_parser=entity_parser,
         file_service=file_service,
         app_config=app_config,
-        database_backend=DatabaseBackend.POSTGRES,
         entity_service_factory=CustomEntityService,
         relation_resolution_repository=relation_resolution_repository,
     )
@@ -45,7 +44,7 @@ def test_build_default_project_runtime_bundle_wires_sync_free_project_graph(
     assert bundle.entity_repository.project_id == 7
     assert bundle.observation_repository.project_id == 7
     assert bundle.relation_repository.project_id == 7
-    assert isinstance(bundle.search_repository, PostgresSearchRepository)
+    assert isinstance(bundle.search_repository, SQLiteSearchRepository)
     assert bundle.search_service.repository is bundle.search_repository
     assert bundle.search_service.entity_repository is bundle.entity_repository
     assert bundle.search_service.file_service is file_service
@@ -85,12 +84,11 @@ def test_build_default_project_search_bundle_wires_project_search_service(
         session_maker=session_maker,
         file_service=file_service,
         app_config=app_config,
-        database_backend=DatabaseBackend.POSTGRES,
     )
 
     assert bundle.project_id == 11
     assert bundle.entity_repository.project_id == 11
-    assert isinstance(bundle.search_repository, PostgresSearchRepository)
+    assert isinstance(bundle.search_repository, SQLiteSearchRepository)
     assert bundle.search_service.repository is bundle.search_repository
     assert bundle.search_service.entity_repository is bundle.entity_repository
     assert bundle.search_service.file_service is file_service

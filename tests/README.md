@@ -1,178 +1,38 @@
-# Dual-Backend Testing
+# Testing
 
-Basic Memory tests run against both SQLite and Postgres backends to ensure compatibility.
-
-## Quick Start
-
-```bash
-# Run tests against SQLite only (default, no setup needed)
-pytest
-
-# Run tests against Postgres only (requires docker-compose)
-docker-compose -f docker-compose-postgres.yml up -d
-BASIC_MEMORY_TEST_POSTGRES=1 \
-POSTGRES_TEST_URL=postgresql+asyncpg://basic_memory_user:dev_password@localhost:5433/basic_memory \
-pytest -m postgres
-
-# Run tests against BOTH backends
-docker-compose -f docker-compose-postgres.yml up -d
-pytest --run-all-backends  # Not yet implemented - run both commands above
-```
-
-## How It Works
-
-### Parametrized Backend Fixture
-
-The `db_backend` fixture is parametrized to run tests against both `sqlite` and `postgres`:
-
-```python
-@pytest.fixture(
-    params=[
-        pytest.param("sqlite", id="sqlite"),
-        pytest.param("postgres", id="postgres", marks=pytest.mark.postgres),
-    ]
-)
-def db_backend(request) -> Literal["sqlite", "postgres"]:
-    return request.param
-```
-
-### Backend-Specific Engine Factories
-
-Each backend has its own engine factory implementation:
-
-- **`sqlite_engine_factory`** - Uses in-memory SQLite (fast, isolated)
-- **`postgres_engine_factory`** - Uses Postgres test database (realistic, requires Docker)
-
-The main `engine_factory` fixture delegates to the appropriate implementation based on `db_backend`.
-
-### Configuration
-
-The `app_config` fixture automatically configures the correct backend:
-
-```python
-# SQLite config
-database_backend = DatabaseBackend.SQLITE
-database_url = None  # Uses default SQLite path
-
-# Postgres config
-database_backend = DatabaseBackend.POSTGRES
-database_url = "postgresql+asyncpg://basic_memory_user:dev_password@localhost:5433/basic_memory"
-```
-
-## Running Postgres Tests
-
-### 1. Start Postgres Docker Container
+SQLite is the only database backend. There is nothing to start and nothing to configure — the
+suite is self-contained.
 
 ```bash
-docker-compose -f docker-compose-postgres.yml up -d
+just test-sqlite     # everything (tests/ + test-int/)
+just test-unit-sqlite
+just test-int-sqlite
+just fast-test       # only the tests your working tree impacted (pytest-testmon)
+uv run pytest tests/path/to/test_file.py::test_function_name
 ```
 
-This starts:
-- Postgres 17 with **pgvector** (`pgvector/pgvector:pg17`) on port **5433** (not 5432 to avoid conflicts)
-- Database: `basic_memory`
-- Credentials: `basic_memory_user` / `dev_password`
+## Layout
 
-### 2. Run Postgres Tests
+- `tests/` — unit tests. Each gets a fresh in-memory SQLite database, destroyed after the test.
+- `test-int/` — integration tests. Each gets a real on-disk SQLite file under `tmp_path`, so the
+  full MCP → FastAPI → repository → database stack runs unmocked.
 
-```bash
-# Run only Postgres tests
-BASIC_MEMORY_TEST_POSTGRES=1 \
-POSTGRES_TEST_URL=postgresql+asyncpg://basic_memory_user:dev_password@localhost:5433/basic_memory \
-pytest -m postgres
+## Fixtures
 
-# Run specific test with Postgres
-BASIC_MEMORY_TEST_POSTGRES=1 \
-POSTGRES_TEST_URL=postgresql+asyncpg://basic_memory_user:dev_password@localhost:5433/basic_memory \
-pytest tests/repository/test_entity_repository.py::test_create -m postgres
+The `engine_factory` fixture in each conftest owns the engine and session maker: `tests/conftest.py`
+builds an in-memory database, `test-int/conftest.py` builds `tmp_path / "test.db"`. Both create the
+ORM schema and then the FTS5 `search_index` virtual table, which SQLAlchemy metadata cannot express.
 
-# Skip Postgres tests (default behavior)
-pytest -m "not postgres"
-```
-
-### 3. Stop Docker Container
-
-```bash
-docker-compose -f docker-compose-postgres.yml down
-```
-
-## Test Isolation
-
-### SQLite Tests
-- Each test gets a fresh in-memory database
-- Automatic cleanup (database destroyed after test)
-- No setup required
-
-### Postgres Tests
-- Database is **cleaned before each test** (drop all tables, recreate)
-- Tests share the same Postgres instance but get isolated schemas
-- Requires Docker Compose to be running
+`app_config` and `config_manager` write an isolated `config.json` under a monkeypatched `HOME`, so
+tests never read or mutate the developer's real configuration.
 
 ## Markers
 
-- `postgres` - Marks tests that run against Postgres backend
-- Use `-m postgres` to run only Postgres tests
-- Use `-m "not postgres"` to skip Postgres tests (default)
+Registered in `pyproject.toml` (`[tool.pytest.ini_options] markers`):
 
-## CI Integration
-
-### GitHub Actions
-
-Use service containers for Postgres (no Docker Compose needed):
-
-```yaml
-jobs:
-  test:
-    runs-on: ubuntu-latest
-
-    # Postgres service container
-    services:
-      postgres:
-        image: pgvector/pgvector:pg17
-        env:
-          POSTGRES_DB: basic_memory_test
-          POSTGRES_USER: basic_memory_user
-          POSTGRES_PASSWORD: dev_password
-        ports:
-          - 5433:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-    steps:
-      - name: Run SQLite tests
-        run: pytest -m "not postgres"
-
-      - name: Run Postgres tests
-        run: pytest -m postgres
-```
-
-## Troubleshooting
-
-### Postgres tests fail with "connection refused"
-
-Make sure Docker Compose is running:
-```bash
-docker-compose -f docker-compose-postgres.yml ps
-docker-compose -f docker-compose-postgres.yml logs postgres
-```
-
-### Port 5433 already in use
-
-Either:
-- Stop the conflicting service
-- Change the port in `docker-compose-postgres.yml` and `tests/conftest.py`
-
-### Tests hang or timeout
-
-Check Postgres health:
-```bash
-docker-compose -f docker-compose-postgres.yml exec postgres pg_isready -U basic_memory_user
-```
-
-## Future Enhancements
-
-- [ ] Add `--run-all-backends` CLI flag to run both backends in sequence
-- [ ] Implement test fixtures for backend-specific features (e.g., Postgres full-text search vs SQLite FTS5)
-- [ ] Add performance comparison benchmarks between backends
+- `semantic` — needs the embedding stack (fastembed + sqlite-vec)
+- `live` — calls external provider APIs; explicit opt-in only
+- `benchmark` — performance measurement, not a correctness assertion
+- `slow` — long-running
+- `smoke` — fast end-to-end MCP smoke tests
+- `windows` — Windows-specific behavior

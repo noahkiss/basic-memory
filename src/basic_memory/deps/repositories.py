@@ -76,11 +76,7 @@ async def get_search_repository_v2_external(
     project_id: ProjectExternalIdPathDep,
     app_config: AppConfigDep,
 ) -> SearchRepository:
-    """Create a backend-specific SearchRepository instance for the current project.
-
-    Uses factory function to return SQLiteSearchRepository or PostgresSearchRepository
-    based on database backend configuration.
-    """
+    """Create a SearchRepository instance for the current project."""
     return create_search_repository(session_maker, project_id=project_id, app_config=app_config)
 
 

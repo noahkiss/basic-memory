@@ -183,7 +183,7 @@ async def test_create_relation_entity_does_not_exist(
 ):
     """Test creating a new relation"""
     relation_data = {
-        "from_id": 99999,  # Non-existent entity ID (integer for Postgres compatibility)
+        "from_id": 99999,  # Non-existent entity ID
         "to_id": related_entity.id,
         "to_name": related_entity.title,
         "relation_type": "test_relation",

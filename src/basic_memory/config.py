@@ -23,7 +23,6 @@ from basic_memory.config_models import (
     DATA_DIR_NAME as DATA_DIR_NAME,
     WATCH_STATUS_JSON as WATCH_STATUS_JSON,
     BasicMemoryConfig as BasicMemoryConfig,
-    DatabaseBackend as DatabaseBackend,
     Environment as Environment,
     ProjectConfig as ProjectConfig,
     ProjectEntry as ProjectEntry,

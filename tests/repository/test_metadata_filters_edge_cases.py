@@ -1,8 +1,7 @@
-"""Edge-case tests for metadata filter operators across both backends.
+"""Edge-case tests for metadata filter operators.
 
-Extends the base metadata filter tests with edge cases that exercise
-Postgres JSONB operator behavior alongside SQLite json_extract equivalents.
-Runs on both backends via the parameterized search_repository fixture.
+Extends the base metadata filter tests with edge cases that exercise the
+SQLite json_extract filter translation.
 """
 
 from datetime import datetime, timezone
