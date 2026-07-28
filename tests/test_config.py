@@ -4,7 +4,6 @@ import os
 import stat
 import tempfile
 import pytest
-from datetime import datetime
 from typing import Any, cast
 
 from basic_memory.config import (
@@ -1544,55 +1543,11 @@ class TestRetiredKeyMigration:
         assert _migrate_legacy_projects({"projects": {}}) == {"projects": {}}
 
 
-class TestAutoUpdateConfig:
-    """Test auto-update configuration fields."""
-
-    def test_auto_update_defaults(self):
-        """Auto-update should default on with a daily check interval."""
-        config = BasicMemoryConfig()
-        assert config.auto_update is True
-        assert config.update_check_interval == 86400
-        assert config.auto_update_last_checked_at is None
-
-    def test_auto_update_env_overrides(self, monkeypatch):
-        """Environment variables should override auto-update defaults."""
-        monkeypatch.setenv("BASIC_MEMORY_AUTO_UPDATE", "false")
-        monkeypatch.setenv("BASIC_MEMORY_UPDATE_CHECK_INTERVAL", "3600")
-
-        config = BasicMemoryConfig()
-        assert config.auto_update is False
-        assert config.update_check_interval == 3600
-
-    def test_auto_update_round_trip_persistence(self):
-        """Auto-update values should survive save/load cycle."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_path = Path(temp_dir)
-
-            config_manager = ConfigManager()
-            config_manager.config_dir = temp_path / "basic-memory"
-            config_manager.config_file = config_manager.config_dir / "config.json"
-            config_manager.config_dir.mkdir(parents=True, exist_ok=True)
-
-            checked_at = datetime.now()
-            test_config = BasicMemoryConfig(
-                projects={"main": {"path": str(temp_path / "main")}},
-                auto_update=False,
-                update_check_interval=7200,
-                auto_update_last_checked_at=checked_at,
-            )
-            config_manager.save_config(test_config)
-
-            loaded = config_manager.load_config()
-            assert loaded.auto_update is False
-            assert loaded.update_check_interval == 7200
-            assert loaded.auto_update_last_checked_at == checked_at
-
-
 class TestAtomicConfigSave:
     """Regression tests for #940: saving config must never tear the published file.
 
-    Long-lived readers (the MCP stdio server's mtime-based config reload, the CLI
-    background auto-update thread) re-read config.json while other code saves it.
+    Long-lived readers (the MCP stdio server's mtime-based config reload) re-read
+    config.json while other code saves it.
     An in-place write truncates the file first, so a concurrent reader can observe
     empty/partial JSON — and load_config() raises SystemExit on invalid JSON.
     """

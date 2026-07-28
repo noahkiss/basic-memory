@@ -59,9 +59,9 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/basicmachines-co/basic-memory"
-Repository = "https://github.com/basicmachines-co/basic-memory"
-Documentation = "https://github.com/basicmachines-co/basic-memory#readme"
+Homepage = "https://github.com/noahkiss/basic-memory"
+Repository = "https://github.com/noahkiss/basic-memory"
+Documentation = "https://github.com/noahkiss/basic-memory#readme"
 
 [project.scripts]
 basic-memory = "basic_memory.cli.main:app"

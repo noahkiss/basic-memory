@@ -62,7 +62,6 @@ def test_configurable_fields_excludes_structured_types():
     """Structured fields need dedicated commands or richer parsing, so they're excluded."""
     assert "projects" not in config_cmd.CONFIGURABLE_FIELDS
     assert "formatters" not in config_cmd.CONFIGURABLE_FIELDS
-    assert "auto_update_last_checked_at" not in config_cmd.CONFIGURABLE_FIELDS
 
 
 def test_configurable_fields_includes_scalar_settings():

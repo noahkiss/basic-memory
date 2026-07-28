@@ -3,7 +3,6 @@
 import importlib.util
 import os
 from dataclasses import dataclass
-from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Dict, Literal, Optional, List
@@ -537,22 +536,6 @@ class BasicMemoryConfig(BaseSettings):
     project_root: Optional[str] = Field(
         default=None,
         description="If set, all projects must be created underneath this directory. Paths will be sanitized and constrained to this root. If not set, projects can be created anywhere (default behavior).",
-    )
-
-    auto_update: bool = Field(
-        default=True,
-        description="Enable automatic CLI update checks and installs when supported.",
-    )
-
-    update_check_interval: int = Field(
-        default=86400,
-        description="Seconds between automatic update checks.",
-        gt=0,
-    )
-
-    auto_update_last_checked_at: Optional[datetime] = Field(
-        default=None,
-        description="Timestamp of the last attempted automatic update check.",
     )
 
     # Legacy config keys / env vars mapped to their renamed fields.

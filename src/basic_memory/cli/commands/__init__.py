@@ -10,7 +10,6 @@ from . import (
     config,
     format,
     schema,
-    update,
 )
 
 __all__ = [
@@ -28,6 +27,5 @@ __all__ = [
     "config",
     "format",
     "schema",
-    "update",
     "man",
 ]

@@ -29,7 +29,6 @@ def _stub_app_config(*, semantic_search_enabled: bool = True) -> SimpleNamespace
 def _configure_reindex_cli(monkeypatch, app_config: SimpleNamespace) -> None:
     """Keep CLI tests focused on reindex wiring instead of full app startup."""
     monkeypatch.setattr("basic_memory.cli.app.init_cli_logging", lambda: None)
-    monkeypatch.setattr("basic_memory.cli.app.maybe_run_periodic_auto_update", lambda *_args: None)
     monkeypatch.setattr(
         "basic_memory.cli.app.CliContainer.create",
         lambda: SimpleNamespace(config=app_config),

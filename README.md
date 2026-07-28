@@ -1,6 +1,5 @@
 <!-- mcp-name: io.github.basicmachines-co/basic-memory -->
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
-[![PyPI version](https://badge.fury.io/py/basic-memory.svg)](https://badge.fury.io/py/basic-memory)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 [![Tests](https://github.com/basicmachines-co/basic-memory/workflows/Tests/badge.svg)](https://github.com/basicmachines-co/basic-memory/actions)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
@@ -196,8 +195,6 @@ Try a prompt:
 
 ## What's New
 
-- **Automatic updates.** Basic Memory keeps itself up to date for `uv tool`
-  and Homebrew installs; `bm update` triggers a manual check.
 - **Semantic vector search.** Find notes by meaning, not just keywords.
   Hybrid full-text + vector ranking with FastEmbed embeddings, on SQLite or
   Postgres.
@@ -356,7 +353,6 @@ basic-memory config unset cli_output_style      # revert to default
 basic-memory status
 basic-memory doctor              # file <-> DB consistency check
 basic-memory tool edit-note ...  # CLI access to MCP tools
-basic-memory update              # check for and install updates
 
 # Imports
 basic-memory import claude conversations
@@ -366,21 +362,6 @@ basic-memory import memory-json
 
 Full CLI reference in the
 [docs](https://docs.basicmemory.com/reference/cli-reference?utm_source=github&utm_medium=referral&utm_campaign=readme).
-
-## Auto-updates
-
-CLI installs check for updates every 24 hours by default and apply them
-silently (so the MCP server keeps responding).
-
-- Supported install sources: `uv tool`, Homebrew
-- Skipped for `uvx` (ephemeral runtime managed by uv)
-- Manual: `bm update` (check + apply) or `bm update --check` (check only)
-
-Disable in `~/.basic-memory/config.json`:
-
-```json
-{ "auto_update": false }
-```
 
 ## Logging
 

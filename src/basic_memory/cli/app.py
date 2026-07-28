@@ -8,7 +8,6 @@ from typing import Optional  # noqa: E402
 
 import typer  # noqa: E402
 
-from basic_memory.cli.auto_update import maybe_run_periodic_auto_update  # noqa: E402
 from basic_memory.cli.container import CliContainer, set_container  # noqa: E402
 from basic_memory.config import init_cli_logging  # noqa: E402
 import logfire  # noqa: E402
@@ -47,16 +46,14 @@ def app_callback(
     command_name = ctx.invoked_subcommand or "root"
 
     # Trigger: a `brief` invocation — the session-start hook's front door.
-    # Why: two constraints the normal path violates. (1) `brief` writes markdown to
-    # stdout that a harness splices straight into an agent's context, so the
-    # auto-update messaging below must not run — it would land
-    # mid-brief. (2) Everything here — logging setup (Logfire loads config), the
-    # span, the container — can raise SystemExit on a malformed config
-    # (ConfigManager reports bad JSON that way), and a broken config must degrade
-    # to an empty brief rather than abort a session start.
+    # Why: `brief` writes markdown to stdout that a harness splices straight into
+    # an agent's context, and everything here — logging setup (Logfire loads
+    # config), the span, the container — can raise SystemExit on a malformed
+    # config (ConfigManager reports bad JSON that way). A broken config must
+    # degrade to an empty brief rather than abort a session start.
     # Outcome: run that setup best-effort, swallowing (Exception, SystemExit) so a
     # broken config surfaces only inside the verb's own fail-open guard. Skip
-    # global init and the messaging. KeyboardInterrupt is left to propagate.
+    # global init. KeyboardInterrupt is left to propagate.
     if ctx.invoked_subcommand == "brief":
         try:
             init_cli_logging()
@@ -103,14 +100,6 @@ def app_callback(
 
     maybe_install_uvloop(container.config)
 
-    # Trigger: register post-command messaging callbacks.
-    # Why: update notices belong below command results.
-    # Outcome: command output remains primary, with optional follow-up notices afterwards.
-    def _post_command_messages() -> None:
-        maybe_run_periodic_auto_update(ctx.invoked_subcommand)
-
-    ctx.call_on_close(_post_command_messages)
-
     # Run initialization for commands that don't use the API
     # Skip for 'mcp' command - it has its own lifespan that handles initialization
     # Skip for API-using commands (status, sync, etc.) - they handle initialization via deps.py
@@ -129,7 +118,6 @@ def app_callback(
         "tool",
         "reset",
         "reindex",
-        "update",
         "watch",
     }
     if (
