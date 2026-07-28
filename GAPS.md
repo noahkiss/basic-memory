@@ -667,6 +667,48 @@ passes touch the justfile for benchmark recipes (pass 4) and that is the natural
 
 ---
 
+### T17 — 10 integration tests fail on `main`; `test-int/` was never run against the W13 tree
+**Found:** 2026-07-27. **Severity: unknown until diagnosed — this is undiagnosed, not triaged.**
+
+W13 (Postgres deletion, `79e0dad9`) was verified against `just fast-check` and the **unit** suite
+only. `just test-int-sqlite` was never run against it. It has now been run, on `cbc62d41`:
+
+```
+10 failed, 327 passed, 4 skipped, 15 deselected in 426.54s
+```
+
+```
+test-int/mcp/test_build_context_underscore.py::test_build_context_underscore_normalization
+test-int/mcp/test_recreate_project_indexing_integration.py::test_recreate_retained_project_indexes_existing_notes
+test-int/bughunt_fixes/test_navigation_pagination_integration.py::test_cli_search_notes_page_size_zero
+test-int/bughunt_fixes/test_parse_tags_comma_split_integration.py::test_cli_write_note_comma_tags_split_matches_mcp
+test-int/cli/test_cli_tool_delete_note_integration.py::test_delete_directory_removes_nested_files_database_records_and_search_results
+test-int/cli/test_cli_tool_delete_note_integration.py::test_delete_note_rejects_conflicting_routing_flags
+test-int/cli/test_cli_tool_edit_note_integration.py::test_edit_note_project_and_routing_flag_parity
+test-int/cli/test_cli_tool_write_note_type_integration.py::test_write_note_type_flag_round_trip
+test-int/cli/test_project_commands_integration.py::test_remove_main_project
+test-int/cli/test_search_notes_meta_integration.py::test_search_notes_query_plus_meta_filter
+```
+
+**Not caused by the Docker pass.** That pass (`59a508ca`) is documentation plus one error-message
+string no test asserts on; these fail on the tree as pushed at `cbc62d41`.
+
+**Not yet established: whether W13 caused them at all.** They may equally predate it — nobody has a
+green `test-int` baseline to compare against, which is the actual root problem here. **Do not
+assume W13 is the cause and do not "fix" them by reverting W13 behaviour** until a run against
+`039275af` (the commit before W13) says whether they were already red. That bisect is step one.
+
+Seven of the ten are CLI-surface tests and six of those concern routing/project flags, which is a
+suspiciously tight cluster — but clustering is a hypothesis, not a diagnosis. Full tracebacks were
+not captured (the run was piped through `tail`); re-run without the pipe.
+
+**Why this matters beyond the ten tests:** the W13 verification protocol treated a green unit suite
+as sufficient. It is not. Every remaining strip pass should run `test-int` before its commit is
+called green, and this entry stays open until there is a known-good `test-int` baseline to measure
+against.
+
+---
+
 ## BLOCKERS / gaps in capability
 
 ### B1 — no `contains` operator in metadata filters; multi-value is AND-only
