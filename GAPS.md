@@ -945,6 +945,12 @@ configuration reality that every registry change has to be reasoned about twice.
 See AGENTS.md → "We do not track upstream" → "Strip policy" for the rule this falls under.
 
 ### W13 — delete the Postgres backend
+**SHIPPED `79e0dad9`.** 97 files, −6790/+694. Verified `3406 passed / 10 skipped / 0 failed`
+(baseline 3444+33 collected, −61 `def test_`), `fast-check` exit 0 with zero `ty` advisories.
+No alembic revision file was deleted — whole-body-Postgres revisions are no-ops so the
+`down_revision` chain and stamped `alembic_version` rows stay valid. `nest-asyncio` survives
+(applied outside any backend gate); `litellm` + the remaining dependency prune are still open.
+
 **Scheduled deletion, decided 2026-07-27 (user).** Postgres is an alternative *index* backend, not
 an alternative format — files stay authoritative and the DB is disposable. It exists for the hosted
 multi-tenant deployment and buys a local single-user install nothing; SQLite is what `sqlite-vec`
