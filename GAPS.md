@@ -645,6 +645,28 @@ Decided with the user 2026-07-27; bundled with the W12/W13/W14 deletion passes.
 
 ---
 
+### T16 — `runtime-core-fast-check-no-openai` is a dead byte-identical duplicate recipe
+**Found:** 2026-07-27, while stripping the Docker surface. **Severity: cosmetic.**
+
+`justfile:299` and `justfile:77` have identical bodies:
+
+```
+fast-check-no-openai:                    # line 77
+    OPENAI_API_KEY= just fast-check
+runtime-core-fast-check-no-openai:       # line 299
+    OPENAI_API_KEY= just fast-check
+```
+
+The line-299 copy sits in the "Runtime / Event Indexing Refactor" block, where it was presumably
+added so that refactor's recipes read as a self-contained group. It takes no argument and is not
+scoped to the runtime-core tests, so the name promises a narrowing it does not perform — the two
+recipes cannot diverge in behaviour, only in what a reader expects. Nothing references it.
+
+**Fix:** delete `justfile:299-300`. Not urgent, and not bundled into a strip pass — the strip
+passes touch the justfile for benchmark recipes (pass 4) and that is the natural moment.
+
+---
+
 ## BLOCKERS / gaps in capability
 
 ### B1 — no `contains` operator in metadata filters; multi-value is AND-only

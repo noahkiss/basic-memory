@@ -205,8 +205,7 @@ Try a prompt:
 ## What's New
 
 - **Semantic vector search.** Find notes by meaning, not just keywords.
-  Hybrid full-text + vector ranking with FastEmbed embeddings, on SQLite or
-  Postgres.
+  Hybrid full-text + vector ranking with FastEmbed embeddings.
 - **Schema system.** Infer, validate, and diff the structure of your
   knowledge base with `schema_infer`, `schema_validate`, `schema_diff`.
 - **Smarter editing.** `edit_note` append/prepend auto-creates notes when
@@ -400,24 +399,24 @@ tail -f ~/.basic-memory/basic-memory.log
 
 ## Development
 
-Basic Memory supports SQLite (default, fast, no Docker) and Postgres
-(via testcontainers — Docker required).
+SQLite is the only database backend; the test suite needs no external services.
 
 ```bash
-just install          # Install with dev dependencies
-just test-sqlite      # All tests, SQLite
-just test-postgres    # All tests, Postgres (testcontainers)
-just test             # Both backends
-just fast-check       # fix/format/typecheck + impacted tests
-just gate             # lint + typecheck + unit tests (pre-push gate)
-just doctor           # File <-> DB consistency check (temp config)
+just install            # Install with dev dependencies
+just test               # All tests
+just test-unit-sqlite   # Unit tests
+just test-int-sqlite    # Integration tests
+just fast-check         # fix/format/typecheck (no tests)
+just fast-test          # Impacted tests (pytest-testmon)
+just gate               # lint + typecheck + unit tests (pre-push gate)
+just doctor             # File <-> DB consistency check (temp config)
 just lint
-just typecheck        # Pyright (primary)
-just typecheck-ty     # ty (supplemental)
+just typecheck          # ty (primary)
+just typecheck-pyright  # Pyright (supplemental)
 just format
-just check            # All quality checks
-just migration "msg"  # New Alembic migration
-just release v0.23.0  # Cut a release tag (publishes nothing)
+just check              # All static checks
+just migration "msg"    # New Alembic migration
+just release v0.23.0    # Cut a release tag (publishes nothing)
 ```
 
 Tests use pytest markers: `windows`, `benchmark`, `smoke`. See

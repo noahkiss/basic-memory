@@ -425,9 +425,9 @@ class SQLiteSearchRepository(SearchRepositoryBase):
                     "(no enable_load_extension on sqlite3.Connection). "
                     "Common cause: python.org Python on macOS. "
                     "Reinstall basic-memory under a Python that ships extension "
-                    "support (uv-managed CPython, Homebrew Python, or the official "
-                    "Docker image), or set semantic_search_enabled=false in config "
-                    "to silence this and use keyword-only search."
+                    "support (uv-managed CPython or Homebrew Python), or set "
+                    "semantic_search_enabled=false in config to silence this and "
+                    "use keyword-only search."
                 )
 
             await driver_connection.enable_load_extension(True)

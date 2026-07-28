@@ -131,9 +131,6 @@ Python 3.12+ required (type parameter syntax and `type` aliases).
 `just doctor`. Widen to `just test-sqlite` when the change warrants it. A cold testmon run is slow,
 later ones aren't; testmon collecting 0 tests means nothing was impacted, not that it failed.
 
-**Postgres variants** (`just test-postgres`, `test-unit-postgres`, `test-int-postgres`) use
-testcontainers and need Docker. Required only while the Postgres backend survives — see Strip policy.
-
 **Releases** are a git tag and nothing else — nothing is published anywhere. `just gate` is the
 pre-push check (lint + typecheck + unit tests); `just release vX.Y.Z` tags and pushes; `just
 release-preview vX.Y.Z` shows what it would do. See `.forked/release-design.md` for why there is
@@ -263,10 +260,8 @@ Flow: MCP Tool → Typed Client → HTTP API → Router → Service → Reposito
 - SQLite is used for indexing and full text search, files are source of truth
 - Testing uses pytest with asyncio support (strict mode)
 - Unit tests (`tests/`) use mocks when necessary; integration tests (`test-int/`) use real implementations
-- By default, tests run against SQLite (fast, no Docker needed)
-- Set `BASIC_MEMORY_TEST_POSTGRES=1` to run against Postgres (uses testcontainers - Docker required)
+- SQLite is the only database backend; tests need no external services
 - Each test runs in a standalone environment with isolated database and tmp_path directory
-- CI runs SQLite and Postgres tests in parallel for faster feedback
 - Performance benchmarks are in `test-int/test_sync_performance_benchmark.py`
 - Use pytest markers: `@pytest.mark.benchmark` for benchmarks, `@pytest.mark.slow` for slow tests
 - **Coverage must stay at 100%**: Write tests for new code. Only use `# pragma: no cover` when tests would require excessive mocking (e.g., TYPE_CHECKING blocks, error handlers that need failure injection, runtime-mode-dependent code paths)
