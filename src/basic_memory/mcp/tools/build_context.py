@@ -135,8 +135,7 @@ def _format_context_markdown(graph: GraphContext, project: str) -> str:
     - "json" (default): Structured JSON with internal fields excluded
     - "text": Compact markdown text for LLM consumption
 
-    Queries the Basic Memory knowledge base API — see
-    https://docs.basicmemory.com/concepts/memory-urls
+    Queries the Basic Memory knowledge base API.
     """,
     tags={"navigation", "notes"},
     annotations={

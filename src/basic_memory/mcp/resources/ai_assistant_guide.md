@@ -2,7 +2,7 @@
 
 Quick reference for using Basic Memory tools effectively through MCP.
 
-**For comprehensive coverage**: See the [Extended AI Assistant Guide](https://github.com/basicmachines-co/basic-memory/blob/main/docs/ai-assistant-guide-extended.md) with detailed examples, advanced patterns, and self-contained sections.
+**For comprehensive coverage**: See the [Extended AI Assistant Guide](https://github.com/noahkiss/basic-memory/blob/main/docs/ai-assistant-guide-extended.md) with detailed examples, advanced patterns, and self-contained sections.
 
 ## Overview
 
@@ -310,6 +310,4 @@ context = await build_context(url=f"memory://{results[0].permalink}", project="m
 - `memory://folder/*` - All in folder
 - `memory://project-name/folder/title` - Cross-project (auto-routes to the correct project)
 
-For full documentation: https://docs.basicmemory.com
-
-Built with ♥️ by Basic Machines
+For full documentation, see the repository: https://github.com/noahkiss/basic-memory

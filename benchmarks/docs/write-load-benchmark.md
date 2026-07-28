@@ -28,7 +28,7 @@ prove or disprove:
 
 2. **Branch comparison via per-ref venvs (not worktrees).** Each ref gets its
    own venv with `basic-memory@<sha>` installed from GitHub
-   (`uv pip install 'basic-memory @ git+https://github.com/basicmachines-co/basic-memory@<ref>'`).
+   (`uv pip install 'basic-memory @ git+https://github.com/noahkiss/basic-memory@<ref>'`).
    The driver points the spawned `bm mcp` at that venv's `basic-memory`
    executable (`--bm-command <venv>/bin/basic-memory`). The harness (this
    driver) stays fixed; only the spawned `bm` varies → any two refs, repeatable.

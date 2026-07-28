@@ -44,7 +44,7 @@ def _resolve_bm_sha(run_config: RunConfig) -> str | None:
         local_sha = git_sha(Path(run_config.bm_local_path))
         if local_sha:
             return local_sha
-    return resolve_remote_main_sha("https://github.com/basicmachines-co/basic-memory")
+    return resolve_remote_main_sha("https://github.com/noahkiss/basic-memory")
 
 
 def _execute_provider_flat(

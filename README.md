@@ -1,11 +1,9 @@
-<!-- mcp-name: io.github.basicmachines-co/basic-memory -->
+<!-- mcp-name: io.github.noahkiss/basic-memory -->
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
-[![Tests](https://github.com/basicmachines-co/basic-memory/workflows/Tests/badge.svg)](https://github.com/basicmachines-co/basic-memory/actions)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 ![](https://badge.mcpx.dev?type=server 'MCP Server')
 ![](https://badge.mcpx.dev?type=dev 'MCP Dev')
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/basicmachines-co/basic-memory)
 
 # Basic Memory
 
@@ -174,8 +172,8 @@ Add to your User Settings (JSON):
 ### ChatGPT
 
 Basic Memory exposes OpenAI-compatible `search` and `fetch` tools for Custom
-GPT actions. See the [ChatGPT integration
-guide](https://docs.basicmemory.com/integrations/chatgpt/?utm_source=github&utm_medium=referral&utm_campaign=readme).
+GPT actions. Point the action at the MCP server over https and ChatGPT can
+read your notes.
 
 ### Obsidian
 
@@ -315,8 +313,7 @@ multi-word ones.
 ```
 
 Bare `- [[Target]]` and prose `- Worth checking out [[Target]]` index as
-`links_to`. Full reference in the
-[docs](https://docs.basicmemory.com/concepts/knowledge-format?utm_source=github&utm_medium=referral&utm_campaign=readme).
+`links_to`. Full reference in [docs/NOTE-FORMAT.md](docs/NOTE-FORMAT.md).
 
 ## MCP tools
 
@@ -334,8 +331,8 @@ agents can pick the right one without trial-and-error:
 - **Schema:** `schema_infer`, `schema_validate`, `schema_diff`
 
 All MCP tools default to text output; pass `output_format="json"` for
-structured responses. Full tool reference in the
-[docs](https://docs.basicmemory.com/?utm_source=github&utm_medium=referral&utm_campaign=readme).
+structured responses. Exact signatures live in
+[`src/basic_memory/mcp/tools/`](src/basic_memory/mcp/tools/).
 
 ## CLI essentials
 
@@ -360,8 +357,8 @@ basic-memory import chatgpt
 basic-memory import memory-json
 ```
 
-Full CLI reference in the
-[docs](https://docs.basicmemory.com/reference/cli-reference?utm_source=github&utm_medium=referral&utm_campaign=readme).
+`basic-memory --help` (or `--help` on any subcommand) is the full CLI
+reference.
 
 ## Logging
 
@@ -419,14 +416,6 @@ Tests use pytest markers: `windows`, `benchmark`, `smoke`. See
 
 [AGPL-3.0](LICENSE).
 
-## Star History
-
-<a href="https://www.star-history.com/#basicmachines-co/basic-memory&Date">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=basicmachines-co/basic-memory&type=Date&theme=dark" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=basicmachines-co/basic-memory&type=Date" />
-   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=basicmachines-co/basic-memory&type=Date" />
- </picture>
-</a>
-
-Built with ♥️ by [Basic Machines](https://basicmachines.co?utm_source=github&utm_medium=referral&utm_campaign=readme)
+A hard fork of [Basic Machines' basic-memory](https://github.com/basicmachines-co/basic-memory),
+maintained at [noahkiss/basic-memory](https://github.com/noahkiss/basic-memory). It does not
+track upstream.

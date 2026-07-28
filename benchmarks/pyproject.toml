@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Reproducible benchmark suite for Basic Memory and competitor memory systems"
 readme = "README.md"
 authors = [
-    { name = "Basic Machines", email = "hello@basic-machines.co" }
+    { name = "Noah Kiss", email = "noahkiss@users.noreply.github.com" }
 ]
 requires-python = ">=3.12"
 dependencies = [

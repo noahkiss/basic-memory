@@ -1,7 +1,8 @@
 # Manual Pages
 
 Basic Memory's manual is written in the style of Unix man pages — and
-implemented as Basic Memory notes ([#952](https://github.com/basicmachines-co/basic-memory/issues/952)).
+implemented as Basic Memory notes (the idea is written up in upstream
+[basicmachines-co#952](https://github.com/basicmachines-co/basic-memory/issues/952)).
 Every page is a markdown note conforming to the `Manpage` schema, `SEE ALSO`
 entries are real knowledge-graph relations, and every example on every page
 was executed against a live project before the page shipped. The manual
@@ -183,7 +184,7 @@ GOTCHAS, SEE ALSO, observations) survives — that ownership split is what the
   CI becomes the drift gate.
 - **`bm man <topic>`** — CLI sugar over `read_note` + metadata search.
   (`bm man install` + a hand-written `bm.1` already ship — the first slice
-  of [#610](https://github.com/basicmachines-co/basic-memory/issues/610);
+  of upstream [basicmachines-co#610](https://github.com/basicmachines-co/basic-memory/issues/610);
   the generator will produce per-command pages from the same extraction.)
 - **Docs site** — the notes remain canonical for sections 5 and 7, code is
   canonical for 1 and 3; both render to the hosted docs site.

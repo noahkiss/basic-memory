@@ -239,7 +239,7 @@ bench-venv ref:
     slug=$(echo "{{ref}}" | tr '/:' '__')
     uv venv ".venvs/$slug" --python 3.12
     uv pip install --python ".venvs/$slug/bin/python" \
-      "basic-memory @ git+https://github.com/basicmachines-co/basic-memory@{{ref}}"
+      "basic-memory @ git+https://github.com/noahkiss/basic-memory@{{ref}}"
     echo "installed $(".venvs/$slug/bin/basic-memory" --version) into .venvs/$slug"
 
 # Run the write-load concurrency sweep against a ref's venv -> .scratch/<slug>.jsonl

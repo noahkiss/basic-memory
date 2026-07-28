@@ -249,7 +249,7 @@ def _format_search_error_response(
             - Try a different search type: `search_notes("{project}","{query}", search_type="title")`
 
             ## If the problem persists:
-            The search index might need to be rebuilt. Send a message to support@basicmachines.co or check the project sync status.
+            The search index might need to be rebuilt. Check the project sync status, or open an issue at https://github.com/noahkiss/basic-memory/issues.
             """).strip()
 
     # Permission/access errors

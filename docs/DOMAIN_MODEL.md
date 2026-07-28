@@ -206,5 +206,3 @@ Before adding a model, abstraction, or workflow, answer:
 
 - [Architecture](ARCHITECTURE.md)
 - [Engineering Style](ENGINEERING_STYLE.md)
-- [DeepWiki generated overview](https://deepwiki.com/basicmachines-co/basic-memory) — use as a
-  navigation aid; checked-in documentation and source code are authoritative.

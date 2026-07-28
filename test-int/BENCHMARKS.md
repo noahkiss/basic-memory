@@ -181,9 +181,12 @@ After optimizations:
 - `BASIC_MEMORY_BENCH_MIN_PARAPHRASE_HYBRID_RECALL_AT_5`
 - `BASIC_MEMORY_BENCH_MIN_PARAPHRASE_HYBRID_MRR_AT_10`
 
-## Related Issues
+## Background
 
-- [#351: Performance: Optimize sync/indexing for cloud deployments](https://github.com/basicmachines-co/basic-memory/issues/351)
+The sync/indexing path these benchmarks measure was shaped by upstream
+[basicmachines-co#351: Performance: Optimize sync/indexing for cloud deployments](https://github.com/basicmachines-co/basic-memory/issues/351),
+which records the reasoning behind that optimization. Cited for history only —
+this fork does not track upstream's issue tracker.
 
 ## Test File Generation
 

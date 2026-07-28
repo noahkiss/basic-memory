@@ -585,7 +585,17 @@ is this?" hits it again.
 **Fix:** delete the tag locally and on the remote. **Not done deliberately** — deleting a remote tag
 changes published state, and `noahkiss/basic-memory` is public. Needs the user's explicit go-ahead.
 
-### T15 — auto-update can silently replace this fork with upstream from PyPI
+### T15 — auto-update can silently replace this fork with upstream from PyPI — **SHIPPED `0b755f50`**
+**Done 2026-07-27.** Deleted `cli/auto_update.py`, `cli/commands/update.py`, both test files, the
+`cli/app.py` call site, the `cli/commands/mcp.py` daemon thread (and its orphaned `threading`
+import), the `auto_update` / `update_check_interval` / `auto_update_last_checked_at` config fields
+(their `BASIC_MEMORY_*` env vars are derived from the model, so they vanish with the fields), and
+the `update` entry in `cli/main.py`. Same commit repointed `pyproject.toml [project.urls]` off
+`basicmachines-co` and dropped the upstream PyPI badge. Verified: `just fast-check` exit 0, unit
+suite **3444 passed / 33 skipped / 0 failed** — 3471 minus the 27 `def test_` lines the diff
+removes, so the delta is fully explained.
+
+*Original report:*
 **Found:** 2026-07-27, while auditing runtime dependencies. **Severity: this is the worst trap in
 the file** — it is the only one whose failure mode is the fork uninstalling itself.
 
@@ -940,8 +950,13 @@ duplicated surface in this tree.
 `org.testcontainers=true`, **not** `--filter ancestor=postgres`, which cannot match and produced a
 false "Postgres never ran" conclusion on 2026-07-26.
 
-### W14 — delete the `bm ci` GitHub CI-capture surface
+### W14 — delete the `bm ci` GitHub CI-capture surface — **SHIPPED `6098d9b0`**
+**Done 2026-07-27.** Deleted `src/basic_memory/ci/` (3 files), `cli/commands/ci.py`,
+`tests/cli/test_ci_commands.py`, and both registration sites. Verified: `just fast-check` exit 0
+(the 9 standing `ty` advisories only — `error-on-warning = false`), unit suite **3471 passed / 33
+skipped / 0 failed**, exactly the 3483 baseline minus the 12 deleted `ci` tests.
 
+*Original report:*
 **Strip candidate, found 2026-07-27 while verifying the strip.** `src/basic_memory/cli/commands/ci.py`
 + `src/basic_memory/ci/project_updates.py` + `tests/cli/test_ci_commands.py` scaffold a
 `.github/workflows/basic-memory.yml` into a *target* repo so a GitHub Action can write project-update

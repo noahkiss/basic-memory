@@ -5,42 +5,13 @@ system. This is particularly useful for integrating with existing Dockerized MCP
 
 ## Quick Start
 
-### Option 1: Using Pre-built Images (Recommended)
+This fork publishes no images anywhere — you build from this checkout.
 
-Basic Memory provides pre-built Docker images on GitHub Container Registry that are automatically updated with each release.
-
-1. **Use the official image directly:**
-   ```bash
-   docker run -d \
-     --name basic-memory-server \
-     -p 8000:8000 \
-     -v /path/to/your/obsidian-vault:/app/data:rw \
-     -v basic-memory-config:/app/.basic-memory:rw \
-     ghcr.io/basicmachines-co/basic-memory:latest
-   ```
-
-2. **Or use Docker Compose with the pre-built image:**
-   ```yaml
-   version: '3.8'
-   services:
-     basic-memory:
-       image: ghcr.io/basicmachines-co/basic-memory:latest
-       container_name: basic-memory-server
-       ports:
-         - "8000:8000"
-       volumes:
-         - /path/to/your/obsidian-vault:/app/data:rw
-         - basic-memory-config:/app/.basic-memory:rw
-       environment:
-         - BASIC_MEMORY_DEFAULT_PROJECT=main
-       restart: unless-stopped
-   ```
-
-### Option 2: Using Docker Compose (Building Locally)
+### Option 1: Using Docker Compose (Building Locally)
 
 1. **Clone the repository:**
    ```bash
-   git clone https://github.com/basicmachines-co/basic-memory.git
+   git clone https://github.com/noahkiss/basic-memory.git
    cd basic-memory
    ```
 
@@ -57,7 +28,7 @@ Basic Memory provides pre-built Docker images on GitHub Container Registry that 
    docker-compose up -d
    ```
 
-### Option 3: Using Docker CLI
+### Option 2: Using Docker CLI
 
 ```bash
 # Build the image
@@ -215,15 +186,15 @@ services:
     restart: unless-stopped
 ```
 
-**Using pre-built images:**
-If using the pre-built image from GitHub Container Registry, files will be created with UID/GID 1000. You can either:
+**Using the default UID/GID:**
+If you build without the `UID`/`GID` build args, files will be created with UID/GID 1000. You can either:
 
 1. Change your local directory ownership to match:
    ```bash
    sudo chown -R 1000:1000 /path/to/your/obsidian-vault
    ```
 
-2. Or build your own image with custom UID/GID as shown above.
+2. Or rebuild with custom UID/GID as shown above.
 
 ### Windows
 
@@ -321,45 +292,4 @@ For Docker-specific issues:
 3. Verify volume mounts: `docker inspect basic-memory-server`
 4. Test file permissions: `docker exec basic-memory-server ls -la /app`
 
-For general Basic Memory support, see the main [README](../README.md)
-and [documentation](https://memory.basicmachines.co/).
-
-## GitHub Container Registry Images
-
-### Available Images
-
-Pre-built Docker images are available on GitHub Container Registry at [`ghcr.io/basicmachines-co/basic-memory`](https://github.com/basicmachines-co/basic-memory/pkgs/container/basic-memory).
-
-**Supported architectures:**
-- `linux/amd64` (Intel/AMD x64)
-- `linux/arm64` (ARM64, including Apple Silicon)
-
-**Available tags:**
-- `latest` - Latest stable release
-- `v0.13.8`, `v0.13.7`, etc. - Specific version tags
-- `v0.13`, `v0.12`, etc. - Major.minor tags
-
-### Automated Builds
-
-Docker images are automatically built and published when new releases are tagged:
-
-1. **Release Process:** When a git tag matching `v*` (e.g., `v0.13.8`) is pushed, the CI workflow automatically:
-   - Builds multi-platform Docker images
-   - Pushes to GitHub Container Registry with appropriate tags
-   - Uses native GitHub integration for seamless publishing
-
-2. **CI/CD Pipeline:** The Docker workflow includes:
-   - Multi-platform builds (AMD64 and ARM64)
-   - Layer caching for faster builds
-   - Automatic tagging with semantic versioning
-   - Security scanning and optimization
-
-### Setup Requirements (For Maintainers)
-
-GitHub Container Registry integration is automatic for this repository:
-
-1. **No external setup required** - GHCR is natively integrated with GitHub
-2. **Automatic permissions** - Uses `GITHUB_TOKEN` with `packages: write` permission
-3. **Public by default** - Images are automatically public for public repositories
-
-The Docker CI workflow (`.github/workflows/docker.yml`) handles everything automatically when version tags are pushed.
+For general Basic Memory support, see the main [README](../README.md).

@@ -103,7 +103,7 @@ A system error occurred while deleting '{identifier}': {error_message}
 - Try again in a few moments
 
 ## If problem persists:
-Send a message to support@basicmachines.co - there may be a filesystem or database issue."""
+There may be a filesystem or database issue - open an issue at https://github.com/noahkiss/basic-memory/issues."""
 
     # Database/sync errors
     if "database" in error_message.lower() or "sync" in error_message.lower():
@@ -122,7 +122,7 @@ A database error occurred while deleting '{identifier}': {error_message}
 3. **Manual verification**: Use `list_directory()` to see if file still exists
 
 ## If the note appears gone but database shows it exists:
-Send a message to support@basicmachines.co - a manual database cleanup may be needed."""
+A manual database cleanup may be needed - open an issue at https://github.com/noahkiss/basic-memory/issues."""
 
     # Generic fallback
     return f"""# Delete Failed
@@ -151,7 +151,7 @@ delete_note("{project}", "correct-identifier-from-search")
 - Check what notes exist: `list_directory("{project}", "/")`
 
 ## Need help?
-If the note should be deleted but the operation keeps failing, send a message to support@basicmemory.com."""
+If the note should be deleted but the operation keeps failing, open an issue at https://github.com/noahkiss/basic-memory/issues."""
 
 
 def _directory_path_for_delete(

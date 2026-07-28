@@ -11,7 +11,7 @@ from typing import Any
 
 import logfire
 
-REPOSITORY_URL = "https://github.com/basicmachines-co/basic-memory"
+REPOSITORY_URL = "https://github.com/noahkiss/basic-memory"
 ROOT_PATH = "src/basic_memory"
 
 _LOGFIRE_HANDLER: dict[str, Any] | None = None

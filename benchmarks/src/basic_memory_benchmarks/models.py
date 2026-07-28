@@ -211,7 +211,7 @@ class RunConfig(BaseModel):
     output_root: str = "benchmarks/runs"
     providers: list[str] = Field(default_factory=list)
     top_k: int = 10
-    bm_source: str = "github:basicmachines-co/basic-memory@main"
+    bm_source: str = "github:noahkiss/basic-memory@main"
     bm_local_path: str | None = None
     judge_enabled: bool = False
     judge_model: str = "gpt-4o-mini"

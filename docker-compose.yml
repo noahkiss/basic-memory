@@ -5,12 +5,14 @@ version: '3.8'
 
 services:
   basic-memory:
-    # Use pre-built image (recommended for most users)
-    image: ghcr.io/basicmachines-co/basic-memory:latest
-    
-    # Uncomment to build locally instead:
-    # build: .
-    
+    # Build from this checkout. This fork publishes no container image, and an
+    # image: line naming upstream's would silently run upstream's binary against
+    # this fork's data — the exact failure mode GAPS.md T13 exists to prevent.
+    build: .
+
+    # If this fork ever publishes, the pull would go here instead:
+    # image: ghcr.io/noahkiss/basic-memory:latest
+
     container_name: basic-memory-server
     
     # Volume mounts for knowledge directories and persistent data

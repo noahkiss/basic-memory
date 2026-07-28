@@ -133,9 +133,10 @@ class BasicMemoryLocalProvider(BenchmarkProvider):
 
     def _isolated_bm_env(self) -> dict[str, str]:
         # The benchmark must not depend on (or mutate) the operator's personal
-        # Basic Memory config — e.g. a cloud-mode setup would route search_notes
-        # through cloud.basicmemory.com. BASIC_MEMORY_CONFIG_DIR scopes config,
-        # database, and project registry to a benchmark-owned directory.
+        # Basic Memory config — a real config carries the operator's own projects,
+        # index, and tuning, none of which the measurement should see.
+        # BASIC_MEMORY_CONFIG_DIR scopes config, database, and project registry
+        # to a benchmark-owned directory.
         #
         # The directory is FRESH per provider instance: a persistent shared
         # home rots across basic-memory versions (alembic migrations from a

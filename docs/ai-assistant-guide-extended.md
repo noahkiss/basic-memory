@@ -3310,10 +3310,8 @@ await write_note(title="Note", content="...", folder="notes", overwrite=True)
 
 This extended guide provides comprehensive coverage of Basic Memory's capabilities for AI assistants. Each section is designed to be self-contained so you can reference or copy specific sections as needed.
 
-For the condensed quick-reference version, see the [AI Assistant Guide](https://github.com/basicmachines-co/basic-memory/blob/main/src/basic_memory/mcp/resources/ai_assistant_guide.md).
+For the condensed quick-reference version, see the [AI Assistant Guide](../src/basic_memory/mcp/resources/ai_assistant_guide.md), which the MCP server also serves as a resource.
 
-For complete documentation including setup, integrations, and advanced features, visit [docs.basicmemory.com](https://docs.basicmemory.com).
+For setup and integrations, see the [README](../README.md).
 
 **Remember**: Basic Memory is about building persistent, structured knowledge that grows over time. Focus on creating rich observations, meaningful relations, and building a connected knowledge graph that provides lasting value across conversations and sessions.
-
-Built with ♥️ by Basic Machines

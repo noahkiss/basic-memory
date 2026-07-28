@@ -220,7 +220,7 @@ def run_retrieval_command(
     run_id: str | None = typer.Option(None, "--run-id"),
     top_k: int = typer.Option(10, "--top-k"),
     bm_source: str = typer.Option(
-        "github:basicmachines-co/basic-memory@main",
+        "github:noahkiss/basic-memory@main",
         "--bm-source",
     ),
     bm_local_path: str | None = typer.Option(None, "--bm-local-path"),
@@ -382,7 +382,7 @@ def run_full_command(
     output_root: Path = typer.Option(Path("benchmarks/runs"), "--output-root"),
     run_id: str | None = typer.Option(None, "--run-id"),
     top_k: int = typer.Option(10, "--top-k"),
-    bm_source: str = typer.Option("github:basicmachines-co/basic-memory@main", "--bm-source"),
+    bm_source: str = typer.Option("github:noahkiss/basic-memory@main", "--bm-source"),
     bm_local_path: str | None = typer.Option(None, "--bm-local-path"),
     allow_provider_skip: bool = typer.Option(True, "--allow-provider-skip/--strict-providers"),
     judge: bool = typer.Option(False, "--judge"),
