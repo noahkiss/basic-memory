@@ -512,7 +512,20 @@ correct the message so it stops asserting something that can be false.
 **Repro not yet captured** — needs a note held in `pending`/`failed` at reset time. Until then this
 is a documented contradiction between two code sites, not an observed loss.
 
-### T13 — a dependency reference naming `basic-memory` silently resolves to UPSTREAM
+### T13 — a dependency reference naming `basic-memory` silently resolves to UPSTREAM — **SHIPPED `cece1087` + `e11cc1d7`**
+**Done 2026-07-27.** All six benchmark sites repointed at `noahkiss/basic-memory`, plus two the
+original report missed: `docker-compose.yml` pulled upstream's GHCR image (now builds from the
+checkout — this fork publishes no image), and the README documented `uv tool install basic-memory` /
+`uvx basic-memory mcp`, i.e. upstream's PyPI package, in the install line and all five client
+configs. `runner.py:47` was the worst of them — it stamped upstream's `main` SHA into every run
+manifest whenever `--bm-local-path` was unset, so the AGENTS.md baseline table is still suspect
+until re-measured. Same pass removed upstream branding (support@ addresses, docs.basicmemory.com
+links, README badges/star-history); upstream *issue* citations were kept as provenance and
+relabeled `basicmachines-co#NNN`.
+
+**The standing rule below still applies to new code** — nothing enforces it as a lint yet.
+
+*Original report:*
 **Found:** 2026-07-27, from `.forked/release-design.md` §5 and `.forked/hook-design.md`.
 
 **This is a standing rule, not just a bug list.** This fork is not published on PyPI, and its GitHub
