@@ -33,7 +33,18 @@ search.
 - Requires Python via [`uv`](https://docs.astral.sh/uv/)
 
 ```bash
-uv tool install basic-memory
+git clone https://github.com/noahkiss/basic-memory
+cd basic-memory
+uv tool install .
+```
+
+This fork is not published to any package index. `uv tool install basic-memory`
+installs the *upstream* project of the same name, not this one. To install
+without a checkout, name the repository directly — append `@<tag>` or `@<sha>`
+to pin, or omit it to track `main`:
+
+```bash
+uv tool install git+https://github.com/noahkiss/basic-memory
 ```
 
 [**Configure your client ↓**](#connect-your-ai-client)
@@ -92,8 +103,8 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
 {
   "mcpServers": {
     "basic-memory": {
-      "command": "uvx",
-      "args": ["basic-memory", "mcp"]
+      "command": "basic-memory",
+      "args": ["mcp"]
     }
   }
 }
@@ -107,7 +118,7 @@ Restart Claude Desktop. Notes live in `~/basic-memory` by default.
 ### Claude Code
 
 ```bash
-claude mcp add basic-memory -- uvx basic-memory mcp
+claude mcp add basic-memory -- basic-memory mcp
 ```
 
 For session-start briefings, see [Session briefings](#session-briefings).
@@ -118,8 +129,8 @@ Add to `~/.codex/config.toml`:
 
 ```toml
 [mcp_servers.basic-memory]
-command = "uvx"
-args = ["basic-memory", "mcp"]
+command = "basic-memory"
+args = ["mcp"]
 ```
 
 Codex can keep its default MCP approval behavior, or you can pre-approve eligible
@@ -127,8 +138,8 @@ Basic Memory tools by adding this server-scoped setting to the same table:
 
 ```toml
 [mcp_servers.basic-memory]
-command = "uvx"
-args = ["basic-memory", "mcp"]
+command = "basic-memory"
+args = ["mcp"]
 default_tools_approval_mode = "approve"
 ```
 
@@ -145,8 +156,8 @@ Add to `.cursor/mcp.json` (project) or `~/.cursor/mcp.json` (global):
 {
   "mcpServers": {
     "basic-memory": {
-      "command": "uvx",
-      "args": ["basic-memory", "mcp"]
+      "command": "basic-memory",
+      "args": ["mcp"]
     }
   }
 }
@@ -161,8 +172,8 @@ Add to your User Settings (JSON):
   "mcp": {
     "servers": {
       "basic-memory": {
-        "command": "uvx",
-        "args": ["basic-memory", "mcp"]
+        "command": "basic-memory",
+        "args": ["mcp"]
       }
     }
   }
