@@ -52,7 +52,6 @@ def _delete_note(
     is_directory: bool = False,
     project: str | None = None,
     project_id: str | None = None,
-    local: bool = False,
 ) -> tuple[int, dict[str, Any], str]:
     args = ["tool", "delete-note", identifier]
     if is_directory:
@@ -61,8 +60,6 @@ def _delete_note(
         args.extend(["--project", project])
     if project_id is not None:
         args.extend(["--project-id", project_id])
-    if local:
-        args.append("--local")
 
     result = runner.invoke(cli_app, args)
     payload = json.loads(result.stdout) if result.stdout else {}
@@ -224,7 +221,7 @@ def test_delete_directory_removes_nested_files_database_records_and_search_resul
     note_paths = [_project_file(test_project, note["file_path"]) for note in notes]
     assert all(path.exists() for path in note_paths)
 
-    exit_code, payload, output = _delete_note("delete-cli-dir", is_directory=True, local=True)
+    exit_code, payload, output = _delete_note("delete-cli-dir", is_directory=True)
 
     assert exit_code == 0, output
     assert payload["deleted"] is True
@@ -262,16 +259,3 @@ def test_delete_directory_without_flag_does_not_delete_child_notes(
     still_there = _read_note(note["permalink"])
     assert still_there["title"] == "CLI Delete Directory Safety"
     assert _project_file(test_project, note["file_path"]).exists()
-
-
-def test_delete_note_rejects_conflicting_routing_flags(
-    app, app_config, test_project, config_manager
-) -> None:
-    """delete-note validates the same --local/--cloud conflict as other tool commands."""
-    result = runner.invoke(
-        cli_app,
-        ["tool", "delete-note", "delete-cli/missing-note", "--local", "--cloud"],
-    )
-
-    assert result.exit_code != 0
-    assert "Cannot specify both --local and --cloud" in result.output

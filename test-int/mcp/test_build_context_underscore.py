@@ -1,5 +1,7 @@
 """Integration test for build_context with underscore in memory:// URLs."""
 
+import json
+
 import pytest
 from fastmcp import Client
 
@@ -99,8 +101,9 @@ async def test_build_context_underscore_normalization(mcp_server, app, test_proj
         assert "related-to" in response_text_related.lower()
 
         # Test 4: Test exact path (non-wildcard) with underscore
-        # Previously this returned empty (no exact permalink match). Now LinkResolver
-        # resolves to the child entity, so we get its relations back.
+        # This URI matches no permalink exactly. A miss must stay a miss: resolving it by
+        # relaxing to a full-text search would return an arbitrary, confidently-wrong note
+        # for any typo'd or stale memory:// URI (GAPS T10), so exact paths resolve strictly.
         result_exact = await client.call_tool(
             "build_context",
             {
@@ -109,10 +112,10 @@ async def test_build_context_underscore_normalization(mcp_server, app, test_proj
             },
         )
 
-        response_text_exact = result_exact.content[0].text  # pyright: ignore
-        assert '"results"' in response_text_exact
-        # LinkResolver resolves to child-with-underscore entity; its relation_type is "part_of"
-        assert "part_of" in response_text_exact.lower()
+        payload_exact = json.loads(result_exact.content[0].text)  # pyright: ignore
+        assert payload_exact["results"] == []
+        assert payload_exact["metadata"]["total_results"] == 0
+        assert payload_exact["metadata"]["total_relations"] == 0
 
 
 @pytest.mark.asyncio

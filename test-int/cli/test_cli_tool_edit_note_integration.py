@@ -303,8 +303,8 @@ def test_edit_note_backend_failure_returns_nonzero(app, app_config, test_project
     assert result.exit_code != 0
 
 
-def test_edit_note_project_and_routing_flag_parity(app, app_config, test_project, config_manager):
-    """edit-note supports --project/--local and validates --local/--cloud conflict."""
+def test_edit_note_project_flag(app, app_config, test_project, config_manager):
+    """edit-note applies the edit to the project named by --project."""
     note = _write_note(
         "Edit Project Flag Note",
         "edit-tests",
@@ -324,7 +324,6 @@ def test_edit_note_project_and_routing_flag_parity(app, app_config, test_project
             "\nPROJECT_UPDATE_MARKER",
             "--project",
             test_project.name,
-            "--local",
         ],
     )
     assert success.exit_code == 0, success.output
@@ -332,20 +331,3 @@ def test_edit_note_project_and_routing_flag_parity(app, app_config, test_project
 
     updated = _read_note(note["permalink"], project=test_project.name)
     assert "PROJECT_UPDATE_MARKER" in updated["content"]
-
-    conflict = runner.invoke(
-        cli_app,
-        [
-            "tool",
-            "edit-note",
-            note["permalink"],
-            "--operation",
-            "append",
-            "--content",
-            "ignored",
-            "--local",
-            "--cloud",
-        ],
-    )
-    assert conflict.exit_code != 0
-    assert "Cannot specify both --local and --cloud" in conflict.output

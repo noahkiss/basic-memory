@@ -54,7 +54,6 @@ def test_search_notes_query_plus_meta_filter(app, app_config, test_project, conf
             "MetaFilterToken",
             "--meta",
             "status=active",
-            "--local",
             "--page-size",
             "20",
         ],

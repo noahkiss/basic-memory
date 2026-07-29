@@ -48,7 +48,6 @@ def test_write_note_type_flag_round_trip(app, app_config, test_project, config_m
             "CliTypeToken",
             "--type",
             "guide",
-            "--local",
             "--page-size",
             "20",
         ],

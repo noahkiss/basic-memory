@@ -147,7 +147,7 @@ def test_cli_search_notes_page_size_zero(app, app_config, test_project, config_m
 
     res = runner.invoke(
         cli_app,
-        ["tool", "search-notes", "clipagination", "--local", "--page-size", "0"],
+        ["tool", "search-notes", "clipagination", "--page-size", "0"],
     )
     # The fix raises ValueError, which the CLI maps to a non-zero exit with a clear
     # message — the faithful "no misleading pagination signal" outcome at the CLI.

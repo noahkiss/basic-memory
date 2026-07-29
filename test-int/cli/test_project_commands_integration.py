@@ -141,7 +141,7 @@ def test_remove_main_project(app, app_config, config_manager):
         # Why: substring checks against command output can mistake path text for project names.
         # Outcome: use config state for setup decisions, then validate behavior via CLI invocation.
         if "main" not in config_manager.config.projects:
-            result = runner.invoke(cli_app, ["project", "add", "main", str(main_path), "--local"])
+            result = runner.invoke(cli_app, ["project", "add", "main", str(main_path)])
             print(result.stdout)
             assert result.exit_code == 0
 
@@ -149,24 +149,22 @@ def test_remove_main_project(app, app_config, config_manager):
         assert "main" in config_manager.config.projects
 
         # Add a second project
-        result = runner.invoke(
-            cli_app, ["project", "add", "new_default", str(new_default_path), "--local"]
-        )
+        result = runner.invoke(cli_app, ["project", "add", "new_default", str(new_default_path)])
         assert result.exit_code == 0
 
         # Set new_default as default (if needed)
-        result = runner.invoke(cli_app, ["project", "default", "new_default", "--local"])
+        result = runner.invoke(cli_app, ["project", "default", "new_default"])
         assert result.exit_code == 0
 
         # Remove main
-        result = runner.invoke(cli_app, ["project", "remove", "main", "--local"])
+        result = runner.invoke(cli_app, ["project", "remove", "main"])
         if result.exit_code != 0:
             print(f"STDOUT: {result.stdout}")
             print(f"STDERR: {result.stderr}")
         assert result.exit_code == 0
 
         # Confirm only new_default exists and main does not
-        result = runner.invoke(cli_app, ["project", "list", "--local"], env=WIDE_TERMINAL_ENV)
+        result = runner.invoke(cli_app, ["project", "list"], env=WIDE_TERMINAL_ENV)
         assert result.exit_code == 0
         config_after_list = config_manager.load_config()
         assert "main" not in config_after_list.projects

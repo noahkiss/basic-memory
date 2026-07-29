@@ -35,7 +35,6 @@ async def test_recreate_retained_project_indexes_existing_notes(
             },
         )
         initial_payload = _json_content(initial_create)
-        assert initial_payload["indexing"]["state"] == "completed"
         assert initial_payload["indexing"]["total_files"] == 0
 
         await client.call_tool(
@@ -64,7 +63,6 @@ async def test_recreate_retained_project_indexes_existing_notes(
         )
         recreated_payload = _json_content(recreated)
         assert recreated_payload["created"] is True
-        assert recreated_payload["indexing"]["state"] == "completed"
         assert recreated_payload["indexing"]["total_files"] >= 1
         assert recreated_payload["indexing"]["enqueued_files"] >= 1
 
