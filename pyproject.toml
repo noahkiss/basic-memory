@@ -162,12 +162,7 @@ exclude_lines = [
 
 # Exclude specific modules that are difficult to test comprehensively
 omit = [
-    "*/external_auth_provider.py",  # External HTTP calls to OAuth providers
-    "*/supabase_auth_provider.py",  # External HTTP calls to Supabase APIs
     "*/watch_service.py",           # File system watching - complex integration testing
-    "*/background_sync.py",         # Background processes
     "*/cli/**",                    # CLI is an interactive wrapper; core logic is covered via API/MCP/service tests
     "*/services/initialization.py", # Startup orchestration + background tasks (watchers); exercised indirectly in entrypoints
-    "*/sync/sync_service.py",      # Heavy filesystem/db integration; covered by integration suite, not enforced in unit coverage
-    "*/services/migration_service.py", # Complex migration scenarios
 ]
