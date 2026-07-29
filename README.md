@@ -49,26 +49,6 @@ uv tool install git+https://github.com/noahkiss/basic-memory
 
 [**Configure your client ↓**](#connect-your-ai-client)
 
-## What people are saying
-
-> Basic Memory changed my whole relationship with LLMs. I switched from GPT
-> and Gemini to exclusively Claude and Claude Code because of this
-> integration and am completely revamping all our company's processes around
-> a Basic Memory workflow.
->
-> — **Alex**, TrainerDay
-
-> Basic Memory is the missing 'wow' factor in AI chatbots. Now I can't
-> imagine Claude or Claude Code without it.
->
-> — **Caleb**, Caleb Picker Consulting
-
-> I don't code without Basic Memory anymore. It's such a time saver to be
-> able to refer to projects I don't currently have active and keep a running
-> log of all my learnings and ProTips.
->
-> — **@groksrc**, Developer
-
 ## Works with the tools you already use
 
 | Client | Transport | Notes |
@@ -201,23 +181,6 @@ Try a prompt:
 "Find information about JWT auth in my notes."
 "What have I been working on this week?"
 ```
-
-## What's New
-
-- **Semantic vector search.** Find notes by meaning, not just keywords.
-  Hybrid full-text + vector ranking with FastEmbed embeddings.
-- **Schema system.** Infer, validate, and diff the structure of your
-  knowledge base with `schema_infer`, `schema_validate`, `schema_diff`.
-- **Smarter editing.** `edit_note` append/prepend auto-creates notes when
-  missing; `write_note` guards against accidental overwrites.
-- **Richer search results.** Matched chunk text is included so the LLM gets
-  context, not just hits.
-- **FastMCP 3.0 + tool annotations.** Every tool ships with MCP behavior
-  hints (`readOnlyHint`, `destructiveHint`, `idempotentHint`,
-  `openWorldHint`) so agents can discover capabilities progressively at
-  runtime instead of guessing or burning tokens.
-- **CLI overhaul.** `--json` output for scripting and an htop-inspired
-  project dashboard.
 
 ## Why Basic Memory
 
@@ -402,25 +365,26 @@ tail -f ~/.basic-memory/basic-memory.log
 SQLite is the only database backend; the test suite needs no external services.
 
 ```bash
-just install            # Install with dev dependencies
-just test               # All tests
+just install            # uv sync (dev dependencies included)
+just test               # Unit + integration (semantic and benchmark excluded)
 just test-unit-sqlite   # Unit tests
-just test-int-sqlite    # Integration tests
+just test-int-sqlite    # Integration tests (semantic and benchmark excluded)
 just fast-check         # fix/format/typecheck (no tests)
 just fast-test          # Impacted tests (pytest-testmon)
 just gate               # lint + typecheck + unit tests (pre-push gate)
 just doctor             # File <-> DB consistency check (temp config)
-just lint
+just lint               # ruff check --fix
 just typecheck          # ty (primary)
 just typecheck-pyright  # Pyright (supplemental)
-just format
-just check              # All static checks
+just format             # ruff format
+just check              # lint + format + typecheck
 just migration "msg"    # New Alembic migration
 just release v0.23.0    # Cut a release tag (publishes nothing)
 ```
 
-Tests use pytest markers: `windows`, `benchmark`, `smoke`. See
-[justfile](justfile) for the full list.
+Tests use pytest markers: `benchmark`, `slow`, `windows`, `smoke`, `semantic`,
+`live` — declared in [pyproject.toml](pyproject.toml). `just test-benchmark`,
+`just test-semantic`, and `just test-windows` run the excluded sets.
 
 ## License
 

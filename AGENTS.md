@@ -134,7 +134,7 @@ See the [README.md](README.md) file for a project overview.
 - Lint: `just lint` · format: `just format` · typecheck: `just typecheck` (or `just typecheck-pyright`)
 - All static checks: `just check` · DB migration: `just migration "message"`
 - Coverage HTML: `just coverage` · MCP smoke: `just test-smoke` · MCP Inspector: `just run-inspector`
-- Benchmarks: `uv run pytest test-int/test_sync_performance_benchmark.py -v -m "benchmark and not slow"`
+- Benchmarks: `uv run pytest test-int/test_search_performance_benchmark.py -v -m "benchmark and not slow"`
 
 Python 3.12+ required (type parameter syntax and `type` aliases).
 
@@ -273,7 +273,7 @@ Flow: MCP Tool → Typed Client → HTTP API → Router → Service → Reposito
 - Unit tests (`tests/`) use mocks when necessary; integration tests (`test-int/`) use real implementations
 - SQLite is the only database backend; tests need no external services
 - Each test runs in a standalone environment with isolated database and tmp_path directory
-- Performance benchmarks are in `test-int/test_sync_performance_benchmark.py`
+- Performance benchmarks are in `test-int/test_search_performance_benchmark.py`
 - Use pytest markers: `@pytest.mark.benchmark` for benchmarks, `@pytest.mark.slow` for slow tests
 - **Coverage must stay at 100%**: Write tests for new code. Only use `# pragma: no cover` when tests would require excessive mocking (e.g., TYPE_CHECKING blocks, error handlers that need failure injection, runtime-mode-dependent code paths)
 
