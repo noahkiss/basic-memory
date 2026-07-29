@@ -66,8 +66,10 @@ nothing reads. The store path must derive from `resolve_data_dir()` so it honour
 `BASIC_MEMORY_CONFIG_DIR` like `config.json` and `memory.db` do — never hardcode it.
 
 **Naming:** `tend` is a **codename for the design, not a command.** There is no `tend` binary and no
-`bm tend` namespace — the verbs ship flat under `bm` (`bm gc`, `bm check`, `bm ls`, `bm new`,
-`bm path`, `bm mine`, `bm done`, `bm show`, `bm history`, `bm undo`, `bm mark`).
+`bm tend` namespace — the verbs ship flat under `bm` (`bm gc`, `bm ls`, `bm new`, `bm path`,
+`bm mine`, `bm done`, `bm show`, `bm history`, `bm undo`, `bm mark`). **There is no `bm check`** —
+the schema and integrity checks land inside the existing `bm doctor` (see `GAPS.md` W5), because a
+second checking command would immediately be the one nobody runs.
 
 ## Measured baseline
 
@@ -102,6 +104,71 @@ Embedding model `qdrant/bge-small-en-v1.5-onnx-q` (64 MB) caches to the shared
 `$XDG_CACHE_HOME/fastembed` in this fork, not inside `BASIC_MEMORY_CONFIG_DIR` as upstream had it —
 it's an immutable artifact keyed by model name and doesn't belong inside that isolation boundary.
 See `default_fastembed_cache_dir()` in `src/basic_memory/config_models.py`.
+
+## How we work here
+
+Every rule below was bought with a wasted pass, a wrong diagnosis, or a red suite that blinded the
+passes after it. They are cheap to follow and expensive to re-learn, which is why they live in the
+repo rather than in a local scratch file that gets pruned.
+
+### Verification — before every commit, not at the end
+
+1. **`just fast-check`** — exit 0.
+2. **`just test-unit-sqlite`** — the *full* suite, not testmon. **Explain the count as arithmetic:**
+   previous baseline ± the `def test_` lines this diff adds or removes. A green suite whose count
+   you cannot explain is not a pass — it is a suite that may have silently stopped collecting.
+3. **`just test-int-sqlite`** — the full suite. A green unit suite is not evidence for a deletion:
+   testmon cannot select a test whose subject no longer exists, so it reports success by omission.
+4. **`just doctor`** — for anything touching the file ↔ DB loop.
+
+**Never pipe a test run through `tail`.** It buffers, tracebacks are lost, and the pipeline's exit
+status is `tail`'s — so it reports 0 on a red suite. Use `tee`.
+
+**Never ship on top of a known-red suite.** An inherited red suite blinds every pass after it. That
+cost this fork four passes and one wrong diagnosis (see `GAPS.md` T17).
+
+**One commit per closed item**, not one at the end. The message states what changed, why, and any
+judgment call taken. No Claude co-author line, no generated-with footer.
+
+### Delegating to sub-agents
+
+- **Sub-agents edit only.** No `git`, no `just`, no `pytest` (`git grep` is fine). Verification runs
+  once, centrally, after every agent has reported. Concurrent runs have corrupted results here.
+- **Never write a brief that names a branch an agent might check out.** Say "stay on the branch you
+  are on." One stopped agent resumed after its own compaction and staged a 30k-line unverified
+  change onto `main`.
+- **Stopping an agent is not reliably terminal.** After stopping one, re-verify branch pointers and
+  the state of `origin`.
+- **Agent self-reports are leads, not records.** The diff and the captured command output are the
+  record.
+
+### Evidence rules
+
+- **A claim without a reproduction is not a finding.** Paste the command and its verbatim output.
+  Several figures in this repo's own docs turned out to be inherited and never re-checked.
+- **Positive controls are mandatory.** Before believing any "no hits" result, ask what *would* have
+  produced a hit and run that too. A negative result over a corpus that cannot produce a positive
+  proves nothing. This file has been bitten by that three times.
+- **An import-grep cannot prove a plugin is dead.** Plugins load through entry points (`pytest11`,
+  setuptools console scripts, SQLAlchemy dialects, codecs) and never appear in an `import`. This
+  nearly shipped 55 red tests — see `GAPS.md` T19.
+
+### Deletion passes
+
+- **Grep the test tree for any surface you delete, not just `src/`.** One `git grep` would have
+  caught eight of T17's ten failures.
+- **Before deleting a `with span(...)` or any wrapper block, check whether anything computed inside
+  it escapes** — a returned field, a mutated accumulator, a value read after the block. See W15.
+- **A gap entry that says "a later pass deletes that file anyway" closes the instance, not the
+  class.** Re-grep after the scheduled deletion actually lands.
+- **Only restore what the current session itself deleted.** Anything else that is absent was
+  deliberately removed earlier. Reading history with `git show <sha>:<path>` is always fine.
+- **Inventory files are maps, never diffs.** One was wrong in both directions.
+
+### Publishing
+
+The repo is public. No local paths, no personal material, nothing from `.forked/` committed. A bare
+`gh repo view` in this directory reports **upstream** — always name the fork explicitly.
 
 ---
 
@@ -275,7 +342,12 @@ Flow: MCP Tool → Typed Client → HTTP API → Router → Service → Reposito
 - Each test runs in a standalone environment with isolated database and tmp_path directory
 - Performance benchmarks are in `test-int/test_search_performance_benchmark.py`
 - Use pytest markers: `@pytest.mark.benchmark` for benchmarks, `@pytest.mark.slow` for slow tests
-- **Coverage must stay at 100%**: Write tests for new code. Only use `# pragma: no cover` when tests would require excessive mocking (e.g., TYPE_CHECKING blocks, error handlers that need failure injection, runtime-mode-dependent code paths)
+- **Coverage is 96%, measured, and must not go down**: `just coverage` reported `19463` statements
+  with `866` missed on 2026-07-29. Upstream's rule here read "must stay at 100%", which has been
+  false in this tree for an unknown length of time and is enforced by nothing — there is no
+  `fail_under` and no CI. Write tests for new code and leave the number no worse than you found it.
+  Use `# pragma: no cover` only where a test would demand excessive mocking (TYPE_CHECKING blocks,
+  error handlers needing failure injection, runtime-mode-dependent paths). See `GAPS.md` T20.
 
 ### Async Client Pattern
 
