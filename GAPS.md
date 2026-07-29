@@ -47,6 +47,38 @@ an immutable artifact keyed by model name and does not belong inside the isolati
 already at the legacy path keeps using it rather than silently re-downloading. 551 tests pass.
 See `default_fastembed_cache_dir()` in `src/basic_memory/config_models.py`.
 
+### S2 — `.claude/commands/` held two upstream-only prompts
+**Done 2026-07-29.** Deleted `.claude/commands/spec.md` and `.claude/commands/test-live.md`; the
+directory is now empty and gone. Judgment call taken under the campaign's decide-and-flag rule, not
+a user decision.
+
+- `spec.md` (51 lines) drove a spec-driven process whose entire state lives in an upstream Basic
+  Memory project named `specs`, keyed on notes `SPEC-1` and `SPEC-2`. This fork has no such project
+  and does not run that process — `GAPS.md` plus `.forked/campaign.md` are its planning surface. The
+  command could only ever have failed here, silently, by searching an absent project.
+- `test-live.md` (614 lines) was a manual QA ritual over the MCP tool surface, run by hand against a
+  live install. Nothing executes it, nothing verifies it, and no test would notice it going stale —
+  the same failure class as the stale baseline in **T18** and the stale command references in
+  **W16**. `just doctor` and `just test-smoke` cover the same ground automatically.
+
+Neither file was referenced anywhere else in the tree (`git grep` for both names: no hits outside
+the files themselves). Recoverable at any time with `git show 117308fb:.claude/commands/spec.md`.
+
+### S3 — five of the eight coverage `omit` patterns named modules that no longer exist
+**Done 2026-07-29.** `[tool.coverage.report].omit` in `pyproject.toml` still excluded
+`external_auth_provider.py`, `supabase_auth_provider.py`, `background_sync.py`,
+`sync/sync_service.py`, and `services/migration_service.py`. None of those files are in `src/`
+any more — they went with the cloud strip (W12) and the Postgres strip (W13), which removed only
+the `*/db.py` line from this list (`git show 79e0dad9 -- pyproject.toml`) and left the rest.
+
+A dead omit is worse than no omit: it reads as a deliberate, justified exclusion, so the next
+person to audit coverage trusts it and does not check whether the file exists. Pruned to the three
+that are real — `*/watch_service.py`, `*/cli/**`, `*/services/initialization.py`.
+
+**This changed no number.** Removing an omit for a path that matches nothing cannot alter the
+report, so no re-measurement is needed to make that claim. What the run it prompted *did* find is
+recorded as **T20**.
+
 ---
 
 ## RESOLVED — investigated, no code defect
@@ -581,7 +613,7 @@ wrong by an order of magnitude regardless — see T18. Table restated and partly
 *Original fix proposal:* repoint every executable default at this fork (or at the local working
 tree), and treat the rule above as a lint.
 
-### T14 — `skills-latest` is a stale moving tag that outranks every version tag
+### T14 — `skills-latest` is a stale moving tag that outranks every version tag — **RESOLVED 2026-07-29**
 **Found:** 2026-07-27, by `release-design` while building `just release-preview`.
 
 `skills-latest` was a moving tag maintained by `.github/workflows/publish-skills.yml`, which was
@@ -606,8 +638,21 @@ why the installed build still reads `0.22.2.dev118+232f2c2f` correctly. What it 
 around it with `--match 'v[0-9]*'`; the source is unfixed, so the next tool to ask git "what version
 is this?" hits it again.
 
-**Fix:** delete the tag locally and on the remote. **Not done deliberately** — deleting a remote tag
-changes published state, and `noahkiss/basic-memory` is public. Needs the user's explicit go-ahead.
+**Fix:** delete the tag locally and on the remote. Done 2026-07-29 with the user's explicit
+go-ahead, since deleting a remote tag changes published state and `noahkiss/basic-memory` is public.
+No code change — this was a repository-state defect, not a code defect, hence RESOLVED not SHIPPED:
+
+```
+$ git tag -d skills-latest && git push origin :refs/tags/skills-latest
+Deleted tag 'skills-latest' (was 796607fd)
+To https://github.com/noahkiss/basic-memory.git
+ - [deleted]           skills-latest
+$ git describe --tags
+v0.22.1-165-g117308fb
+```
+
+A bare `git describe` now reports a version tag. `just release-preview`'s `--match 'v[0-9]*'`
+workaround is left in place: it is correct independent of this tag and costs nothing.
 
 ### T15 — auto-update can silently replace this fork with upstream from PyPI — **SHIPPED `0b755f50`**
 **Done 2026-07-27.** Deleted `cli/auto_update.py`, `cli/commands/update.py`, both test files, the
@@ -876,6 +921,50 @@ reason that names asyncio and never names the dependency you removed.
 **This is also the case for running the suite before committing, not after.** The unit run is
 ~6 minutes; the pass would otherwise have been pushed with 55 red tests, which is exactly the T17
 shape.
+
+---
+
+### T20 — `AGENTS.md` requires 100% coverage; the tree is at 96% and nothing enforces it
+**Found:** 2026-07-29, running the campaign's Phase 0 `just coverage` item.
+
+`AGENTS.md` states, as a rule: *"**Coverage must stay at 100%**: Write tests for new code. Only use
+`# pragma: no cover` when tests would require excessive mocking."* The measured value:
+
+```
+$ just coverage
+========== 3685 passed, 14 skipped, 6 warnings in 1950.55s (0:32:30) ===========
+...
+TOTAL                                       19463    866    96%
+```
+
+**866 uncovered statements across 110 modules**, after the three surviving omit patterns are
+applied. This is not a regression from the dead omits pruned in **S3** — those matched no files, so
+they cannot have changed the number — and it is not concentrated anywhere a single fix would reach.
+The worst offenders are spread across every layer: `mcp/tools/ui_sdk.py` 47%,
+`mcp/resources/discovery.py` 0%, `services/note_content_reads.py` 64%, `api/template_loader.py` 68%,
+`services/directory_deletes.py` 71%, `index/watch_coordinator.py` 78%, `mcp/tools/recent_activity.py`
+81%, `mcp/tools/search.py` 82%, `schemas/request.py` 82%.
+
+**Why it matters:** nothing in the repo enforces the rule. There is no `fail_under` in
+`[tool.coverage.report]`, no `--cov-fail-under` in any recipe, and no CI (`just gate` runs lint +
+typecheck + unit tests only). So the rule is advisory text that has been false for an unknown
+length of time, and an agent reading `AGENTS.md` will either believe a false invariant about this
+tree or treat the whole document as unreliable. The second is the expensive outcome — it is the same
+failure mode as **T18**'s stale baseline, and the reason W16 existed.
+
+**Judgment call taken 2026-07-29** under the campaign's decide-and-flag rule, since the campaign
+offered only "write the missing tests or re-add the omit with a stated reason" and neither fits an
+866-statement, tree-wide shortfall: **restate the rule in `AGENTS.md` to match reality** rather than
+either write ~866 statements' worth of tests inside a Phase 0 item or silence the gap with a fresh
+omit. The reversible half is that the honest number is now written down and the ratchet is
+described; raising the floor later is a config line plus tests, and costs nothing that was not
+already owed.
+
+**Fix, when it is scheduled:** set `fail_under` to the current measured floor so coverage can only
+go up, then raise it as the verb work adds tested code. Do **not** set it to 100 — that turns the
+whole suite red on the next commit and violates "never ship on top of a red suite." The floor is a
+ratchet, not an aspiration. Deferred deliberately: it is a mechanical change with no dependents, and
+it is worth setting once, after **T18**'s fast-path work settles which modules survive.
 
 ---
 
@@ -1185,6 +1274,13 @@ No alembic revision file was deleted — whole-body-Postgres revisions are no-op
 `down_revision` chain and stamped `alembic_version` rows stay valid. `nest-asyncio` survives
 (applied outside any backend gate); `litellm` + the remaining dependency prune shipped later in
 `6f8767a3` (W17).
+
+**Residue swept 2026-07-29.** Two test fakes still carried a `get_bind()` returning a fabricated
+dialect name — `FakeProjectIndexSession` in `tests/indexing/test_project_index_maintenance.py` (plus
+its `dialect_name` field) and `FakeExecuteSession` in `tests/indexing/test_directory_delete_runner.py`.
+Nothing in `src/` calls `session.get_bind()` any more; the only remaining hits are alembic's
+unrelated `op.get_bind()`. Both removed, along with the now-unused `SimpleNamespace` import in
+`test_directory_delete_runner.py`.
 
 **Scheduled deletion, decided 2026-07-27 (user).** Postgres is an alternative *index* backend, not
 an alternative format — files stay authoritative and the DB is disposable. It exists for the hosted
