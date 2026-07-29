@@ -566,9 +566,20 @@ point" table — if any of those numbers came from this harness with the default
 describe upstream's `main`, not this tree. Worth re-measuring before anything else is designed
 around them.
 
-**Fix:** repoint every executable default at this fork (or at the local working tree), and treat
-the rule above as a lint. `benchmarks/` is also a plausible strip-policy deletion candidate, which
-would close five of the six at once.
+**RESOLVED 2026-07-28 by deletion, in pass 4.** All six live sites were inside `benchmarks/`, which
+is gone. `git grep basicmachines-co/basic-memory` now returns only prose in `GAPS.md` and
+`AGENTS.md` (the fork-point provenance SHA), no executable default. The lint proposed below was
+never written and is no longer needed for this instance — but the *rule* stands for any future code
+that resolves a dependency by name: a bare `basic-memory` reference resolves to upstream.
+
+**Doubt cast on the baseline table: also settled, and worse than suspected.** This entry warned the
+`AGENTS.md` table might describe upstream's tree. It turns out `benchmarks/` is a retrieval-quality
+suite (Recall@5, MRR, LLM-as-judge, mem0/zep providers) and **never produced those numbers at all**,
+so the table's provenance was simply unknown rather than upstream's. Re-measuring found one row
+wrong by an order of magnitude regardless — see T18. Table restated and partly retired in pass 4.
+
+*Original fix proposal:* repoint every executable default at this fork (or at the local working
+tree), and treat the rule above as a lint.
 
 ### T14 — `skills-latest` is a stale moving tag that outranks every version tag
 **Found:** 2026-07-27, by `release-design` while building `just release-preview`.
@@ -645,7 +656,9 @@ Decided with the user 2026-07-27; bundled with the W12/W13/W14 deletion passes.
 
 ---
 
-### T16 — `runtime-core-fast-check-no-openai` is a dead byte-identical duplicate recipe
+### T16 — `runtime-core-fast-check-no-openai` is a dead byte-identical duplicate recipe — **SHIPPED `dd302010`**
+**Done 2026-07-28** in pass 4, the pass that already had the justfile open. Deleted; `git grep`
+confirmed zero callers outside this entry. `fast-check-no-openai` at line 77 is unaffected.
 **Found:** 2026-07-27, while stripping the Docker surface. **Severity: cosmetic.**
 
 `justfile:299` and `justfile:77` have identical bodies:
