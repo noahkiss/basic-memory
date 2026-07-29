@@ -170,7 +170,8 @@ class LocalSearchReindexScheduler:
 # pass already pending or in flight. A burst of writes collapses to a single
 # offline pass instead of one whole-project relation scan per write — running a
 # scan per write made the write path heavier and piled up under concurrency
-# (see benchmarks/docs/write-load-benchmark.md).
+# (measured under write load; the benchmark harness that produced the numbers
+# has since been removed).
 _pending_relation_resolution: set[int] = set()
 # Project ids whose forward references arrived while a pass was already scanning.
 # The scan resolves whatever is unresolved when it reads the table, so a write that

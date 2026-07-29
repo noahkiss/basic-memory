@@ -59,7 +59,8 @@ class _MaterializationWorkerPool:
     fire-and-forget `create_task` let every deferred file write + index run at
     once, and at high write load they contended en masse for the single SQLite
     writer and the event loop, collapsing the tail (p99) and throughput
-    (benchmarks/docs/write-load-benchmark.md). With N workers only N
+    (measured under write load; the benchmark harness that produced the
+    numbers has since been removed). With N workers only N
     materializations are in flight; the rest wait in the queues and drain over
     time, so the accept path stays light AND the writer isn't thrashed.
 
@@ -456,8 +457,8 @@ class LocalNoteContentMaterializationProvider:
         persisted note_content (the write/read-through cache that serves reads);
         here we only schedule writing the markdown file (the source of truth) and
         indexing it. Writing + indexing the file is the heavy part of a write, so
-        doing it inline reintroduces a ~3x write-load regression
-        (benchmarks/docs/write-load-benchmark.md).
+        doing it inline reintroduces a ~3x write-load regression (measured;
+        the benchmark harness that produced the number has since been removed).
 
         PARITY INVARIANT: production must defer. Test mode runs inline ONLY so
         tests can assert file/search state synchronously — never make the

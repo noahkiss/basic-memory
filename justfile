@@ -296,9 +296,6 @@ pr-1002-feedback-test:
         tests/indexing/test_accepted_note_write_runner.py \
         tests/indexing/test_directory_delete_runner.py
 
-runtime-core-fast-check-no-openai:
-    OPENAI_API_KEY= just fast-check
-
 runtime-refactor-contract-test:
     BASIC_MEMORY_ENV=test uv run pytest -p pytest_mock -q --no-cov \
         tests/indexing/test_accepted_note_write_runner.py \

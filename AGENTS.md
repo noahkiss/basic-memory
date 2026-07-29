@@ -69,23 +69,34 @@ nothing reads. The store path must derive from `resolve_data_dir()` so it honour
 `bm tend` namespace — the verbs ship flat under `bm` (`bm gc`, `bm check`, `bm ls`, `bm new`,
 `bm path`, `bm mine`, `bm done`, `bm show`, `bm history`, `bm undo`, `bm mark`).
 
-## Measured baseline at the fork point
+## Measured baseline
 
-Linux/x86-64, Python 3.13, semantic search enabled, 67-file / 888 KB corpus. Re-measure if the tree
-moves substantially.
+Linux/x86-64, Python 3.13. Measured 2026-07-28 on this tree, **not** at the fork point — the
+original table's numbers were unreproducible and one of them was wrong by an order of magnitude
+(see `GAPS.md` T18). Re-measure if the tree moves substantially.
 
-| Path | Wall time | Resident memory |
+| Path | User CPU time | Resident memory |
 |---|---|---|
-| MCP server, idle → embeddings loaded | 40–80 ms per query | 184 MB → ~477 MB |
-| CLI `bm tool search-notes` | 4.3–4.8 s | ~447 MB |
-| CLI native cmd (`project list`, `config get`) | ~0.55 s | ~73 MB |
-| CLI `--version` floor | 0.33 s | 59 MB |
-| Full reindex + embed, 67 files | 81 s | 762 MB peak |
+| CLI native cmd (`project list`) | 4.7–5.7 s | 231 MB |
+| CLI `--version` floor | 0.43–0.48 s | 65 MB |
 
-The decisive structural fact: **commands that avoid importing `basic_memory.mcp.tools` /
-`basic_memory.api.app` cost ~0.55 s; commands that touch them cost ~4 s.** Those two modules are
-~2.1 s and ~2.2 s of import time each. **Any `tend` subcommand that needs to be fast must talk to
-the repository/service layer directly and must not reach through the MCP tool layer.**
+Figures are **user CPU time**, not wall clock: the host was under load when measured, and wall
+clock varied 2x across identical runs while CPU time and RSS held steady. Treat them as a lower
+bound on wall time.
+
+The rows the fork-point table carried for the MCP server, `bm tool search-notes`, and a full
+reindex have been **retired rather than restated**. They were tied to a specific 67-file / 888 KB
+corpus that no longer exists, so nothing here could reproduce them, and leaving unreproducible
+numbers standing is what produced T18.
+
+The structural rule still holds, and is the part that actually governs design: **any fast `bm`
+subcommand must talk to the repository/service layer directly and must not reach through the MCP
+tool layer.** `basic_memory.mcp.tools` and `basic_memory.api.app` are each seconds of import time.
+
+**But do not copy the existing native commands — they already violate this.** `project list` imports
+both, lazily, inside the command body, which is why the module-level import graph looks clean and
+why it costs ~5 CPU-seconds instead of the ~0.55 s the old table claimed. See `GAPS.md` T18 before
+using any current command as a model for a fast one.
 
 Embedding model `qdrant/bge-small-en-v1.5-onnx-q` (64 MB) caches to the shared
 `$XDG_CACHE_HOME/fastembed` in this fork, not inside `BASIC_MEMORY_CONFIG_DIR` as upstream had it —
