@@ -1238,6 +1238,28 @@ than only against mocks.
 
 ## OPEN — observed, not diagnosed
 
+### O-picoschema — `picoschema/` is un-stripped upstream surface, now with no design doc
+**Found 2026-07-28** in pass 5, while checking the handoff's precondition for deleting
+`docs/specs/SPEC-SCHEMA*.md`. That precondition was "check `.forked/schema.md` supersedes them" —
+**it does not.** `.forked/schema.md` is this fork's *record-vocabulary* proposal (the closed
+vocabulary of W3); `SPEC-SCHEMA` is upstream's *Picoschema* frontmatter-validation design, a
+different subject entirely. The two were conflated by name.
+
+`src/basic_memory/picoschema/` is live: `parser.py`, `resolver.py`, `validator.py`, `inference.py`,
+`diff.py`, plus 6 test files. The specs were deleted anyway, per the seven-keeper criterion, so that
+subsystem now has code and tests but no design documentation.
+
+**The real question this raises is not the doc, it is the code.** Picoschema validates notes against
+Picoschema-syntax frontmatter. This fork is building a *closed record vocabulary* (W3) enforced in
+the write path. Those are competing designs for the same concern, and nothing has decided whether
+picoschema stays. It is a plausible strip candidate on the same grounds as W12/W13 — but that is a
+**product decision, not a strip**, so it is recorded here rather than acted on.
+
+Decide before building W3: strip picoschema, or build W3 on top of it. If it is stripped, the
+deleted specs need no replacement. If it is kept, recover them from git — they are in history at
+`dd302010~1`.
+
+
 *(O1 was diagnosed and closed on 2026-07-26 — it was a measurement artifact, not a defect. See
 **R-O1** under RESOLVED, and the four requirements it produced under **W1**. The id is retired
 rather than reused, so O2–O6 keep their numbers.)*
