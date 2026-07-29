@@ -7,12 +7,12 @@ that our work depends on. It is the fork's to-do list and its rationale.**
 
 **When you find a gap, write it here in the same session you find it.** Do not leave it in a
 design doc, a STATUS file, or a session summary and intend to transfer it later — that transfer is
-the return visit that never happens. A gap recorded only in `~/develop/.design/` is invisible to
+the return visit that never happens. A gap recorded only in a local design doc is invisible to
 anyone working in this repo, which is where it has to get fixed.
 
 A gap belongs here if it is a thing **we would change in this codebase**. Design decisions about
-the record schema live in `~/develop/.design/status-system-schema-draft.md`; findings about the
-work *plan* live in `~/develop/.design/status-system-plan.md`. This file is only about the code.
+the record schema live in `.forked/schema.md`; findings about the work *plan* live in
+`.forked/plan.md`. Both are local and gitignored. This file is only about the code.
 
 Each entry gets: what breaks, the evidence (a command and its actual output, not a description of
 it), why it matters to us, and where it was found. Evidence matters because several figures in the
@@ -1161,10 +1161,10 @@ Related: **T5** covers the user-facing half of the same area (the CLI has no `--
 **2026-07-26.** A ten-reader sweep reconciled the following into this file. The gaps they contained
 are now recorded here, and **the next sweep does not need to redo them:**
 
-- The ten `~/develop/.design/status-system-*.md` docs — `prior-art`, `beans-deepdive`, `bm-spike`,
-  `decisions`, `local-history`, `handoff`, `migration-handoff`, `inventory`, `plan`, `schema-draft`,
-  and `transcript`.
-- `~/develop/STATUS.local.md`.
+- The ten design docs now under `.forked/` (they lived at `~/develop/.design/status-system-*.md`
+  when the sweep ran) — `prior-art`, `beans-deepdive`, `bm-spike`, `decisions`, `local-history`,
+  `handoff`, `migration-handoff`, `inventory`, `plan`, `schema-draft`, and `transcript`.
+- The old top-level session log.
 - `AGENTS.md` in this repo.
 
 Sweep these again only for material written *after* this date. Design decisions found in them about
@@ -1176,8 +1176,8 @@ the record schema or the work plan were deliberately left where they are — tho
 
 | | |
 |---|---|
-| Execution plan, phases, decisions | `~/develop/.design/status-system-plan.md` |
-| Record schema (types, fields, supersession) | `~/develop/.design/status-system-schema-draft.md` |
-| Settled/reversed decisions with turn cites | `~/develop/.design/status-system-decisions.md` |
-| Session-to-session state | `~/develop/STATUS.local.md` |
+| Execution plan, phases, decisions | `.forked/plan.md` (local, gitignored) |
+| Record schema (types, fields, supersession) | `.forked/schema.md` (local, gitignored) |
+| Settled/reversed decisions with turn cites | `.forked/decisions.md` (local, gitignored) |
+| Session-to-session state | `STATUS.local.md` (local, gitignored) |
 | Fork point, remotes, license, measured baseline | `AGENTS.md` in this repo |
