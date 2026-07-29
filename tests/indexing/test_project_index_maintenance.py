@@ -137,12 +137,8 @@ class FakeProjectIndexSession:
     """Record repository maintenance statements without a real database."""
 
     results: list[FakeProjectIndexResult]
-    dialect_name: str = "sqlite"
     statements: list[object] = field(default_factory=list)
     params: list[object | None] = field(default_factory=list)
-
-    def get_bind(self) -> SimpleNamespace:
-        return SimpleNamespace(dialect=SimpleNamespace(name=self.dialect_name))
 
     async def execute(
         self,

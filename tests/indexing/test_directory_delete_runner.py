@@ -1,7 +1,6 @@
 """Tests for portable directory-delete cleanup orchestration."""
 
 from collections.abc import Sequence
-from types import SimpleNamespace
 from typing import cast
 
 import basic_memory.indexing.directory_delete_runner as directory_delete_runner_module
@@ -122,9 +121,6 @@ class FakeExecuteSession:
     def __init__(self, results: list[FakeExecuteResult]) -> None:
         self.results = results
         self.queries: list[tuple[object, object | None]] = []
-
-    def get_bind(self) -> SimpleNamespace:
-        return SimpleNamespace(dialect=SimpleNamespace(name="sqlite"))
 
     async def execute(self, query: object, params: object | None = None) -> FakeExecuteResult:
         self.queries.append((query, params))
