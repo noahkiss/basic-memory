@@ -2,8 +2,6 @@
 
 Quick reference for using Basic Memory tools effectively through MCP.
 
-**For comprehensive coverage**: See the [Extended AI Assistant Guide](https://github.com/noahkiss/basic-memory/blob/main/docs/ai-assistant-guide-extended.md) with detailed examples, advanced patterns, and self-contained sections.
-
 ## Overview
 
 Basic Memory creates a semantic knowledge graph from markdown files. Focus on building rich connections between notes.
