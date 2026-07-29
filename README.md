@@ -382,8 +382,8 @@ just migration "msg"    # New Alembic migration
 just release v0.23.0    # Cut a release tag (publishes nothing)
 ```
 
-Tests use pytest markers: `benchmark`, `slow`, `windows`, `smoke`, `semantic`,
-`live` — declared in [pyproject.toml](pyproject.toml). `just test-benchmark`,
+Tests use pytest markers: `benchmark`, `slow`, `windows`, `smoke`, `semantic` —
+declared in [pyproject.toml](pyproject.toml). `just test-benchmark`,
 `just test-semantic`, and `just test-windows` run the excluded sets.
 
 ## License

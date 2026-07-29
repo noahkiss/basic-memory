@@ -13,7 +13,6 @@ from sqlalchemy import text
 from basic_memory import db
 from basic_memory.config import BasicMemoryConfig
 from basic_memory.repository.embedding_provider import EmbeddingProvider
-from basic_memory.repository.litellm_provider import LiteLLMEmbeddingProvider
 from basic_memory.repository.prefixing_provider import PrefixingEmbeddingProvider
 from basic_memory.repository.search_index_row import SearchIndexRow
 from basic_memory.repository.sqlite_search_repository import SQLiteSearchRepository
@@ -337,47 +336,6 @@ async def test_sqlite_vector_sync_skips_unchanged_and_reembeds_changed_content(s
     assert prefix_changed_result.entities_skipped == 0
     assert prefix_changed_result.chunks_skipped == 0
     assert prefix_changed_result.embedding_jobs_total == prefix_changed_result.chunks_total
-
-
-def test_sqlite_embedding_model_key_includes_litellm_role_settings():
-    """LiteLLM role changes should invalidate previously embedded document chunks."""
-    repo = _make_sqlite_repo_for_unit_tests()
-    repo._embedding_provider = LiteLLMEmbeddingProvider(
-        model_name="nvidia_nim/nvidia/embed-qa-4",
-        dimensions=1024,
-        document_input_type="passage",
-        query_input_type="query",
-    )
-    passage_query_key = repo._embedding_model_key()
-
-    repo._embedding_provider = LiteLLMEmbeddingProvider(
-        model_name="nvidia_nim/nvidia/embed-qa-4",
-        dimensions=1024,
-        document_input_type="document",
-        query_input_type="query",
-    )
-    document_query_key = repo._embedding_model_key()
-
-    assert passage_query_key != document_query_key
-    assert "document_input_type=passage" in passage_query_key
-    assert "query_input_type=query" in passage_query_key
-
-
-def test_sqlite_embedding_model_key_ignores_litellm_api_base():
-    """LiteLLM endpoint routing is not part of stored vector identity."""
-    repo = _make_sqlite_repo_for_unit_tests()
-    repo._embedding_provider = LiteLLMEmbeddingProvider(dimensions=3)
-    default_endpoint_key = repo._embedding_model_key()
-
-    repo._embedding_provider = LiteLLMEmbeddingProvider(
-        dimensions=3,
-        api_base="http://token@example.test/v1",
-    )
-    custom_endpoint_key = repo._embedding_model_key()
-
-    assert default_endpoint_key == custom_endpoint_key
-    assert "api_base" not in custom_endpoint_key
-    assert "token@example.test" not in custom_endpoint_key
 
 
 def test_sqlite_embedding_model_key_includes_literal_prefixes():

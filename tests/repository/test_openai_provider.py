@@ -690,6 +690,54 @@ def test_embedding_provider_factory_forwards_openai_request_concurrency():
     assert provider.request_concurrency == 6
 
 
+def test_embedding_provider_factory_forwards_openai_endpoint_and_credentials():
+    """Factory should route api_base/api_key into the OpenAI SDK's base_url/api_key.
+
+    This is the plug-and-play path for OpenAI-compatible servers (Ollama,
+    LM Studio, vLLM, OpenRouter): config alone must be enough to redirect
+    embeddings at a local endpoint.
+    """
+    config = BasicMemoryConfig(
+        env="test",
+        projects={"test-project": "/tmp/basic-memory-test"},
+        default_project="test-project",
+        semantic_search_enabled=True,
+        semantic_embedding_provider="openai",
+        semantic_embedding_model="nomic-embed-text",
+        semantic_embedding_api_base="http://localhost:11434/v1",
+        semantic_embedding_api_key="ollama",
+        semantic_embedding_dimensions=768,
+    )
+
+    provider = create_embedding_provider(config)
+
+    assert isinstance(provider, OpenAIEmbeddingProvider)
+    assert provider._base_url == "http://localhost:11434/v1"
+    assert provider._api_key == "ollama"
+    assert provider.model_name == "nomic-embed-text"
+    assert provider.dimensions == 768
+
+
+def test_embedding_provider_factory_separates_cache_for_different_openai_endpoints():
+    """Two OpenAI-compatible endpoints must not share one cached provider."""
+    shared_config = {
+        "env": "test",
+        "projects": {"test-project": "/tmp/basic-memory-test"},
+        "default_project": "test-project",
+        "semantic_search_enabled": True,
+        "semantic_embedding_provider": "openai",
+        "semantic_embedding_api_key": "local-placeholder",
+    }
+    first_provider = create_embedding_provider(
+        BasicMemoryConfig(**shared_config, semantic_embedding_api_base="http://localhost:11434/v1")
+    )
+    second_provider = create_embedding_provider(
+        BasicMemoryConfig(**shared_config, semantic_embedding_api_base="http://localhost:1234/v1")
+    )
+
+    assert first_provider is not second_provider
+
+
 def test_embedding_provider_factory_reset_clears_cache():
     """Cache reset helper should force provider recreation for the same config."""
     config = BasicMemoryConfig(

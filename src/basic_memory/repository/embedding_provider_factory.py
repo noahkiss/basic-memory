@@ -15,9 +15,9 @@ from basic_memory.repository.prefixing_provider import (
 )
 
 # Cache key fields are limited to values that change the *identity* of the loaded
-# provider instance (provider, model_name, explicit LiteLLM endpoint/key routing,
-# dimensions, semantic role/input-type/prefix settings, batch/request knobs,
-# and the resolved cache dir). Thread/parallel knobs are deliberately excluded -
+# provider instance (provider, model_name, explicit OpenAI-compatible endpoint/key
+# routing, dimensions, prefix settings, batch/request knobs, and the resolved cache
+# dir). Thread/parallel knobs are deliberately excluded -
 # they change ONNX *execution* only, not the loaded weights. Including them caused #872: in a
 # container/cgroup the CPU-derived thread count can drift between calls, producing
 # a fresh cache key and reloading the ~2.3GB model into a CPU arena that never
@@ -28,11 +28,8 @@ type ProviderCacheKey = tuple[
     str | None,
     str | None,
     int | None,
-    bool | None,
     int,
     int,
-    str | None,
-    str | None,
     str | None,
     str | None,
     str,
@@ -114,23 +111,23 @@ def _provider_cache_key(app_config: BasicMemoryConfig) -> ProviderCacheKey:
     runtime CPU budget makes the key drift between calls in a container (#872).
     """
     provider_name = app_config.semantic_embedding_provider.strip().lower()
-    litellm_api_base_digest = None
-    litellm_api_key_digest = None
-    if provider_name == "litellm":
-        litellm_api_base_digest = _sensitive_value_digest(app_config.semantic_embedding_api_base)
-        litellm_api_key_digest = _sensitive_value_digest(app_config.semantic_embedding_api_key)
+    # Only the API-backed provider routes through an endpoint/credential pair, so
+    # the digests stay out of the key for local providers whose identity is the
+    # model weights alone.
+    api_base_digest = None
+    api_key_digest = None
+    if provider_name == "openai":
+        api_base_digest = _sensitive_value_digest(app_config.semantic_embedding_api_base)
+        api_key_digest = _sensitive_value_digest(app_config.semantic_embedding_api_key)
 
     return (
         provider_name,
         app_config.semantic_embedding_model,
-        litellm_api_base_digest,
-        litellm_api_key_digest,
+        api_base_digest,
+        api_key_digest,
         app_config.semantic_embedding_dimensions,
-        app_config.semantic_embedding_forward_dimensions,
         app_config.semantic_embedding_batch_size,
         app_config.semantic_embedding_request_concurrency,
-        app_config.semantic_embedding_document_input_type,
-        app_config.semantic_embedding_query_input_type,
         embedding_prefix_digest(app_config.semantic_embedding_document_prefix),
         embedding_prefix_digest(app_config.semantic_embedding_query_prefix),
         _resolve_cache_dir(app_config),
@@ -147,10 +144,10 @@ def create_embedding_provider(app_config: BasicMemoryConfig) -> EmbeddingProvide
     """Create an embedding provider based on semantic config.
 
     When semantic_embedding_dimensions is set in config, it overrides the
-    provider's default dimensions (384 for FastEmbed, 1536 for OpenAI and
-    the LiteLLM OpenAI default). Custom LiteLLM models require an explicit
-    dimension because the vector table schema is created before the first
-    embedding response is available.
+    provider's default dimensions (384 for FastEmbed, 1536 for OpenAI). Models
+    that are not 1536-dimensional require an explicit dimension because the
+    vector table schema is created before the first embedding response is
+    available.
     """
     cache_key = _provider_cache_key(app_config)
     # Trigger: two threads miss the cache for the same key concurrently.
@@ -199,36 +196,17 @@ def create_embedding_provider(app_config: BasicMemoryConfig) -> EmbeddingProvide
         model_name = app_config.semantic_embedding_model or "text-embedding-3-small"
         if model_name == "bge-small-en-v1.5":
             model_name = "text-embedding-3-small"
+        # Trigger: semantic_embedding_api_base is set.
+        # Why: the OpenAI SDK's base_url is this fork's plug-and-play path for any
+        # OpenAI-compatible embedding server (Ollama, LM Studio, vLLM, OpenRouter).
+        # Outcome: pointing at a local server needs no code, only these two keys -
+        # and api_key still falls back to OPENAI_API_KEY when left unset.
         provider = OpenAIEmbeddingProvider(
             model_name=model_name,
-            batch_size=app_config.semantic_embedding_batch_size,
-            request_concurrency=app_config.semantic_embedding_request_concurrency,
-            **extra_kwargs,
-        )
-    elif provider_name == "litellm":
-        from basic_memory.repository.litellm_provider import LiteLLMEmbeddingProvider
-
-        model_name = app_config.semantic_embedding_model or "openai/text-embedding-3-small"
-        if model_name == "bge-small-en-v1.5":
-            model_name = "openai/text-embedding-3-small"
-        if (
-            app_config.semantic_embedding_dimensions is None
-            and model_name != "openai/text-embedding-3-small"
-        ):
-            raise ValueError(
-                "semantic_embedding_dimensions must be set when "
-                "semantic_embedding_provider='litellm' uses a non-default model. "
-                f"Configured model: {model_name!r}."
-            )
-        provider = LiteLLMEmbeddingProvider(
-            model_name=model_name,
             api_key=app_config.semantic_embedding_api_key,
-            api_base=app_config.semantic_embedding_api_base,
+            base_url=app_config.semantic_embedding_api_base,
             batch_size=app_config.semantic_embedding_batch_size,
             request_concurrency=app_config.semantic_embedding_request_concurrency,
-            document_input_type=app_config.semantic_embedding_document_input_type,
-            query_input_type=app_config.semantic_embedding_query_input_type,
-            forward_dimensions=app_config.semantic_embedding_forward_dimensions,
             **extra_kwargs,
         )
     else:

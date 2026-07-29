@@ -194,32 +194,25 @@ class BasicMemoryConfig(BaseSettings):
     semantic_embedding_api_base: str | None = Field(
         default=None,
         description=(
-            "Optional custom API base URL for the LiteLLM embedding provider. "
-            "Use this for OpenAI-compatible local or self-hosted embedding servers."
+            "Optional custom API base URL for the 'openai' embedding provider. "
+            "Set this to point at any OpenAI-compatible embedding server - Ollama, "
+            "LM Studio, vLLM, OpenRouter, or a self-hosted gateway."
         ),
     )
     semantic_embedding_api_key: str | None = Field(
         default=None,
         description=(
-            "Optional API key passed directly to the LiteLLM embedding provider. "
-            "When unset, LiteLLM continues to resolve credentials from provider "
-            "environment variables such as OPENAI_API_KEY."
+            "Optional API key passed directly to the 'openai' embedding provider. "
+            "When unset, the provider falls back to the OPENAI_API_KEY environment "
+            "variable. Local servers that ignore auth still need a placeholder value."
         ),
     )
     semantic_embedding_dimensions: int | None = Field(
         default=None,
         description=(
             "Embedding vector dimensions. Uses provider defaults when unset "
-            "(384 for FastEmbed, 1536 for OpenAI and LiteLLM OpenAI default); "
-            "required for custom LiteLLM models."
-        ),
-    )
-    semantic_embedding_forward_dimensions: bool | None = Field(
-        default=None,
-        description=(
-            "LiteLLM-only override for sending semantic_embedding_dimensions as a "
-            "provider-side output-size request parameter. When unset, Basic Memory "
-            "auto-detects model strings such as text-embedding-3."
+            "(384 for FastEmbed, 1536 for OpenAI); required for any model whose "
+            "output size differs from its provider default."
         ),
     )
     # Trigger: full local rebuilds spend most of their time waiting behind shared
@@ -237,20 +230,6 @@ class BasicMemoryConfig(BaseSettings):
         default=4,
         description="Maximum number of concurrent provider requests for batched embedding generation when the active provider supports request-level concurrency.",
         gt=0,
-    )
-    semantic_embedding_document_input_type: str | None = Field(
-        default=None,
-        description=(
-            "Optional LiteLLM input_type for indexed document/passages. "
-            "Use with asymmetric embedding models such as Cohere or NVIDIA retrieval models."
-        ),
-    )
-    semantic_embedding_query_input_type: str | None = Field(
-        default=None,
-        description=(
-            "Optional LiteLLM input_type for search queries. "
-            "Use with asymmetric embedding models such as Cohere or NVIDIA retrieval models."
-        ),
     )
     semantic_embedding_document_prefix: str | None = Field(
         default=None,
