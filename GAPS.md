@@ -778,6 +778,48 @@ as sufficient. It is not. Every remaining strip pass should run `test-int` befor
 called green, and this entry stays open until there is a known-good `test-int` baseline to measure
 against.
 
+### T18 — `AGENTS.md`'s performance baseline is stale by 9x, and the "fast native command" it names is not fast
+**Found 2026-07-28** while deciding the fate of that table in pass 4. Measured on this tree
+(`da4f8a59`), Linux/x86-64, Python 3.13, warm, three runs each:
+
+| Path | `AGENTS.md` claims | Actually measured | Delta |
+|---|---|---|---|
+| CLI native cmd (`project list`) | ~0.55 s / ~73 MB | **4.91 / 5.35 / 5.23 s / 231 MB** | ~9x slower, ~3x memory |
+| CLI `--version` floor | 0.33 s / 59 MB | 0.49 / 0.51 s / 65 MB | ~1.5x slower |
+
+**The stale number is not the real problem.** `AGENTS.md` draws a load-bearing architectural
+conclusion from it:
+
+> The decisive structural fact: **commands that avoid importing `basic_memory.mcp.tools` /
+> `basic_memory.api.app` cost ~0.55 s; commands that touch them cost ~4 s.** [...] **Any `tend`
+> subcommand that needs to be fast must talk to the repository/service layer directly and must not
+> reach through the MCP tool layer.**
+
+`project list` is that document's own example of a fast native command, and it **imports both**.
+`python -X importtime -m basic_memory.cli.main project list` attributes 1.09 s to
+`basic_memory.api.app` and 0.63 s to `basic_memory.mcp.tools`. The imports are lazy — importing
+`basic_memory.cli.main` alone pulls in neither (`sys.modules` confirms both absent) — so they happen
+*inside the command*, which is why nothing static catches it. The single largest leaf is
+`basic_memory.api.v2.routers.prompt_router` at 217 ms.
+
+**The guidance is still correct; the claim that native commands currently honour it is false.** That
+matters for W1-W11: the fast `bm` verbs are specified against a boundary the existing native
+commands have already crossed, so "do what `project list` does" is now precisely the wrong
+instruction.
+
+**Not diagnosed:** whether this is a regression from a strip pass or has been true since the fork
+point. The fork-point numbers themselves are suspect — see the note in pass 4's handoff about
+`benchmarks/runner.py` — and no harness in this repo measures CLI startup, so nothing would have
+caught a drift either way. `benchmarks/` is a *retrieval-quality* suite (Recall@5, MRR,
+LLM-as-judge, mem0/zep providers) and never produced these numbers, so deleting it neither caused
+this nor removes the ability to re-measure: `/usr/bin/time -f "%e %M"` and `-X importtime` are the
+whole harness.
+
+**Fix:** trace which import chain drags `api.app` into `project list` and cut it, then re-measure.
+A cheap regression guard (assert `project list` completes under ~1 s, or assert
+`basic_memory.api.app not in sys.modules` after a native command) would make the boundary
+structural instead of aspirational — the same reasoning as shipping the flag-only gardener first.
+
 ---
 
 ## BLOCKERS / gaps in capability
