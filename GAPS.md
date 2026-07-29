@@ -849,6 +849,36 @@ structural instead of aspirational — the same reasoning as shipping the flag-o
 
 ---
 
+### T19 — an import-grep cannot tell you whether a pytest plugin is dead — **SHIPPED `6f8767a3`**
+**Found and fixed 2026-07-28** (strip pass 7). `pytest-aio` was listed in the pass-7 prune as
+"dead-regardless, confirmed by import-grep: zero imports". It has zero imports because **pytest
+plugins load through the `pytest11` entry point, never through an `import` statement.** An
+import-grep returns zero for a plugin that is load-bearing and zero for one that is genuinely
+dead — it cannot distinguish them, so it is not evidence.
+
+Removing it turned **55 unit tests red** at once, all with the same message: `async def functions
+are not natively supported.` The mechanism: `pyproject.toml` sets `asyncio_mode = "strict"`, so
+pytest-asyncio only collects `async def` tests that carry an explicit `@pytest.mark.asyncio`.
+`pytest-aio` is what was collecting the bare ones — 55 of them, concentrated in `tests/index/`
+(`test_local_project_index.py`, `test_inline_storage_event_processor.py`,
+`test_local_inline_result_recorder.py`, and others). Restored, moved from the runtime dependency
+list to `dev` where a test plugin belongs, with the reason recorded inline so the next prune does
+not repeat this.
+
+**Generalize it:** before deleting a dependency on the strength of "no imports", check whether it
+is a *plugin* rather than a library — pytest plugins (`pytest11`), setuptools/console entry
+points, SQLAlchemy dialects, codecs, and anything registered by name in config. For pytest
+specifically, the fast check is `uv run pytest --trace-config` (lists every active plugin) or
+simply deleting it and running the full suite, which is what caught this one. Note the failure
+mode is loud but *misattributable*: 55 tests in a subsystem untouched by the pass, failing for a
+reason that names asyncio and never names the dependency you removed.
+
+**This is also the case for running the suite before committing, not after.** The unit run is
+~6 minutes; the pass would otherwise have been pushed with 55 red tests, which is exactly the T17
+shape.
+
+---
+
 ## BLOCKERS / gaps in capability
 
 ### B1 — no `contains` operator in metadata filters; multi-value is AND-only
@@ -1153,7 +1183,8 @@ See AGENTS.md → "We do not track upstream" → "Strip policy" for the rule thi
 (baseline 3444+33 collected, −61 `def test_`), `fast-check` exit 0 with zero `ty` advisories.
 No alembic revision file was deleted — whole-body-Postgres revisions are no-ops so the
 `down_revision` chain and stamped `alembic_version` rows stay valid. `nest-asyncio` survives
-(applied outside any backend gate); `litellm` + the remaining dependency prune are still open.
+(applied outside any backend gate); `litellm` + the remaining dependency prune shipped later in
+`6f8767a3` (W17).
 
 **Scheduled deletion, decided 2026-07-27 (user).** Postgres is an alternative *index* backend, not
 an alternative format — files stay authoritative and the DB is disposable. It exists for the hosted
@@ -1233,6 +1264,70 @@ so the arithmetic is exact); `test-int` **336 passed / 4 skipped / 0 failed**, u
 green baseline established in `879681d4`; `just doctor` green and logging a nonzero
 `queue_wait_seconds_total`, which is what confirmed the restored accumulation end-to-end rather
 than only against mocks.
+
+---
+
+### W16 — trim `README.md` and correct stale command references — **SHIPPED `e8212855`**
+**Done 2026-07-28** (strip pass 6). Docs-only.
+
+Deleted from `README.md`: the four "What people are saying" testimonials (upstream's marketing for
+upstream's product — this fork ships to one user) and the "What's New" section (release notes with
+no release process behind them, since releases here are a git tag and nothing else, so it could
+only rot).
+
+The part worth recording is that **every command in the Development section was wrong in a way a
+reader could not detect.** `just test` and `just test-int-sqlite` both exclude the `semantic` and
+`benchmark` sets; the one-word descriptions implied full runs. The marker list named a
+`windows`/`benchmark`/`smoke` trio and pointed at the justfile; the markers are declared in
+`pyproject.toml` and there were six. `AGENTS.md` named
+`test-int/test_sync_performance_benchmark.py` in two places — a file that does not exist and never
+has under that name in this tree; it is `test_search_performance_benchmark.py`.
+
+**Generalize it:** a docs pass over a stripped tree is not a copy edit. Re-run or at least re-read
+every command against the file it claims to describe — the deletions that invalidate them are
+exactly the ones nobody thinks to re-check.
+
+Every surviving `docs/` link in both files resolves to a pass-5 keeper. Test-inert: the `README.md`
+strings under `tests/` are `tmp_path` fixture names, not reads of the repo file.
+
+### W17 — remove the LiteLLM embedding provider and prune dependencies — **SHIPPED `6f8767a3`**
+**Done 2026-07-28** (strip pass 7, the last pass). LiteLLM was a second path to a capability the
+`openai` provider already had. 13 packages leave the lockfile (litellm plus aiohttp, tiktoken,
+yarl, multidict, frozenlist, propcache, aiosignal, aiohappyeyeballs, fastuuid,
+importlib-metadata, zipp).
+
+Deleted: `repository/litellm_provider.py` and its factory branch; four config fields
+(`semantic_embedding_forward_dimensions`, `..._document_input_type`, `..._query_input_type`, and
+their provider-cache-key slots); `tests/repository/test_litellm_provider.py`; the three
+`test-int/semantic/` litellm files; the `test-litellm-live` justfile recipe; the now-unreferenced
+`live` pytest marker; `docs/litellm-provider.md`. Pruned: `pyright` (a dev tool in the runtime
+list, already in `dev` at a newer pin), `pyjwt`, `sniffio`. Moved runtime → dev: `python-dotenv`,
+`pytest-asyncio`.
+
+**The one behaviour change, and why it is in scope.** The `openai` branch of
+`embedding_provider_factory` now passes `api_key=` and `base_url=` through to the OpenAI SDK.
+Before, only the litellm branch read those two config keys. `openai` was the provider kept
+*because* `AsyncOpenAI(base_url=...)` serves every OpenAI-compatible server (Ollama, LM Studio,
+vLLM, OpenRouter); without the wiring, the deletion would have silently removed custom-endpoint
+support and left two config fields dead. Two tests cover it. This is the part of the pass most
+worth a second reader.
+
+**A keeper decision can be voided by a later pass.** `docs/litellm-provider.md` was on the pass-5
+keep list, correctly — the provider was live and the doc was its only reference. Once the provider
+is deleted the doc describes nothing, so it went too and the keeper count is 6, not 7. The
+material that outlived the provider was kept: the literal role prefixes work with `fastembed` and
+`openai` and were only nested under LiteLLM by accident of history.
+`docs/semantic-search.md` now says outright that provider-side `input_type` models (Cohere v3,
+NVIDIA NIM) are unsupported rather than leaving the loss silent.
+
+See T19 for the `pytest-aio` trap this pass walked into and the rule it produced.
+
+Verified: `just fast-check` exit 0, zero `ty` advisories; unit **3341 passed / 10 skipped / 0
+failed** (3378 − 37: 35 litellm provider tests, 2 sqlite-vector role-settings tests, 2 config
+forward-dimensions tests, + 2 added endpoint tests); test-int **330 passed / 4 skipped / 0
+failed** (336 − 6, the tests in `test_litellm_live_harness.py`, which carried no `semantic` marker
+and so were in the baseline — `test_litellm_live_models.py` was marked `semantic` and never
+counted); `just doctor` green.
 
 ---
 
