@@ -668,7 +668,69 @@ passes touch the justfile for benchmark recipes (pass 4) and that is the natural
 ---
 
 ### T17 — 10 integration tests fail on `main`; `test-int/` was never run against the W13 tree
-**Found:** 2026-07-27. **Severity: unknown until diagnosed — this is undiagnosed, not triaged.**
+**Found:** 2026-07-27. **DIAGNOSED 2026-07-28 by bisect. W13 is exonerated.** All ten are strip
+residue — tests left behind asserting on surface this fork deliberately deleted. None is a
+regression in shipping code.
+
+**The bisect, four runs of the same ten tests (they reproduce in ~10 s, so the 426 s full suite was
+never needed):**
+
+```
+HEAD       1d406872                    10 failed
+039275af   parent of W13               10 failed        <- W13 EXONERATED, identical failures
+ba2bc67e   the W12 cloud strip         10 failed
+9b7dd678   parent of the W12 WIP       1 failed, 9 passed
+a614cbd0   parent of the T10 fix       test_build_context_underscore.py: 2 passed
+```
+
+**Cause 1 — nine of ten: W12, the cloud strip (`3c789d8c` + `ba2bc67e`).** W12 removed the
+`--local` / `--cloud` routing flags from every `bm tool` and `bm project` command, and removed the
+cloud indexing job's response shape. The tests exercising both were left in place.
+
+- **Eight** die on `No such option: --local`, a Typer usage error — `SystemExit(2)` before any
+  application code runs. Two of the eight (`test_cli_search_notes_page_size_zero`,
+  `test_remove_main_project`) do not *look* like routing tests and were miscounted in the original
+  report as a separate cluster; they merely pass `--local` in passing.
+- **One** (`test_recreate_retained_project_indexes_existing_notes`) dies on `KeyError: 'state'`.
+  `state` was a field of the cloud indexing job. The local path returns `ProjectIndexRunResult`
+  (`indexing/project_index_coordinator.py:165`), captured verbatim at runtime as
+  `{'total_files': 0, 'enqueued_files': 0, 'enqueued_batches': 0, 'deleted_files': 0}` — no `state`,
+  and none is derivable.
+
+**Cause 2 — one of ten: `829e5af5`, this fork's own T10 fix.**
+`test_build_context_underscore_normalization`'s "Test 4" asserted the relaxed-FTS fuzzy fallback
+that T10 removed on purpose, and its comment said so in as many words: *"Previously this returned
+empty (no exact permalink match). Now LinkResolver resolves to the child entity, so we get its
+relations back."* That is precisely the confidently-wrong-answer behaviour T10 exists to kill. Under
+the fix the miss correctly returns `"results":[]` / `total_results: 0`. **The test was guarding the
+bug.** Tests 1–3 in the same function cover the underscore/hyphen normalization the file is named
+for and pass throughout.
+
+**FIXED 2026-07-28 in `879681d4`** — the ten tests were brought in line with the surface that
+actually ships: `--local` removed from all 13 call sites, the two conflict-message tests deleted or
+narrowed (the validation they assert on cannot exist without the flags), the `state` assertion
+dropped, and Test 4 rewritten to assert that a `memory://` miss stays a miss. **`test-int` baseline
+is now green: 337 passed / 4 skipped / 0 failed** — the first green `test-int` in this fork's
+history, which was the actual defect this entry recorded.
+
+**What this cost, and the protocol it forces.** W12 was verified on `fast-check` + the unit suite
+only, and shipped a red `test-int` that then sat undetected across four further passes (W14, T15,
+T13, W13) — each of which inherited the red suite and so had no way to tell its own breakage from
+the standing failures. W13 was blamed on ordering alone. **A green unit suite is not sufficient
+evidence for a strip pass; every pass runs `test-int` before its commit is called green.** The
+second lesson is narrower and sharper: **a deletion pass must grep the test tree for the surface it
+is deleting, not only the source tree.** Eight of these ten would have been caught by one
+`git grep -- --local test-int/` during W12.
+
+**One more site of the same residue, outside the test tree.** `justfile`'s `test-smoke` recipe
+(lines ~450-456) still passes `--local` to six `basic_memory.cli.main` invocations, so the MCP smoke
+check `AGENTS.md` advertises has also been dead since W12 — it exits 2 on the first command. Nothing
+runs it automatically, which is why it went unnoticed. **Scheduled into pass 3 (W15/logfire)**, which
+deletes that recipe outright: it exists to exercise logfire telemetry (`BASIC_MEMORY_LOGFIRE_*`) and
+has no purpose once telemetry is gone. If pass 3 is ever descoped, this becomes its own gap.
+
+*Original report:*
+**Severity: unknown until diagnosed — this is undiagnosed, not triaged.**
 
 W13 (Postgres deletion, `79e0dad9`) was verified against `just fast-check` and the **unit** suite
 only. `just test-int-sqlite` was never run against it. It has now been run, on `cbc62d41`:
