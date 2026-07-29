@@ -722,12 +722,21 @@ second lesson is narrower and sharper: **a deletion pass must grep the test tree
 is deleting, not only the source tree.** Eight of these ten would have been caught by one
 `git grep -- --local test-int/` during W12.
 
-**One more site of the same residue, outside the test tree.** `justfile`'s `test-smoke` recipe
-(lines ~450-456) still passes `--local` to six `basic_memory.cli.main` invocations, so the MCP smoke
-check `AGENTS.md` advertises has also been dead since W12 — it exits 2 on the first command. Nothing
-runs it automatically, which is why it went unnoticed. **Scheduled into pass 3 (W15/logfire)**, which
-deletes that recipe outright: it exists to exercise logfire telemetry (`BASIC_MEMORY_LOGFIRE_*`) and
-has no purpose once telemetry is gone. If pass 3 is ever descoped, this becomes its own gap.
+**Two more sites of the same residue, outside the test tree — both RESOLVED in `bec90372`.**
+Corrected identification: the recipe passing `--local` six times was `telemetry-smoke`, not
+`test-smoke` (`test-smoke` is a pytest invocation and was never affected). `telemetry-smoke` existed
+to exercise logfire telemetry (`BASIC_MEMORY_LOGFIRE_*`), so pass 3 deleted it outright.
+
+The second site was the one that mattered and nearly escaped: **`just doctor` passed `--local` too**
+(`justfile:417`) and had therefore been exiting on `No such option: --local` since W12 — a command
+`AGENTS.md` names as one of the four steps of the standard development loop. It was found only
+because pass 3 grepped the justfile for `--local` after deleting `telemetry-smoke`, rather than
+assuming the scheduled deletion cleared the whole class. Fixed by dropping the flag; `just doctor`
+now reports `Doctor checks passed.`
+
+**The lesson is narrower than the T17 one above and worth stating separately:** a gap entry that
+says "scheduled into pass N, which deletes that file anyway" closes the *instance* and leaves the
+*class* open. Re-grep after the scheduled deletion lands.
 
 *Original report:*
 **Severity: unknown until diagnosed — this is undiagnosed, not triaged.**
@@ -1113,6 +1122,48 @@ anything else. Same class as W12/W13: pure deletion, no replacement.
 
 Not urgent — it costs nothing at runtime (`ci` is one more entry in the `cli/commands` import list).
 Bundle it with W12 rather than making a pass of its own.
+
+### W15 — delete the logfire/OpenTelemetry surface — **SHIPPED `bec90372`**
+**Done 2026-07-28** (strip pass 3). 58 files, −6109/+2404. This fork ships no telemetry backend and
+never will, so every span, metric, and config knob feeding one was overhead on paths that run on
+every note write.
+
+Deleted: `src/basic_memory/telemetry.py` (`configure_telemetry()`, `get_logfire_handler()`); ~36
+`with logfire.span(...)` call sites across `api/`, `mcp/`, `cli/`, `indexing/`, `repository/`,
+`services/`; the `metric_histogram` / `metric_counter` emissions in `semantic_vector_sync`; four
+config fields (`logfire_enabled`, `logfire_send_to_logfire`, `logfire_service_name`,
+`logfire_environment`); the `ConfigureTelemetry` protocol and `configure_logfire_for_entrypoint()`;
+`docs/logfire-instrumentation-strategy.md`; `.agents/skills/instrumentation/` (depended on logfire,
+no replacement); the `telemetry-smoke` justfile recipe; the `logfire` dep from both dependency
+groups.
+
+**Kept: loguru.** It is this fork's real logging and is unrelated to logfire despite the name.
+`initialize_file_logging()` and the `SetupLogging` protocol are untouched. Anyone repeating this
+kind of pass should confirm which of the two a call site uses before deleting it.
+
+**The one place this was not a pure deletion, and the trap worth remembering.**
+`repository/semantic_vector_sync.py` accumulated `queue_wait_seconds` *inside* the span it was
+reported from, so deleting the span silently deleted the measurement.
+`queue_wait_seconds_total` is a **field of the returned result object**, not telemetry — it is
+consumed by callers. Two unit tests caught it
+(`test_sync_entity_vectors_batch_only_attributes_queue_wait_to_flushed_entities`,
+`test_sync_entity_vectors_batch_tracks_prepare_and_queue_wait_seconds`, reporting `0.0` against an
+expected `1.5` and `0.5` against `3.0`). The tell that these were a real regression and not
+telemetry residue: the sibling timings (`prepare_seconds_total`, `embed_seconds_total`,
+`write_seconds_total`) still computed correctly, because they happened to accumulate *outside* the
+span. Restored as plain `perf_counter` arithmetic matching the siblings.
+
+**Generalize it:** instrumentation blocks are not always pure observers. Before deleting a
+`with span(...)` body wholesale, check whether anything computed inside it escapes — a returned
+field, a mutated accumulator, an assignment read after the block. Grep the deleted names against
+the *test* tree, not just `src/`.
+
+Verified: `just fast-check` exit 0 with zero `ty` advisories; unit **3378 passed / 10 skipped**
+(baseline 3406 minus the 28 `def test_` lines the diff deletes, no parametrized cases among them,
+so the arithmetic is exact); `test-int` **336 passed / 4 skipped / 0 failed**, unchanged from the
+green baseline established in `879681d4`; `just doctor` green and logging a nonzero
+`queue_wait_seconds_total`, which is what confirmed the restored accumulation end-to-end rather
+than only against mocks.
 
 ---
 
