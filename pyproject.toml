@@ -50,7 +50,6 @@ dependencies = [
     # LiteLLM 1.92 added a Rust bridge whose PyO3 version rejects Python 3.14.
     # Keep the last universal wheel while Basic Memory supports Python 3.14.
     "litellm>=1.60.0,<1.92.0",
-    "logfire>=4.19.0",
     "psutil>=5.9.0",
 ]
 
@@ -97,7 +96,6 @@ target-version = "py312"
 
 [dependency-groups]
 dev = [
-    "logfire>=4.19.0",
     "gevent>=24.11.1",
     "icecream>=2.1.3",
     "pytest>=8.3.4",

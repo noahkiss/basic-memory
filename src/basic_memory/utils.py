@@ -13,8 +13,6 @@ from typing import Any, Protocol, Union, runtime_checkable, List, Optional
 from loguru import logger
 from unidecode import unidecode
 
-from basic_memory import telemetry
-
 
 @runtime_checkable
 class PathLike(Protocol):
@@ -337,11 +335,6 @@ def setup_logging(
     # Add stdout handler (for containerized deployments)
     if log_to_stdout:
         logger.add(sys.stderr, level=log_level, backtrace=True, diagnose=True, colorize=True)
-
-    # Add Logfire sink when telemetry bootstrap enabled it for this process.
-    logfire_handler = telemetry.get_logfire_handler()
-    if logfire_handler is not None:
-        logger.add(**logfire_handler)
 
     # Reduce noise from third-party libraries
     logging.getLogger("httpx").setLevel(logging.WARNING)

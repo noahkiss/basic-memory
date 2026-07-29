@@ -7,7 +7,6 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import List, Optional
 
-import logfire
 from loguru import logger
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError as SAOperationalError
@@ -1086,15 +1085,8 @@ class SQLiteSearchRepository(SearchRepositoryBase):
                     "Strict SQLite FTS returned 0 results; retrying relaxed FTS query "
                     f"strict='{search_text}' relaxed='{relaxed}'"
                 )
-                with logfire.span(
-                    "search.relaxed_fts_retry",
-                    backend="sqlite",
-                    token_count=len(relaxed_query_words(search_text) or ()),
-                    limit=limit,
-                    offset=offset,
-                ):
-                    result = await active_session.execute(text(sql), params)
-                    rows = result.fetchall()
+                result = await active_session.execute(text(sql), params)
+                rows = result.fetchall()
             return rows
 
         try:
@@ -1177,13 +1169,8 @@ class SQLiteSearchRepository(SearchRepositoryBase):
                 )
                 if relaxed and params.get("text"):
                     params["text"] = relaxed
-                    with logfire.span(
-                        "search.count.relaxed_fts_retry",
-                        backend="sqlite",
-                        token_count=len(relaxed_query_words(search_text) or ()),
-                    ):
-                        result = await session.execute(text(sql), params)
-                        total = int(result.scalar_one())
+                    result = await session.execute(text(sql), params)
+                    total = int(result.scalar_one())
                 return total
         except Exception as e:
             if self._is_fts5_syntax_error(e):  # pragma: no cover

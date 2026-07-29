@@ -10,7 +10,6 @@ import typer  # noqa: E402
 
 from basic_memory.cli.container import CliContainer, set_container  # noqa: E402
 from basic_memory.config import init_cli_logging  # noqa: E402
-import logfire  # noqa: E402
 
 
 def version_callback(value: bool) -> None:
@@ -43,27 +42,18 @@ def app_callback(
 ) -> None:
     """Basic Memory - Local-first personal knowledge management."""
 
-    command_name = ctx.invoked_subcommand or "root"
-
     # Trigger: a `brief` invocation — the session-start hook's front door.
     # Why: `brief` writes markdown to stdout that a harness splices straight into
-    # an agent's context, and everything here — logging setup (Logfire loads
-    # config), the span, the container — can raise SystemExit on a malformed
-    # config (ConfigManager reports bad JSON that way). A broken config must
-    # degrade to an empty brief rather than abort a session start.
+    # an agent's context, and everything here — logging setup, the container — can
+    # raise SystemExit on a malformed config (ConfigManager reports bad JSON that
+    # way). A broken config must degrade to an empty brief rather than abort a
+    # session start.
     # Outcome: run that setup best-effort, swallowing (Exception, SystemExit) so a
     # broken config surfaces only inside the verb's own fail-open guard. Skip
     # global init. KeyboardInterrupt is left to propagate.
     if ctx.invoked_subcommand == "brief":
         try:
             init_cli_logging()
-            ctx.with_resource(
-                logfire.span(
-                    f"cli.command.{command_name}",
-                    entrypoint="cli",
-                    command_name=command_name,
-                )
-            )
             container = CliContainer.create()
             set_container(container)
         except (Exception, SystemExit):
@@ -72,13 +62,6 @@ def app_callback(
 
     # Initialize logging for CLI (file only, no stdout)
     init_cli_logging()
-    ctx.with_resource(
-        logfire.span(
-            f"cli.command.{command_name}",
-            entrypoint="cli",
-            command_name=command_name,
-        )
-    )
 
     # --- Composition Root ---
     # Create container and read config (single point of config access)

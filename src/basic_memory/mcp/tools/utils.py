@@ -7,7 +7,6 @@ to the Basic Memory API, with improved error handling and logging.
 import typing
 from typing import Any, Optional
 
-import logfire
 from httpx import (
     Response,
     URL,
@@ -30,37 +29,6 @@ from httpx._types import (
 )
 from loguru import logger
 from mcp.server.fastmcp.exceptions import ToolError
-
-
-def _classify_http_outcome(status_code: int) -> str:
-    """Map HTTP status codes to a low-cardinality outcome label."""
-    if 200 <= status_code < 300:
-        return "success"
-    if 300 <= status_code < 400:  # pragma: no cover
-        return "redirect"
-    if 400 <= status_code < 500:
-        return "client_error"
-    if 500 <= status_code < 600:
-        return "server_error"
-    return "unknown"  # pragma: no cover
-
-
-def _response_span_attrs(response: Response) -> dict[str, Any]:
-    """Attributes to attach to a request span after a response lands."""
-    return {
-        "status_code": response.status_code,
-        "is_success": response.is_success,
-        "outcome": _classify_http_outcome(response.status_code),
-    }
-
-
-def _transport_error_span_attrs(exc: Exception) -> dict[str, Any]:
-    """Attributes to attach when the transport layer fails before any response."""
-    return {
-        "is_success": False,
-        "outcome": "transport_error",
-        "error_type": type(exc).__name__,
-    }
 
 
 def get_error_message(
@@ -217,30 +185,18 @@ async def call_get(
     """
     logger.debug(f"Calling GET '{url}' params: '{params}'")
     error_message = None
-    request_span: logfire.LogfireSpan | None = None
 
     try:
-        with logfire.span(
-            "mcp.http.request",
-            method="GET",
-            client_name=client_name,
-            operation=operation,
-            path_template=path_template,
-            phase="request",
-            has_query=bool(params),
-            has_body=False,
-        ) as request_span:
-            response = await client.get(
-                url,
-                params=params,
-                headers=headers,
-                cookies=cookies,
-                auth=auth,
-                follow_redirects=follow_redirects,
-                timeout=timeout,
-                extensions=extensions,
-            )
-            request_span.set_attributes(_response_span_attrs(response))
+        response = await client.get(
+            url,
+            params=params,
+            headers=headers,
+            cookies=cookies,
+            auth=auth,
+            follow_redirects=follow_redirects,
+            timeout=timeout,
+            extensions=extensions,
+        )
 
         if response.is_success:
             return response
@@ -269,13 +225,7 @@ async def call_get(
         raise ToolError(error_message) from e
     except TransportError as e:
         # No HTTP response arrived (timeout, connect failure) — wrap with actionable text (#1034)
-        if request_span is not None:
-            request_span.set_attributes(_transport_error_span_attrs(e))
         raise ToolError(_transport_error_message(e, url, "GET")) from e
-    except Exception as e:
-        if request_span is not None:
-            request_span.set_attributes(_transport_error_span_attrs(e))
-        raise
 
 
 async def call_put(
@@ -322,34 +272,22 @@ async def call_put(
     """
     logger.debug(f"Calling PUT '{url}'")
     error_message = None
-    request_span: logfire.LogfireSpan | None = None
 
     try:
-        with logfire.span(
-            "mcp.http.request",
-            method="PUT",
-            client_name=client_name,
-            operation=operation,
-            path_template=path_template,
-            phase="request",
-            has_query=bool(params),
-            has_body=any(value is not None for value in (content, data, files, json)),
-        ) as request_span:
-            response = await client.put(
-                url,
-                content=content,
-                data=data,
-                files=files,
-                json=json,
-                params=params,
-                headers=headers,
-                cookies=cookies,
-                auth=auth,
-                follow_redirects=follow_redirects,
-                timeout=timeout,
-                extensions=extensions,
-            )
-            request_span.set_attributes(_response_span_attrs(response))
+        response = await client.put(
+            url,
+            content=content,
+            data=data,
+            files=files,
+            json=json,
+            params=params,
+            headers=headers,
+            cookies=cookies,
+            auth=auth,
+            follow_redirects=follow_redirects,
+            timeout=timeout,
+            extensions=extensions,
+        )
 
         if response.is_success:
             return response
@@ -379,13 +317,7 @@ async def call_put(
         raise ToolError(error_message) from e
     except TransportError as e:
         # No HTTP response arrived (timeout, connect failure) — wrap with actionable text (#1034)
-        if request_span is not None:
-            request_span.set_attributes(_transport_error_span_attrs(e))
         raise ToolError(_transport_error_message(e, url, "PUT")) from e
-    except Exception as e:
-        if request_span is not None:
-            request_span.set_attributes(_transport_error_span_attrs(e))
-        raise
 
 
 async def call_patch(
@@ -431,34 +363,22 @@ async def call_patch(
         ToolError: If the request fails with an appropriate error message
     """
     logger.debug(f"Calling PATCH '{url}'")
-    request_span: logfire.LogfireSpan | None = None
 
     try:
-        with logfire.span(
-            "mcp.http.request",
-            method="PATCH",
-            client_name=client_name,
-            operation=operation,
-            path_template=path_template,
-            phase="request",
-            has_query=bool(params),
-            has_body=any(value is not None for value in (content, data, files, json)),
-        ) as request_span:
-            response = await client.patch(
-                url,
-                content=content,
-                data=data,
-                files=files,
-                json=json,
-                params=params,
-                headers=headers,
-                cookies=cookies,
-                auth=auth,
-                follow_redirects=follow_redirects,
-                timeout=timeout,
-                extensions=extensions,
-            )
-            request_span.set_attributes(_response_span_attrs(response))
+        response = await client.patch(
+            url,
+            content=content,
+            data=data,
+            files=files,
+            json=json,
+            params=params,
+            headers=headers,
+            cookies=cookies,
+            auth=auth,
+            follow_redirects=follow_redirects,
+            timeout=timeout,
+            extensions=extensions,
+        )
 
         if response.is_success:
             return response
@@ -493,13 +413,7 @@ async def call_patch(
         raise ToolError(error_message) from e
     except TransportError as e:
         # No HTTP response arrived (timeout, connect failure) — wrap with actionable text (#1034)
-        if request_span is not None:
-            request_span.set_attributes(_transport_error_span_attrs(e))
         raise ToolError(_transport_error_message(e, url, "PATCH")) from e
-    except Exception as e:
-        if request_span is not None:
-            request_span.set_attributes(_transport_error_span_attrs(e))
-        raise
 
 
 async def call_post(
@@ -546,34 +460,22 @@ async def call_post(
     """
     logger.debug(f"Calling POST '{url}'")
     error_message = None
-    request_span: logfire.LogfireSpan | None = None
 
     try:
-        with logfire.span(
-            "mcp.http.request",
-            method="POST",
-            client_name=client_name,
-            operation=operation,
-            path_template=path_template,
-            phase="request",
-            has_query=bool(params),
-            has_body=any(value is not None for value in (content, data, files, json)),
-        ) as request_span:
-            response = await client.post(
-                url=url,
-                content=content,
-                data=data,
-                files=files,
-                json=json,
-                params=params,
-                headers=headers,
-                cookies=cookies,
-                auth=auth,
-                follow_redirects=follow_redirects,
-                timeout=timeout,
-                extensions=extensions,
-            )
-            request_span.set_attributes(_response_span_attrs(response))
+        response = await client.post(
+            url=url,
+            content=content,
+            data=data,
+            files=files,
+            json=json,
+            params=params,
+            headers=headers,
+            cookies=cookies,
+            auth=auth,
+            follow_redirects=follow_redirects,
+            timeout=timeout,
+            extensions=extensions,
+        )
         logger.debug(f"response: {_extract_response_data(response)}")
 
         if response.is_success:
@@ -603,13 +505,7 @@ async def call_post(
         raise ToolError(error_message) from e
     except TransportError as e:
         # No HTTP response arrived (timeout, connect failure) — wrap with actionable text (#1034)
-        if request_span is not None:
-            request_span.set_attributes(_transport_error_span_attrs(e))
         raise ToolError(_transport_error_message(e, url, "POST")) from e
-    except Exception as e:
-        if request_span is not None:
-            request_span.set_attributes(_transport_error_span_attrs(e))
-        raise
 
 
 async def resolve_entity_id(client: AsyncClient, project_external_id: str, identifier: str) -> str:
@@ -680,30 +576,18 @@ async def call_delete(
     """
     logger.debug(f"Calling DELETE '{url}'")
     error_message = None
-    request_span: logfire.LogfireSpan | None = None
 
     try:
-        with logfire.span(
-            "mcp.http.request",
-            method="DELETE",
-            client_name=client_name,
-            operation=operation,
-            path_template=path_template,
-            phase="request",
-            has_query=bool(params),
-            has_body=False,
-        ) as request_span:
-            response = await client.delete(
-                url=url,
-                params=params,
-                headers=headers,
-                cookies=cookies,
-                auth=auth,
-                follow_redirects=follow_redirects,
-                timeout=timeout,
-                extensions=extensions,
-            )
-            request_span.set_attributes(_response_span_attrs(response))
+        response = await client.delete(
+            url=url,
+            params=params,
+            headers=headers,
+            cookies=cookies,
+            auth=auth,
+            follow_redirects=follow_redirects,
+            timeout=timeout,
+            extensions=extensions,
+        )
 
         if response.is_success:
             return response
@@ -732,10 +616,4 @@ async def call_delete(
         raise ToolError(error_message) from e
     except TransportError as e:
         # No HTTP response arrived (timeout, connect failure) — wrap with actionable text (#1034)
-        if request_span is not None:
-            request_span.set_attributes(_transport_error_span_attrs(e))
         raise ToolError(_transport_error_message(e, url, "DELETE")) from e
-    except Exception as e:
-        if request_span is not None:
-            request_span.set_attributes(_transport_error_span_attrs(e))
-        raise

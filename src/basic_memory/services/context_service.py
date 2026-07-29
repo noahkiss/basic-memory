@@ -11,7 +11,6 @@ from loguru import logger
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-import logfire
 from basic_memory import db
 from basic_memory.repository.entity_repository import EntityRepository
 from basic_memory.repository.observation_repository import ObservationRepository
@@ -121,180 +120,146 @@ class ContextService:
             f"Building context for URI: '{memory_url}' depth: '{depth}' since: '{since}' limit: '{limit}' offset: '{offset}'  max_related: '{max_related}'"
         )
 
-        with logfire.span(
-            "memory.build_context",
-            domain="memory",
-            action="build_context",
-            phase="build_context",
-            limit=limit,
-            offset=offset,
-        ):
-            fetch_limit = limit + 1
+        fetch_limit = limit + 1
 
-            normalized_path: Optional[str] = None
-            with logfire.span(
-                "memory.build_context.resolve_primary",
-                domain="memory",
-                action="build_context",
-                phase="resolve_primary",
-            ):
-                if memory_url:
-                    path = memory_url_path(memory_url)
-                    has_wildcard = "*" in path
+        normalized_path: Optional[str] = None
+        if memory_url:
+            path = memory_url_path(memory_url)
+            has_wildcard = "*" in path
 
-                    if has_wildcard:
-                        parts = path.split("*")
-                        normalized_parts = [
-                            generate_permalink(part, split_extension=False) if part else ""
-                            for part in parts
-                        ]
-                        normalized_path = "*".join(normalized_parts)
-                        logger.debug(f"Pattern search for '{normalized_path}'")
-                        primary = await self.search_repository.search(
-                            permalink_match=normalized_path, limit=fetch_limit, offset=offset
-                        )
-                    else:
-                        normalized_path = generate_permalink(path, split_extension=False)
-                        logger.debug(f"Direct lookup for '{normalized_path}'")
-                        primary = await self.search_repository.search(
-                            permalink=normalized_path, limit=fetch_limit, offset=offset
-                        )
-
-                        # Trigger: an exact permalink lookup matched nothing.
-                        # Why: a memory:// URI is also allowed to name a note by title or
-                        #   file path, so one more *exact* resolution pass is warranted.
-                        # Outcome: strict resolution only. A non-strict resolve falls through
-                        #   to a relaxed FTS retry (`root* OR not* OR exist*`) and returns
-                        #   results[0], so a miss came back as a real note with exit 0 and the
-                        #   requested URI rewritten to whatever matched — a hit and a miss were
-                        #   indistinguishable to the caller, and which note came back was
-                        #   arbitrary. Every tend verb doing reverse traversal by id calls this
-                        #   path, where that shape blesses fabricated links. See GAPS.md T10.
-                        if not primary and self.link_resolver:
-                            async with db.scoped_session(self._require_session_maker()) as session:
-                                entity = await self.link_resolver.resolve_link(
-                                    path,
-                                    use_search=False,
-                                    strict=True,
-                                    session=session,
-                                )
-                            if entity:
-                                logger.debug(
-                                    f"LinkResolver resolved '{path}' to permalink '{entity.permalink}'"
-                                )
-                                normalized_path = entity.permalink
-                                primary = await self.search_repository.search(
-                                    permalink=entity.permalink,
-                                    limit=fetch_limit,
-                                    offset=offset,
-                                )
-                else:
-                    logger.debug(f"Build context for '{types}'")
-                    primary = await self.search_repository.search(
-                        search_item_types=types,
-                        after_date=since,
-                        limit=fetch_limit,
-                        offset=offset,
-                    )
-
-            has_more = len(primary) > limit
-            if has_more:
-                primary = primary[:limit]
-
-            type_id_pairs = [(r.type, r.id) for r in primary] if primary else []
-            logger.debug(f"found primary type_id_pairs: {len(type_id_pairs)}")
-
-            with logfire.span(
-                "memory.build_context.find_related",
-                domain="memory",
-                action="build_context",
-                phase="find_related",
-            ):
-                related = await self.find_related(
-                    type_id_pairs, max_depth=depth, since=since, max_results=max_related
+            if has_wildcard:
+                parts = path.split("*")
+                normalized_parts = [
+                    generate_permalink(part, split_extension=False) if part else ""
+                    for part in parts
+                ]
+                normalized_path = "*".join(normalized_parts)
+                logger.debug(f"Pattern search for '{normalized_path}'")
+                primary = await self.search_repository.search(
+                    permalink_match=normalized_path, limit=fetch_limit, offset=offset
                 )
-            logger.debug(f"Found {len(related)} related results")
+            else:
+                normalized_path = generate_permalink(path, split_extension=False)
+                logger.debug(f"Direct lookup for '{normalized_path}'")
+                primary = await self.search_repository.search(
+                    permalink=normalized_path, limit=fetch_limit, offset=offset
+                )
 
-            entity_ids = []
-            for result in primary:
-                if result.type == SearchItemType.ENTITY.value:
-                    entity_ids.append(result.id)
-
-            for result in related:
-                if result.type == SearchItemType.ENTITY.value:
-                    entity_ids.append(result.id)
-
-            observations_by_entity = {}
-            if include_observations and entity_ids:
-                with logfire.span(
-                    "memory.build_context.load_observations",
-                    domain="memory",
-                    action="build_context",
-                    phase="load_observations",
-                    result_count=len(entity_ids),
-                ):
+                # Trigger: an exact permalink lookup matched nothing.
+                # Why: a memory:// URI is also allowed to name a note by title or
+                #   file path, so one more *exact* resolution pass is warranted.
+                # Outcome: strict resolution only. A non-strict resolve falls through
+                #   to a relaxed FTS retry (`root* OR not* OR exist*`) and returns
+                #   results[0], so a miss came back as a real note with exit 0 and the
+                #   requested URI rewritten to whatever matched — a hit and a miss were
+                #   indistinguishable to the caller, and which note came back was
+                #   arbitrary. Every tend verb doing reverse traversal by id calls this
+                #   path, where that shape blesses fabricated links. See GAPS.md T10.
+                if not primary and self.link_resolver:
                     async with db.scoped_session(self._require_session_maker()) as session:
-                        observations_by_entity = await self.observation_repository.find_by_entities(
-                            session, entity_ids
+                        entity = await self.link_resolver.resolve_link(
+                            path,
+                            use_search=False,
+                            strict=True,
+                            session=session,
                         )
-                logger.debug(f"Found observations for {len(observations_by_entity)} entities")
-
-            metadata = ContextMetadata(
-                uri=normalized_path if memory_url else None,
-                types=types,
-                depth=depth,
-                timeframe=since.isoformat() if since else None,
-                primary_count=len(primary),
-                related_count=len(related),
-                total_observations=sum(len(obs) for obs in observations_by_entity.values()),
-                total_relations=sum(1 for r in related if r.type == SearchItemType.RELATION),
-                has_more=has_more,
+                    if entity:
+                        logger.debug(
+                            f"LinkResolver resolved '{path}' to permalink '{entity.permalink}'"
+                        )
+                        normalized_path = entity.permalink
+                        primary = await self.search_repository.search(
+                            permalink=entity.permalink,
+                            limit=fetch_limit,
+                            offset=offset,
+                        )
+        else:
+            logger.debug(f"Build context for '{types}'")
+            primary = await self.search_repository.search(
+                search_item_types=types,
+                after_date=since,
+                limit=fetch_limit,
+                offset=offset,
             )
 
-            with logfire.span(
-                "memory.build_context.shape_results",
-                domain="memory",
-                action="build_context",
-                phase="shape_results",
-                result_count=len(primary),
-            ):
-                context_results = []
-                for primary_item in primary:
-                    related_to_primary = [r for r in related if r.root_id == primary_item.id]
+        has_more = len(primary) > limit
+        if has_more:
+            primary = primary[:limit]
 
-                    item_observations = []
-                    if primary_item.type == SearchItemType.ENTITY.value and include_observations:
-                        for obs in observations_by_entity.get(primary_item.id, []):
-                            item_observations.append(
-                                ContextResultRow(
-                                    type="observation",
-                                    id=obs.id,
-                                    title=f"{obs.category}: {obs.content[:50]}...",
-                                    # Observation.permalink is the single definition of the
-                                    # synthetic permalink format (200-char truncation plus
-                                    # content digest); rebuilding it inline diverged from the
-                                    # search index for long observations (#929). The parent
-                                    # entity is eager-loaded by ObservationRepository.
-                                    permalink=obs.permalink,
-                                    file_path=primary_item.file_path,
-                                    content=obs.content,
-                                    category=obs.category,
-                                    entity_id=primary_item.id,
-                                    depth=0,
-                                    root_id=primary_item.id,
-                                    created_at=primary_item.created_at,
-                                )
-                            )
+        type_id_pairs = [(r.type, r.id) for r in primary] if primary else []
+        logger.debug(f"found primary type_id_pairs: {len(type_id_pairs)}")
 
-                    context_results.append(
-                        ContextResultItem(
-                            primary_result=primary_item,
-                            observations=item_observations,
-                            related_results=related_to_primary,
+        related = await self.find_related(
+            type_id_pairs, max_depth=depth, since=since, max_results=max_related
+        )
+        logger.debug(f"Found {len(related)} related results")
+
+        entity_ids = []
+        for result in primary:
+            if result.type == SearchItemType.ENTITY.value:
+                entity_ids.append(result.id)
+
+        for result in related:
+            if result.type == SearchItemType.ENTITY.value:
+                entity_ids.append(result.id)
+
+        observations_by_entity = {}
+        if include_observations and entity_ids:
+            async with db.scoped_session(self._require_session_maker()) as session:
+                observations_by_entity = await self.observation_repository.find_by_entities(
+                    session, entity_ids
+                )
+            logger.debug(f"Found observations for {len(observations_by_entity)} entities")
+
+        metadata = ContextMetadata(
+            uri=normalized_path if memory_url else None,
+            types=types,
+            depth=depth,
+            timeframe=since.isoformat() if since else None,
+            primary_count=len(primary),
+            related_count=len(related),
+            total_observations=sum(len(obs) for obs in observations_by_entity.values()),
+            total_relations=sum(1 for r in related if r.type == SearchItemType.RELATION),
+            has_more=has_more,
+        )
+
+        context_results = []
+        for primary_item in primary:
+            related_to_primary = [r for r in related if r.root_id == primary_item.id]
+
+            item_observations = []
+            if primary_item.type == SearchItemType.ENTITY.value and include_observations:
+                for obs in observations_by_entity.get(primary_item.id, []):
+                    item_observations.append(
+                        ContextResultRow(
+                            type="observation",
+                            id=obs.id,
+                            title=f"{obs.category}: {obs.content[:50]}...",
+                            # Observation.permalink is the single definition of the
+                            # synthetic permalink format (200-char truncation plus
+                            # content digest); rebuilding it inline diverged from the
+                            # search index for long observations (#929). The parent
+                            # entity is eager-loaded by ObservationRepository.
+                            permalink=obs.permalink,
+                            file_path=primary_item.file_path,
+                            content=obs.content,
+                            category=obs.category,
+                            entity_id=primary_item.id,
+                            depth=0,
+                            root_id=primary_item.id,
+                            created_at=primary_item.created_at,
                         )
                     )
 
-            return ContextResult(results=context_results, metadata=metadata)
+            context_results.append(
+                ContextResultItem(
+                    primary_result=primary_item,
+                    observations=item_observations,
+                    related_results=related_to_primary,
+                )
+            )
+
+        return ContextResult(results=context_results, metadata=metadata)
 
     async def find_related(
         self,

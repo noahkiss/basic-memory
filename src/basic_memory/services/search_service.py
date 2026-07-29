@@ -14,8 +14,6 @@ from loguru import logger
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-import logfire
-
 from basic_memory import db
 from basic_memory.models import Entity
 from basic_memory.repository import EntityRepository
@@ -178,16 +176,6 @@ class SearchService:
             return None
         return prepared
 
-    @staticmethod
-    def _prepared_has_filters(prepared: _PreparedSearchQuery) -> bool:
-        return bool(
-            prepared.metadata_filters
-            or prepared.note_types
-            or prepared.search_item_types
-            or prepared.categories
-            or prepared.after_date
-        )
-
     async def _search_repository(
         self,
         prepared: _PreparedSearchQuery,
@@ -257,35 +245,23 @@ class SearchService:
             return []
 
         strict_search_text = prepared.search_text
-        has_query = bool(
-            strict_search_text or prepared.title or prepared.permalink or prepared.permalink_match
-        )
-        has_filters = self._prepared_has_filters(prepared)
 
-        with logfire.span(
-            "search.execute",
-            retrieval_mode=prepared.retrieval_mode.value,
-            has_query=has_query,
-            has_filters=has_filters,
+        logger.trace(f"Searching with query: {query}")
+        # Repository backends own relaxed FTS rendering because SQLite and
+        # Postgres use different prefix syntax. Passing a service-built
+        # boolean OR string would be treated as explicit boolean input and
+        # lose the prefix matching that rescues compound CJK tokens.
+        allow_relaxed = self._is_relaxed_fts_fallback_eligible(
+            query, strict_search_text, prepared.retrieval_mode
+        )
+        results = await self._search_repository(
+            prepared,
+            search_text=strict_search_text,
             limit=limit,
             offset=offset,
-        ):
-            logger.trace(f"Searching with query: {query}")
-            # Repository backends own relaxed FTS rendering because SQLite and
-            # Postgres use different prefix syntax. Passing a service-built
-            # boolean OR string would be treated as explicit boolean input and
-            # lose the prefix matching that rescues compound CJK tokens.
-            allow_relaxed = self._is_relaxed_fts_fallback_eligible(
-                query, strict_search_text, prepared.retrieval_mode
-            )
-            results = await self._search_repository(
-                prepared,
-                search_text=strict_search_text,
-                limit=limit,
-                offset=offset,
-                allow_relaxed=allow_relaxed,
-                session=session,
-            )
+            allow_relaxed=allow_relaxed,
+            session=session,
+        )
 
         return results
 
@@ -296,25 +272,15 @@ class SearchService:
             return 0
 
         strict_search_text = prepared.search_text
-        has_query = bool(
-            strict_search_text or prepared.title or prepared.permalink or prepared.permalink_match
-        )
-        has_filters = self._prepared_has_filters(prepared)
 
-        with logfire.span(
-            "search.count",
-            retrieval_mode=prepared.retrieval_mode.value,
-            has_query=has_query,
-            has_filters=has_filters,
-        ):
-            allow_relaxed = self._is_relaxed_fts_fallback_eligible(
-                query, strict_search_text, prepared.retrieval_mode
-            )
-            return await self._count_repository(
-                prepared,
-                search_text=strict_search_text,
-                allow_relaxed=allow_relaxed,
-            )
+        allow_relaxed = self._is_relaxed_fts_fallback_eligible(
+            query, strict_search_text, prepared.retrieval_mode
+        )
+        return await self._count_repository(
+            prepared,
+            search_text=strict_search_text,
+            allow_relaxed=allow_relaxed,
+        )
 
     @classmethod
     def _is_relaxed_fts_fallback_eligible(
@@ -428,13 +394,12 @@ class SearchService:
             f"permalink={entity.permalink} project_id={entity.project_id}"
         )
         try:
-            with logfire.span("search.index_entity_data", entity_id=entity.id):
-                await self.repository.delete_by_entity_id(entity_id=entity.id)
+            await self.repository.delete_by_entity_id(entity_id=entity.id)
 
-                if entity.is_markdown:
-                    await self.index_entity_markdown(entity, content)
-                else:
-                    await self.index_entity_file(entity)
+            if entity.is_markdown:
+                await self.index_entity_markdown(entity, content)
+            else:
+                await self.index_entity_file(entity)
 
             logger.debug(
                 f"[BackgroundTask] Completed search index for entity_id={entity.id} "
@@ -752,50 +717,78 @@ class SearchService:
         The project_id is automatically added by the repository when indexing.
         """
 
-        with logfire.span("search.index_markdown", entity_id=entity.id):
-            rows_to_index = []
+        rows_to_index = []
 
-            content_stems = []
-            content_snippet = ""
-            title_variants = self._generate_variants(entity.title)
-            content_stems.extend(title_variants)
+        content_stems = []
+        content_snippet = ""
+        title_variants = self._generate_variants(entity.title)
+        content_stems.extend(title_variants)
 
-            if content is None:
-                content = await self.file_service.read_entity_content(entity)
-            if content:
-                content_stems.append(content)
-                content_snippet = _strip_nul(content)
+        if content is None:
+            content = await self.file_service.read_entity_content(entity)
+        if content:
+            content_stems.append(content)
+            content_snippet = _strip_nul(content)
 
-            if entity.permalink:
-                content_stems.extend(self._generate_variants(entity.permalink))
+        if entity.permalink:
+            content_stems.extend(self._generate_variants(entity.permalink))
 
-            content_stems.extend(self._generate_variants(entity.file_path))
+        content_stems.extend(self._generate_variants(entity.file_path))
 
-            entity_tags = self._extract_entity_tags(entity)
-            if entity_tags:
-                content_stems.extend(entity_tags)
+        entity_tags = self._extract_entity_tags(entity)
+        if entity_tags:
+            content_stems.extend(entity_tags)
 
-            entity_content_stems = _strip_nul(
-                "\n".join(p for p in content_stems if p and p.strip())
+        entity_content_stems = _strip_nul("\n".join(p for p in content_stems if p and p.strip()))
+
+        if len(entity_content_stems) > MAX_CONTENT_STEMS_SIZE:  # pragma: no cover
+            entity_content_stems = entity_content_stems[:MAX_CONTENT_STEMS_SIZE]  # pragma: no cover
+
+        rows_to_index.append(
+            SearchIndexRow(
+                id=entity.id,
+                type=SearchItemType.ENTITY.value,
+                title=_strip_nul(entity.title),
+                content_stems=entity_content_stems,
+                content_snippet=content_snippet,
+                permalink=entity.permalink,
+                file_path=entity.file_path,
+                entity_id=entity.id,
+                metadata={
+                    "note_type": entity.note_type,
+                },
+                created_at=entity.created_at,
+                updated_at=entity.updated_at,
+                project_id=entity.project_id,
             )
+        )
 
-            if len(entity_content_stems) > MAX_CONTENT_STEMS_SIZE:  # pragma: no cover
-                entity_content_stems = entity_content_stems[
-                    :MAX_CONTENT_STEMS_SIZE
-                ]  # pragma: no cover
+        seen_permalinks: set[str] = {entity.permalink} if entity.permalink else set()
+        for obs in entity.observations:
+            obs_permalink = obs.permalink
+            if obs_permalink in seen_permalinks:
+                logger.debug(f"Skipping duplicate observation permalink: {obs_permalink}")
+                continue
+            seen_permalinks.add(obs_permalink)
 
+            obs_content_stems = _strip_nul(
+                "\n".join(p for p in self._generate_variants(obs.content) if p and p.strip())
+            )
+            if len(obs_content_stems) > MAX_CONTENT_STEMS_SIZE:  # pragma: no cover
+                obs_content_stems = obs_content_stems[:MAX_CONTENT_STEMS_SIZE]  # pragma: no cover
             rows_to_index.append(
                 SearchIndexRow(
-                    id=entity.id,
-                    type=SearchItemType.ENTITY.value,
-                    title=_strip_nul(entity.title),
-                    content_stems=entity_content_stems,
-                    content_snippet=content_snippet,
-                    permalink=entity.permalink,
+                    id=obs.id,
+                    type=SearchItemType.OBSERVATION.value,
+                    title=_strip_nul(f"{obs.category}: {obs.content[:100]}..."),
+                    content_stems=obs_content_stems,
+                    content_snippet=_strip_nul(obs.content),
+                    permalink=obs_permalink,
                     file_path=entity.file_path,
+                    category=obs.category,
                     entity_id=entity.id,
                     metadata={
-                        "note_type": entity.note_type,
+                        "tags": obs.tags,
                     },
                     created_at=entity.created_at,
                     updated_at=entity.updated_at,
@@ -803,70 +796,35 @@ class SearchService:
                 )
             )
 
-            seen_permalinks: set[str] = {entity.permalink} if entity.permalink else set()
-            for obs in entity.observations:
-                obs_permalink = obs.permalink
-                if obs_permalink in seen_permalinks:
-                    logger.debug(f"Skipping duplicate observation permalink: {obs_permalink}")
-                    continue
-                seen_permalinks.add(obs_permalink)
+        for rel in entity.outgoing_relations:
+            relation_title = _strip_nul(
+                f"{rel.from_entity.title} -> {rel.to_entity.title}"
+                if rel.to_entity
+                else f"{rel.from_entity.title}"
+            )
 
-                obs_content_stems = _strip_nul(
-                    "\n".join(p for p in self._generate_variants(obs.content) if p and p.strip())
+            rel_content_stems = _strip_nul(
+                "\n".join(p for p in self._generate_variants(relation_title) if p and p.strip())
+            )
+            rows_to_index.append(
+                SearchIndexRow(
+                    id=rel.id,
+                    title=relation_title,
+                    permalink=rel.permalink,
+                    content_stems=rel_content_stems,
+                    file_path=entity.file_path,
+                    type=SearchItemType.RELATION.value,
+                    entity_id=entity.id,
+                    from_id=rel.from_id,
+                    to_id=rel.to_id,
+                    relation_type=rel.relation_type,
+                    created_at=entity.created_at,
+                    updated_at=entity.updated_at,
+                    project_id=entity.project_id,
                 )
-                if len(obs_content_stems) > MAX_CONTENT_STEMS_SIZE:  # pragma: no cover
-                    obs_content_stems = obs_content_stems[
-                        :MAX_CONTENT_STEMS_SIZE
-                    ]  # pragma: no cover
-                rows_to_index.append(
-                    SearchIndexRow(
-                        id=obs.id,
-                        type=SearchItemType.OBSERVATION.value,
-                        title=_strip_nul(f"{obs.category}: {obs.content[:100]}..."),
-                        content_stems=obs_content_stems,
-                        content_snippet=_strip_nul(obs.content),
-                        permalink=obs_permalink,
-                        file_path=entity.file_path,
-                        category=obs.category,
-                        entity_id=entity.id,
-                        metadata={
-                            "tags": obs.tags,
-                        },
-                        created_at=entity.created_at,
-                        updated_at=entity.updated_at,
-                        project_id=entity.project_id,
-                    )
-                )
+            )
 
-            for rel in entity.outgoing_relations:
-                relation_title = _strip_nul(
-                    f"{rel.from_entity.title} -> {rel.to_entity.title}"
-                    if rel.to_entity
-                    else f"{rel.from_entity.title}"
-                )
-
-                rel_content_stems = _strip_nul(
-                    "\n".join(p for p in self._generate_variants(relation_title) if p and p.strip())
-                )
-                rows_to_index.append(
-                    SearchIndexRow(
-                        id=rel.id,
-                        title=relation_title,
-                        permalink=rel.permalink,
-                        content_stems=rel_content_stems,
-                        file_path=entity.file_path,
-                        type=SearchItemType.RELATION.value,
-                        entity_id=entity.id,
-                        from_id=rel.from_id,
-                        to_id=rel.to_id,
-                        relation_type=rel.relation_type,
-                        created_at=entity.created_at,
-                        updated_at=entity.updated_at,
-                        project_id=entity.project_id,
-                    )
-                )
-
-            await self.repository.bulk_index_items(rows_to_index)
+        await self.repository.bulk_index_items(rows_to_index)
 
     async def delete_by_permalink(self, permalink: str):
         """Delete an item from the search index."""

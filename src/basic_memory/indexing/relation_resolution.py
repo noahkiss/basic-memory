@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import Protocol
 
-import logfire
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -206,15 +205,10 @@ class RepositoryRelationResolutionRuntime:
 
         affected_entity_ids: AffectedEntityIds = set(write_result.affected_entity_ids)
         if write_result.duplicate_relation_ids:
-            with logfire.span(
-                "indexing.relation.resolve_conflicts",
+            logger.debug(
+                "Removed redundant unresolved relations",
                 relation_ids=write_result.duplicate_relation_ids,
-                conflict_count=len(write_result.duplicate_relation_ids),
-            ):
-                logger.debug(
-                    "Removed redundant unresolved relations",
-                    relation_ids=write_result.duplicate_relation_ids,
-                )
+            )
 
         if affected_entity_ids:
             async with db.scoped_session(self.session_maker) as session:

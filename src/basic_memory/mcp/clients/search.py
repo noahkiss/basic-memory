@@ -7,8 +7,6 @@ from typing import Any
 
 from httpx import AsyncClient
 
-import logfire
-
 # call_* helpers live in basic_memory.mcp.tools.utils; importing that at module
 # level executes the whole tools package (fastmcp + mcp SDK) during CLI startup,
 # so each method defers the import to call time instead (#886).
@@ -62,22 +60,15 @@ class SearchClient:
         """
         from basic_memory.mcp.tools.utils import call_post
 
-        with logfire.span(
-            "mcp.client.search.search",
+        response = await call_post(
+            self.http_client,
+            f"{self._base_path}/",
+            json=query,
+            params={"page": page, "page_size": page_size},
             client_name="search",
             operation="search",
-            page=page,
-            page_size=page_size,
-        ):
-            response = await call_post(
-                self.http_client,
-                f"{self._base_path}/",
-                json=query,
-                params={"page": page, "page_size": page_size},
-                client_name="search",
-                operation="search",
-                path_template="/v2/projects/{project_id}/search/",
-            )
+            path_template="/v2/projects/{project_id}/search/",
+        )
         payload = response.json()
 
         # Trigger: an older API server omits the exactness field.

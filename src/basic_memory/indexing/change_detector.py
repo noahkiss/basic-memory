@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from itertools import batched
 from typing import Protocol
 
-import logfire
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -135,47 +134,37 @@ async def detect_project_file_changes(
     store: ChangeDetectionStore,
 ) -> ChangeReport:
     """Detect project file changes from storage metadata and indexed state."""
-    with logfire.span(
-        "change_detector.detect_all_changes",
-        s3_file_count=len(storage_files),
-    ):
-        storage_checksum_by_path = storage_checksums_from_sources(storage_files)
-        storage_paths = tuple(storage_checksum_by_path)
+    storage_checksum_by_path = storage_checksums_from_sources(storage_files)
+    storage_paths = tuple(storage_checksum_by_path)
 
-        with logfire.span("change_detector.get_db_checksums", path_count=len(storage_paths)):
-            db_checksums = await store.load_indexed_file_checksums(storage_paths)
-            logger.debug(f"[CHANGE] Fetched {len(db_checksums)} checksums from DB")
+    db_checksums = await store.load_indexed_file_checksums(storage_paths)
+    logger.debug(f"[CHANGE] Fetched {len(db_checksums)} checksums from DB")
 
-        with logfire.span("change_detector.detect_deletes"):
-            all_db_paths = await store.load_all_indexed_paths()
+    all_db_paths = await store.load_all_indexed_paths()
 
-        move_target_checksums = plan_move_target_checksums(
-            storage_checksum_by_path=storage_checksum_by_path,
-            db_checksum_by_path=db_checksums,
-        )
-        with logfire.span(
-            "change_detector.detect_moves",
-            candidate_count=len(move_target_checksums),
-        ):
-            move_candidates = await store.load_move_candidates(move_target_checksums)
+    move_target_checksums = plan_move_target_checksums(
+        storage_checksum_by_path=storage_checksum_by_path,
+        db_checksum_by_path=db_checksums,
+    )
+    move_candidates = await store.load_move_candidates(move_target_checksums)
 
-        snapshot = ChangeDetectionSnapshot(
-            storage_checksum_by_path=storage_checksum_by_path,
-            db_checksum_by_path=db_checksums,
-            all_db_paths=all_db_paths,
-            move_candidates=move_candidates,
-        )
-        report = plan_change_detection_snapshot(snapshot)
+    snapshot = ChangeDetectionSnapshot(
+        storage_checksum_by_path=storage_checksum_by_path,
+        db_checksum_by_path=db_checksums,
+        all_db_paths=all_db_paths,
+        move_candidates=move_candidates,
+    )
+    report = plan_change_detection_snapshot(snapshot)
 
-        for old_path, new_path in report.moved_files.items():
-            logger.debug(f"[CHANGE] Detected move: {old_path} -> {new_path}")
-        logger.info(f"[CHANGE] Move detection: found {len(report.moved_files)} moved files")
-        logger.info(f"[CHANGE] Delete detection: found {len(report.deleted_files)} deleted files")
-        logger.info(
-            f"[CHANGE] Detection complete: {len(report.new_files)} new, "
-            f"{len(report.modified_files)} modified, "
-            f"{len(report.deleted_files)} deleted, {len(report.moved_files)} moved, "
-            f"{len(report.unchanged_files)} unchanged"
-        )
+    for old_path, new_path in report.moved_files.items():
+        logger.debug(f"[CHANGE] Detected move: {old_path} -> {new_path}")
+    logger.info(f"[CHANGE] Move detection: found {len(report.moved_files)} moved files")
+    logger.info(f"[CHANGE] Delete detection: found {len(report.deleted_files)} deleted files")
+    logger.info(
+        f"[CHANGE] Detection complete: {len(report.new_files)} new, "
+        f"{len(report.modified_files)} modified, "
+        f"{len(report.deleted_files)} deleted, {len(report.moved_files)} moved, "
+        f"{len(report.unchanged_files)} unchanged"
+    )
 
-        return report
+    return report

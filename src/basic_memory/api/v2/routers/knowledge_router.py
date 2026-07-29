@@ -19,7 +19,6 @@ from typing import Annotated
 from fastapi import APIRouter, Header, HTTPException, Response, Path, status
 from loguru import logger
 
-import logfire
 from basic_memory import db
 from basic_memory.services.exceptions import AmbiguousIdentifierError
 from basic_memory.services.directory_deletes import DirectoryDeleteServiceError
@@ -147,40 +146,34 @@ async def get_graph(
     Returns a flat node/edge structure optimized for rendering with graph libraries.
     Only includes resolved relations (where to_id is not null).
     """
-    with logfire.span(
-        "api.request.knowledge.get_graph",
-        entrypoint="api",
-        domain="knowledge",
-        action="get_graph",
-    ):
-        logger.info("API v2 request: get_graph")
+    logger.info("API v2 request: get_graph")
 
-        # Fetch all entities for this project
-        entities = await entity_repository.find_all(session, use_load_options=False)
-        nodes = [
-            GraphNode(
-                external_id=entity.external_id,
-                title=entity.title,
-                note_type=entity.note_type,
-                file_path=entity.file_path,
-            )
-            for entity in entities
-        ]
+    # Fetch all entities for this project
+    entities = await entity_repository.find_all(session, use_load_options=False)
+    nodes = [
+        GraphNode(
+            external_id=entity.external_id,
+            title=entity.title,
+            note_type=entity.note_type,
+            file_path=entity.file_path,
+        )
+        for entity in entities
+    ]
 
-        # Fetch all resolved relations (to_id is not null) with eager-loaded entities
-        relations = await relation_repository.find_all(session)
-        edges = [
-            GraphEdge(
-                from_id=relation.from_entity.external_id,
-                to_id=relation.to_entity.external_id,
-                relation_type=relation.relation_type,
-            )
-            for relation in relations
-            if relation.to_entity is not None
-        ]
+    # Fetch all resolved relations (to_id is not null) with eager-loaded entities
+    relations = await relation_repository.find_all(session)
+    edges = [
+        GraphEdge(
+            from_id=relation.from_entity.external_id,
+            to_id=relation.to_entity.external_id,
+            relation_type=relation.relation_type,
+        )
+        for relation in relations
+        if relation.to_entity is not None
+    ]
 
-        logger.info(f"API v2 response: graph with {len(nodes)} nodes and {len(edges)} edges")
-        return GraphResponse(nodes=nodes, edges=edges)
+    logger.info(f"API v2 response: graph with {len(nodes)} nodes and {len(edges)} edges")
+    return GraphResponse(nodes=nodes, edges=edges)
 
 
 ## Orphan entities endpoint
@@ -193,27 +186,21 @@ async def get_orphan_entities(
     session: SessionDep,
 ) -> OrphanEntitiesResponse:
     """Return entities that have no incoming or outgoing relations."""
-    with logfire.span(
-        "api.request.knowledge.get_orphans",
-        entrypoint="api",
-        domain="knowledge",
-        action="get_orphans",
-    ):
-        logger.info("API v2 request: get_orphan_entities")
+    logger.info("API v2 request: get_orphan_entities")
 
-        entities = await entity_repository.find_without_relations(session)
-        nodes = [
-            GraphNode(
-                external_id=entity.external_id,
-                title=entity.title,
-                note_type=entity.note_type,
-                file_path=entity.file_path,
-            )
-            for entity in entities
-        ]
+    entities = await entity_repository.find_without_relations(session)
+    nodes = [
+        GraphNode(
+            external_id=entity.external_id,
+            title=entity.title,
+            note_type=entity.note_type,
+            file_path=entity.file_path,
+        )
+        for entity in entities
+    ]
 
-        logger.info(f"API v2 response: {len(nodes)} orphan entities")
-        return OrphanEntitiesResponse(entities=nodes, total=len(nodes))
+    logger.info(f"API v2 response: {len(nodes)} orphan entities")
+    return OrphanEntitiesResponse(entities=nodes, total=len(nodes))
 
 
 ## Resolution endpoint
@@ -257,67 +244,61 @@ async def resolve_identifier(
             "resolution_method": "permalink"
         }
     """
-    with logfire.span(
-        "api.request.knowledge.resolve_entity",
-        entrypoint="api",
-        domain="knowledge",
-        action="resolve_entity",
-    ):
-        logger.info(f"API v2 request: resolve_identifier for '{data.identifier}'")
+    logger.info(f"API v2 request: resolve_identifier for '{data.identifier}'")
 
-        entity = await entity_repository.get_by_external_id(session, data.identifier)
-        resolution_method = "external_id" if entity else "search"
+    entity = await entity_repository.get_by_external_id(session, data.identifier)
+    resolution_method = "external_id" if entity else "search"
 
-        if not entity:
-            try:
-                entity = await link_resolver.resolve_link(
-                    data.identifier,
-                    source_path=data.source_path,
-                    strict=data.strict,
-                    session=session,
-                )
-            except AmbiguousIdentifierError as exc:
-                # A strict resolve refused to guess between several same-title notes (#1148).
-                # Surface it as 409 so edit/move report the ambiguity and ask for an exact id.
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail=str(exc),
-                ) from exc
-            if entity:
-                if entity.permalink == data.identifier:
-                    resolution_method = "permalink"
-                elif entity.title == data.identifier:
-                    resolution_method = "title"
-                elif entity.file_path == data.identifier:
-                    resolution_method = "path"
-                else:
-                    resolution_method = "search"
-
-        if not entity:
-            raise HTTPException(status_code=404, detail=f"Entity not found: '{data.identifier}'")
-
-        owner_project = await project_repository.get_by_id(session, entity.project_id)
-        if not owner_project:  # pragma: no cover
-            raise HTTPException(
-                status_code=500,
-                detail="Resolved entity references an unknown project",
+    if not entity:
+        try:
+            entity = await link_resolver.resolve_link(
+                data.identifier,
+                source_path=data.source_path,
+                strict=data.strict,
+                session=session,
             )
+        except AmbiguousIdentifierError as exc:
+            # A strict resolve refused to guess between several same-title notes (#1148).
+            # Surface it as 409 so edit/move report the ambiguity and ask for an exact id.
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=str(exc),
+            ) from exc
+        if entity:
+            if entity.permalink == data.identifier:
+                resolution_method = "permalink"
+            elif entity.title == data.identifier:
+                resolution_method = "title"
+            elif entity.file_path == data.identifier:
+                resolution_method = "path"
+            else:
+                resolution_method = "search"
 
-        result = EntityResolveResponse(
-            external_id=entity.external_id,
-            entity_id=entity.id,
-            project_external_id=owner_project.external_id,
-            permalink=entity.permalink,
-            file_path=entity.file_path,
-            title=entity.title,
-            resolution_method=resolution_method,
+    if not entity:
+        raise HTTPException(status_code=404, detail=f"Entity not found: '{data.identifier}'")
+
+    owner_project = await project_repository.get_by_id(session, entity.project_id)
+    if not owner_project:  # pragma: no cover
+        raise HTTPException(
+            status_code=500,
+            detail="Resolved entity references an unknown project",
         )
 
-        logger.debug(
-            f"API v2 response: resolved '{data.identifier}' to external_id={result.external_id} via {resolution_method}"
-        )
+    result = EntityResolveResponse(
+        external_id=entity.external_id,
+        entity_id=entity.id,
+        project_external_id=owner_project.external_id,
+        permalink=entity.permalink,
+        file_path=entity.file_path,
+        title=entity.title,
+        resolution_method=resolution_method,
+    )
 
-        return result
+    logger.debug(
+        f"API v2 response: resolved '{data.identifier}' to external_id={result.external_id} via {resolution_method}"
+    )
+
+    return result
 
 
 ## Single-file indexing endpoint
@@ -398,110 +379,98 @@ async def index_file(
             non-normalized segments, matches the project ignore rules, or is
             not markdown, 404 if the file does not exist on disk
     """
-    with logfire.span(
-        "api.request.knowledge.index_file",
-        entrypoint="api",
-        domain="knowledge",
-        action="index_file",
-    ):
-        logger.info(f"API v2 request: index_file file_path='{data.file_path}'")
+    logger.info(f"API v2 request: index_file file_path='{data.file_path}'")
 
-        if not validate_project_path(data.file_path, project_config.home):
-            raise HTTPException(
-                status_code=400,
-                detail=f"File path '{data.file_path}' is not allowed - "
-                "paths must stay within project boundaries",
-            )
-
-        # Trigger: segments like './' or '//' survive the traversal check above
-        # Why: a non-normalized path would index under a non-canonical DB key
-        # Outcome: reject fail-fast instead of guessing the canonical form
-        segments = data.file_path.replace("\\", "/").split("/")
-        if any(segment in ("", ".") for segment in segments):
-            raise HTTPException(
-                status_code=400,
-                detail=f"File path '{data.file_path}' is not normalized - "
-                "segments like './' or '//' are not allowed",
-            )
-
-        # Canonicalize to the actual on-disk casing so the DB lookup below hits the
-        # row keyed by the real path instead of inserting a wrong-cased duplicate.
-        file_path = _canonical_file_path(project_config.home, segments)
-        if file_path is None:
-            raise HTTPException(
-                status_code=404, detail=f"File not found on disk: '{data.file_path}'"
-            )
-        # Trigger: canonicalization rewrote a segment to its on-disk form, and that
-        #     segment may be a symlink. The pre-check above validated the ORIGINAL
-        #     request path — on a case-sensitive filesystem 'LINK/secret.md' does not
-        #     exist, so resolve() cannot follow the real 'link' symlink and the check
-        #     passes even when 'link' points outside the project root.
-        # Why: indexing through an escaping symlink would read and index content
-        #     outside the project boundary — and even an is_file() existence probe on
-        #     the joined path would follow the symlink and stat its target, so
-        #     containment must hold BEFORE any filesystem probe that follows symlinks.
-        #     Path.resolve() only walks symlink names (readlink); it never opens or
-        #     stats the final target, so it is safe to run pre-containment.
-        # Outcome: the canonical path is re-validated and the fully-resolved absolute
-        #     target must stay inside the resolved project home; escapes get a 400
-        #     before the file-existence probe below ever touches the target.
-        resolved_target = (project_config.home / file_path).resolve()
-        if not validate_project_path(file_path, project_config.home) or not (
-            resolved_target.is_relative_to(project_config.home.resolve())
-        ):
-            raise HTTPException(
-                status_code=400,
-                detail=f"File path '{data.file_path}' is not allowed - "
-                "paths must stay within project boundaries",
-            )
-        # Containment holds, so probing the resolved target cannot leave the project.
-        if not resolved_target.is_file():
-            raise HTTPException(
-                status_code=404, detail=f"File not found on disk: '{data.file_path}'"
-            )
-        # Trigger: the canonical path matches the .bmignore / project .gitignore rules
-        # Why: scan and watch flows filter ignored files before they ever reach the
-        #      indexer; indexing one here would bypass the ignored-file contract and
-        #      make hidden or gitignored content searchable
-        # Outcome: the same should_ignore_path() rules apply to single-file indexing
-        ignore_patterns = load_gitignore_patterns(project_config.home)
-        if should_ignore_path(
-            project_config.home / file_path, project_config.home, ignore_patterns
-        ):
-            raise HTTPException(
-                status_code=400,
-                detail=f"File path '{data.file_path}' {IGNORED_PATH_REJECTION_DETAIL} "
-                "and cannot be indexed",
-            )
-        if not file_service.is_markdown(file_path):
-            raise HTTPException(
-                status_code=400,
-                detail=f"Only markdown files can be indexed: '{data.file_path}'",
-            )
-
-        indexed = await file_indexer.index_file(file_path, source="api-index-file")
-        async with db.scoped_session(session_maker) as session:
-            entity = await entity_repository.get_by_id(session, indexed.entity_id)
-        if entity is None:  # pragma: no cover
-            raise HTTPException(
-                status_code=500,
-                detail=f"Indexed entity not found after indexing: '{data.file_path}'",
-            )
-
-        # Trigger: semantic search is enabled and the entity index was just refreshed
-        # Why: project indexing refreshes embedding vectors after changed files are
-        #      indexed; without the single-entity equivalent, a note recovered via
-        #      index-file stays missing or stale in semantic search until later work
-        # Outcome: vectors refresh synchronously before the response returns,
-        #          mirroring project indexing instead of the out-of-band scheduler
-        if app_config.semantic_search_enabled:
-            await search_service.sync_entity_vectors_batch([entity.id])
-
-        result = EntityResponseV2.model_validate(entity)
-        logger.info(
-            f"API v2 response: index_file file_path='{file_path}' external_id={result.external_id}"
+    if not validate_project_path(data.file_path, project_config.home):
+        raise HTTPException(
+            status_code=400,
+            detail=f"File path '{data.file_path}' is not allowed - "
+            "paths must stay within project boundaries",
         )
-        return result
+
+    # Trigger: segments like './' or '//' survive the traversal check above
+    # Why: a non-normalized path would index under a non-canonical DB key
+    # Outcome: reject fail-fast instead of guessing the canonical form
+    segments = data.file_path.replace("\\", "/").split("/")
+    if any(segment in ("", ".") for segment in segments):
+        raise HTTPException(
+            status_code=400,
+            detail=f"File path '{data.file_path}' is not normalized - "
+            "segments like './' or '//' are not allowed",
+        )
+
+    # Canonicalize to the actual on-disk casing so the DB lookup below hits the
+    # row keyed by the real path instead of inserting a wrong-cased duplicate.
+    file_path = _canonical_file_path(project_config.home, segments)
+    if file_path is None:
+        raise HTTPException(status_code=404, detail=f"File not found on disk: '{data.file_path}'")
+    # Trigger: canonicalization rewrote a segment to its on-disk form, and that
+    #     segment may be a symlink. The pre-check above validated the ORIGINAL
+    #     request path — on a case-sensitive filesystem 'LINK/secret.md' does not
+    #     exist, so resolve() cannot follow the real 'link' symlink and the check
+    #     passes even when 'link' points outside the project root.
+    # Why: indexing through an escaping symlink would read and index content
+    #     outside the project boundary — and even an is_file() existence probe on
+    #     the joined path would follow the symlink and stat its target, so
+    #     containment must hold BEFORE any filesystem probe that follows symlinks.
+    #     Path.resolve() only walks symlink names (readlink); it never opens or
+    #     stats the final target, so it is safe to run pre-containment.
+    # Outcome: the canonical path is re-validated and the fully-resolved absolute
+    #     target must stay inside the resolved project home; escapes get a 400
+    #     before the file-existence probe below ever touches the target.
+    resolved_target = (project_config.home / file_path).resolve()
+    if not validate_project_path(file_path, project_config.home) or not (
+        resolved_target.is_relative_to(project_config.home.resolve())
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=f"File path '{data.file_path}' is not allowed - "
+            "paths must stay within project boundaries",
+        )
+    # Containment holds, so probing the resolved target cannot leave the project.
+    if not resolved_target.is_file():
+        raise HTTPException(status_code=404, detail=f"File not found on disk: '{data.file_path}'")
+    # Trigger: the canonical path matches the .bmignore / project .gitignore rules
+    # Why: scan and watch flows filter ignored files before they ever reach the
+    #      indexer; indexing one here would bypass the ignored-file contract and
+    #      make hidden or gitignored content searchable
+    # Outcome: the same should_ignore_path() rules apply to single-file indexing
+    ignore_patterns = load_gitignore_patterns(project_config.home)
+    if should_ignore_path(project_config.home / file_path, project_config.home, ignore_patterns):
+        raise HTTPException(
+            status_code=400,
+            detail=f"File path '{data.file_path}' {IGNORED_PATH_REJECTION_DETAIL} "
+            "and cannot be indexed",
+        )
+    if not file_service.is_markdown(file_path):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Only markdown files can be indexed: '{data.file_path}'",
+        )
+
+    indexed = await file_indexer.index_file(file_path, source="api-index-file")
+    async with db.scoped_session(session_maker) as session:
+        entity = await entity_repository.get_by_id(session, indexed.entity_id)
+    if entity is None:  # pragma: no cover
+        raise HTTPException(
+            status_code=500,
+            detail=f"Indexed entity not found after indexing: '{data.file_path}'",
+        )
+
+    # Trigger: semantic search is enabled and the entity index was just refreshed
+    # Why: project indexing refreshes embedding vectors after changed files are
+    #      indexed; without the single-entity equivalent, a note recovered via
+    #      index-file stays missing or stale in semantic search until later work
+    # Outcome: vectors refresh synchronously before the response returns,
+    #          mirroring project indexing instead of the out-of-band scheduler
+    if app_config.semantic_search_enabled:
+        await search_service.sync_entity_vectors_batch([entity.id])
+
+    result = EntityResponseV2.model_validate(entity)
+    logger.info(
+        f"API v2 response: index_file file_path='{file_path}' external_id={result.external_id}"
+    )
+    return result
 
 
 ## Read endpoints
@@ -530,38 +499,32 @@ async def get_entity_by_id(
     Raises:
         HTTPException: 404 if entity not found
     """
-    with logfire.span(
-        "api.request.knowledge.get_entity",
-        entrypoint="api",
-        domain="knowledge",
-        action="get_entity",
-    ):
-        logger.info(f"API v2 request: get_entity_by_id entity_id={entity_id}")
+    logger.info(f"API v2 request: get_entity_by_id entity_id={entity_id}")
 
-        project = await project_repository.get_by_id(session, project_id)
-        if project is None:  # pragma: no cover
-            raise HTTPException(status_code=404, detail=f"Project with ID {project_id} not found")
+    project = await project_repository.get_by_id(session, project_id)
+    if project is None:  # pragma: no cover
+        raise HTTPException(status_code=404, detail=f"Project with ID {project_id} not found")
 
-        note_payload = await note_content_query_service.get_note_entity_payload_with_read_repair(
-            project_external_id=project.external_id,
-            entity_external_id=entity_id,
-            session=session,
-        )
-        if note_payload is not None:
-            result = entity_response_from_note_content_payload(note_payload)
-            logger.info(f"API v2 response: external_id={entity_id}, title='{result.title}'")
-            return result
-
-        entity = await entity_repository.get_by_external_id(session, entity_id)
-        if not entity:
-            raise HTTPException(
-                status_code=404, detail=f"Entity with external_id '{entity_id}' not found"
-            )
-
-        result = EntityResponseV2.model_validate(entity)
+    note_payload = await note_content_query_service.get_note_entity_payload_with_read_repair(
+        project_external_id=project.external_id,
+        entity_external_id=entity_id,
+        session=session,
+    )
+    if note_payload is not None:
+        result = entity_response_from_note_content_payload(note_payload)
         logger.info(f"API v2 response: external_id={entity_id}, title='{result.title}'")
-
         return result
+
+    entity = await entity_repository.get_by_external_id(session, entity_id)
+    if not entity:
+        raise HTTPException(
+            status_code=404, detail=f"Entity with external_id '{entity_id}' not found"
+        )
+
+    result = EntityResponseV2.model_validate(entity)
+    logger.info(f"API v2 response: external_id={entity_id}, title='{result.title}'")
+
+    return result
 
 
 ## Create endpoints
@@ -588,40 +551,34 @@ async def create_entity(
     Returns:
         Created entity with generated external_id (UUID) and file content
     """
-    with logfire.span(
-        "api.request.knowledge.create_entity",
-        entrypoint="api",
-        domain="knowledge",
-        action="create_entity",
-    ):
-        logger.info(
-            "API v2 request", endpoint="create_entity", note_type=data.note_type, title=data.title
-        )
+    logger.info(
+        "API v2 request", endpoint="create_entity", note_type=data.note_type, title=data.title
+    )
 
-        try:
-            accepted = await note_content_mutation_service.create_note(
-                project_external_id=project_external_id,
-                data=data,
-                user_profile_id=None,
-                source="api",
-            )
-        except NoteContentMutationServiceError as error:
-            raise HTTPException(status_code=error.status_code, detail=error.detail) from error
-
-        accepted = await note_content_materialization_provider.materialize_write_change(accepted)
-        result = entity_response_from_note_content_payload(accepted.payload)
-        _schedule_post_write_followups(
-            vector_sync_scheduler=vector_sync_scheduler,
-            relation_resolution_scheduler=relation_resolution_scheduler,
-            app_config=app_config,
-            entity_id=result.id,
-            project_id=project_id,
+    try:
+        accepted = await note_content_mutation_service.create_note(
+            project_external_id=project_external_id,
+            data=data,
+            user_profile_id=None,
+            source="api",
         )
+    except NoteContentMutationServiceError as error:
+        raise HTTPException(status_code=error.status_code, detail=error.detail) from error
 
-        logger.info(
-            f"API v2 response: endpoint='create_entity' external_id={result.external_id}, title={result.title}, permalink={result.permalink}, status_code=202"
-        )
-        return result
+    accepted = await note_content_materialization_provider.materialize_write_change(accepted)
+    result = entity_response_from_note_content_payload(accepted.payload)
+    _schedule_post_write_followups(
+        vector_sync_scheduler=vector_sync_scheduler,
+        relation_resolution_scheduler=relation_resolution_scheduler,
+        app_config=app_config,
+        entity_id=result.id,
+        project_id=project_id,
+    )
+
+    logger.info(
+        f"API v2 response: endpoint='create_entity' external_id={result.external_id}, title={result.title}, permalink={result.permalink}, status_code=202"
+    )
+    return result
 
 
 ## Update endpoints
@@ -668,39 +625,33 @@ async def update_entity_by_id(
     Returns:
         Updated entity with file content
     """
-    with logfire.span(
-        "api.request.knowledge.update_entity",
-        entrypoint="api",
-        domain="knowledge",
-        action="update_entity",
-    ):
-        logger.info(f"API v2 request: update_entity_by_id entity_id={entity_id}")
+    logger.info(f"API v2 request: update_entity_by_id entity_id={entity_id}")
 
-        try:
-            accepted = await note_content_mutation_service.update_note(
-                project_external_id=project_external_id,
-                entity_external_id=entity_id,
-                data=data,
-                user_profile_id=None,
-                source="api",
-                base_checksum=base_checksum,
-            )
-        except NoteContentMutationServiceError as error:
-            raise HTTPException(status_code=error.status_code, detail=error.detail) from error
-
-        accepted = await note_content_materialization_provider.materialize_write_change(accepted)
-        response.status_code = status.HTTP_202_ACCEPTED
-        result = entity_response_from_note_content_payload(accepted.payload)
-        _schedule_post_write_followups(
-            vector_sync_scheduler=vector_sync_scheduler,
-            relation_resolution_scheduler=relation_resolution_scheduler,
-            app_config=app_config,
-            entity_id=result.id,
-            project_id=project_id,
+    try:
+        accepted = await note_content_mutation_service.update_note(
+            project_external_id=project_external_id,
+            entity_external_id=entity_id,
+            data=data,
+            user_profile_id=None,
+            source="api",
+            base_checksum=base_checksum,
         )
+    except NoteContentMutationServiceError as error:
+        raise HTTPException(status_code=error.status_code, detail=error.detail) from error
 
-        logger.info(f"API v2 response: external_id={entity_id}, status_code={response.status_code}")
-        return result
+    accepted = await note_content_materialization_provider.materialize_write_change(accepted)
+    response.status_code = status.HTTP_202_ACCEPTED
+    result = entity_response_from_note_content_payload(accepted.payload)
+    _schedule_post_write_followups(
+        vector_sync_scheduler=vector_sync_scheduler,
+        relation_resolution_scheduler=relation_resolution_scheduler,
+        app_config=app_config,
+        entity_id=result.id,
+        project_id=project_id,
+    )
+
+    logger.info(f"API v2 response: external_id={entity_id}, status_code={response.status_code}")
+    return result
 
 
 @router.patch(
@@ -733,42 +684,36 @@ async def edit_entity_by_id(
     Raises:
         HTTPException: 404 if entity not found, 400 if edit fails
     """
-    with logfire.span(
-        "api.request.knowledge.edit_entity",
-        entrypoint="api",
-        domain="knowledge",
-        action="edit_entity",
-    ):
-        logger.info(
-            f"API v2 request: edit_entity_by_id entity_id={entity_id}, operation='{data.operation}'"
+    logger.info(
+        f"API v2 request: edit_entity_by_id entity_id={entity_id}, operation='{data.operation}'"
+    )
+
+    try:
+        accepted = await note_content_mutation_service.edit_note(
+            project_external_id=project_external_id,
+            entity_external_id=entity_id,
+            data=data,
+            user_profile_id=None,
+            source="api",
         )
+    except NoteContentMutationServiceError as error:
+        raise HTTPException(status_code=error.status_code, detail=error.detail) from error
 
-        try:
-            accepted = await note_content_mutation_service.edit_note(
-                project_external_id=project_external_id,
-                entity_external_id=entity_id,
-                data=data,
-                user_profile_id=None,
-                source="api",
-            )
-        except NoteContentMutationServiceError as error:
-            raise HTTPException(status_code=error.status_code, detail=error.detail) from error
+    accepted = await note_content_materialization_provider.materialize_write_change(accepted)
+    result = entity_response_from_note_content_payload(accepted.payload)
+    _schedule_post_write_followups(
+        vector_sync_scheduler=vector_sync_scheduler,
+        relation_resolution_scheduler=relation_resolution_scheduler,
+        app_config=app_config,
+        entity_id=result.id,
+        project_id=project_id,
+    )
 
-        accepted = await note_content_materialization_provider.materialize_write_change(accepted)
-        result = entity_response_from_note_content_payload(accepted.payload)
-        _schedule_post_write_followups(
-            vector_sync_scheduler=vector_sync_scheduler,
-            relation_resolution_scheduler=relation_resolution_scheduler,
-            app_config=app_config,
-            entity_id=result.id,
-            project_id=project_id,
-        )
+    logger.info(
+        f"API v2 response: external_id={entity_id}, operation='{data.operation}', status_code=202"
+    )
 
-        logger.info(
-            f"API v2 response: external_id={entity_id}, operation='{data.operation}', status_code=202"
-        )
-
-        return result
+    return result
 
 
 ## Delete endpoints
@@ -798,28 +743,22 @@ async def delete_entity_by_id(
 
     Note: Returns deleted=False if entity doesn't exist (idempotent)
     """
-    with logfire.span(
-        "api.request.knowledge.delete_entity",
-        entrypoint="api",
-        domain="knowledge",
-        action="delete_entity",
-    ):
-        logger.info(f"API v2 request: delete_entity_by_id entity_id={entity_id}")
+    logger.info(f"API v2 request: delete_entity_by_id entity_id={entity_id}")
 
-        try:
-            accepted = await note_content_mutation_service.delete_note(
-                project_external_id=project_external_id,
-                entity_external_id=entity_id,
-            )
-        except NoteContentMutationServiceError as error:
-            raise HTTPException(status_code=error.status_code, detail=error.detail) from error
+    try:
+        accepted = await note_content_mutation_service.delete_note(
+            project_external_id=project_external_id,
+            entity_external_id=entity_id,
+        )
+    except NoteContentMutationServiceError as error:
+        raise HTTPException(status_code=error.status_code, detail=error.detail) from error
 
-        accepted = await note_content_materialization_provider.materialize_delete_change(accepted)
-        result = delete_response_from_note_content_payload(accepted.payload)
+    accepted = await note_content_materialization_provider.materialize_delete_change(accepted)
+    result = delete_response_from_note_content_payload(accepted.payload)
 
-        logger.info(f"API v2 response: external_id={entity_id}, deleted={result.deleted}")
+    logger.info(f"API v2 response: external_id={entity_id}, deleted={result.deleted}")
 
-        return result
+    return result
 
 
 ## Move endpoint
@@ -856,40 +795,34 @@ async def move_entity(
     Returns:
         Updated entity with new file path
     """
-    with logfire.span(
-        "api.request.knowledge.move_entity",
-        entrypoint="api",
-        domain="knowledge",
-        action="move_entity",
-    ):
-        logger.info(
-            f"API v2 request: move_entity entity_id={entity_id}, destination='{data.destination_path}'"
+    logger.info(
+        f"API v2 request: move_entity entity_id={entity_id}, destination='{data.destination_path}'"
+    )
+
+    try:
+        accepted = await note_content_mutation_service.move_note(
+            project_external_id=project_external_id,
+            entity_external_id=entity_id,
+            destination_path=data.destination_path,
+            user_profile_id=None,
+            source="api",
         )
+    except NoteContentMutationServiceError as error:
+        raise HTTPException(status_code=error.status_code, detail=error.detail) from error
 
-        try:
-            accepted = await note_content_mutation_service.move_note(
-                project_external_id=project_external_id,
-                entity_external_id=entity_id,
-                destination_path=data.destination_path,
-                user_profile_id=None,
-                source="api",
-            )
-        except NoteContentMutationServiceError as error:
-            raise HTTPException(status_code=error.status_code, detail=error.detail) from error
+    accepted = await note_content_materialization_provider.materialize_write_change(accepted)
+    result = entity_response_from_note_content_payload(accepted.payload)
+    _schedule_post_write_followups(
+        vector_sync_scheduler=vector_sync_scheduler,
+        relation_resolution_scheduler=relation_resolution_scheduler,
+        app_config=app_config,
+        entity_id=result.id,
+        project_id=project_id,
+    )
 
-        accepted = await note_content_materialization_provider.materialize_write_change(accepted)
-        result = entity_response_from_note_content_payload(accepted.payload)
-        _schedule_post_write_followups(
-            vector_sync_scheduler=vector_sync_scheduler,
-            relation_resolution_scheduler=relation_resolution_scheduler,
-            app_config=app_config,
-            entity_id=result.id,
-            project_id=project_id,
-        )
+    logger.info(f"API v2 response: moved external_id={entity_id} to '{data.destination_path}'")
 
-        logger.info(f"API v2 response: moved external_id={entity_id} to '{data.destination_path}'")
-
-        return result
+    return result
 
 
 ## Move directory endpoint
@@ -920,50 +853,42 @@ async def move_directory(
     Returns:
         DirectoryMoveResult with counts and details of moved files
     """
-    with logfire.span(
-        "api.request.knowledge.move_directory",
-        entrypoint="api",
-        domain="knowledge",
-        action="move_directory",
-    ):
-        logger.info(
-            f"API v2 request: move_directory source='{data.source_directory}', destination='{data.destination_directory}'"
+    logger.info(
+        f"API v2 request: move_directory source='{data.source_directory}', destination='{data.destination_directory}'"
+    )
+
+    try:
+        # Move the directory using the service
+        result = await entity_service.move_directory(
+            source_directory=data.source_directory,
+            destination_directory=data.destination_directory,
+            project_config=project_config,
+            app_config=app_config,
         )
 
-        try:
-            # Move the directory using the service
-            result = await entity_service.move_directory(
-                source_directory=data.source_directory,
-                destination_directory=data.destination_directory,
-                project_config=project_config,
-                app_config=app_config,
-            )
+        # Reindex moved entities
+        for file_path in result.moved_files:
+            async with db.scoped_session(session_maker) as session:
+                entity = await entity_service.link_resolver.resolve_link(file_path, session=session)
+            if entity:
+                await search_service.index_entity(entity)
+                _schedule_post_write_followups(
+                    vector_sync_scheduler=vector_sync_scheduler,
+                    relation_resolution_scheduler=relation_resolution_scheduler,
+                    app_config=app_config,
+                    entity_id=entity.id,
+                    project_id=project_id,
+                )
 
-            # Reindex moved entities
-            for file_path in result.moved_files:
-                async with db.scoped_session(session_maker) as session:
-                    entity = await entity_service.link_resolver.resolve_link(
-                        file_path, session=session
-                    )
-                if entity:
-                    await search_service.index_entity(entity)
-                    _schedule_post_write_followups(
-                        vector_sync_scheduler=vector_sync_scheduler,
-                        relation_resolution_scheduler=relation_resolution_scheduler,
-                        app_config=app_config,
-                        entity_id=entity.id,
-                        project_id=project_id,
-                    )
+        logger.info(
+            f"API v2 response: move_directory "
+            f"total={result.total_files}, success={result.successful_moves}, failed={result.failed_moves}"
+        )
+        return result
 
-            logger.info(
-                f"API v2 response: move_directory "
-                f"total={result.total_files}, success={result.successful_moves}, failed={result.failed_moves}"
-            )
-            return result
-
-        except Exception as e:
-            logger.error(f"Error moving directory: {e}")
-            raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error moving directory: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 ## Delete directory endpoint
@@ -990,29 +915,23 @@ async def delete_directory(
     Returns:
         JSON payload with counts and runtime file cleanup status
     """
-    with logfire.span(
-        "api.request.knowledge.delete_directory",
-        entrypoint="api",
-        domain="knowledge",
-        action="delete_directory",
-    ):
-        logger.info(f"API v2 request: delete_directory directory='{data.directory}'")
+    logger.info(f"API v2 request: delete_directory directory='{data.directory}'")
 
-        try:
-            result = await directory_delete_service.delete_directory(
-                project_external_id=project_external_id,
-                directory=data.directory,
-            )
-            payload = result.to_response_payload()
-            logger.info(
-                f"API v2 response: delete_directory "
-                f"total={payload['total_files']}, "
-                f"success={payload['successful_deletes']}, "
-                f"failed={payload['failed_deletes']}, "
-                f"file_delete_status={payload['file_delete_status']}"
-            )
-            return runtime_json_response(status_code=result.http_status_code, payload=payload)
+    try:
+        result = await directory_delete_service.delete_directory(
+            project_external_id=project_external_id,
+            directory=data.directory,
+        )
+        payload = result.to_response_payload()
+        logger.info(
+            f"API v2 response: delete_directory "
+            f"total={payload['total_files']}, "
+            f"success={payload['successful_deletes']}, "
+            f"failed={payload['failed_deletes']}, "
+            f"file_delete_status={payload['file_delete_status']}"
+        )
+        return runtime_json_response(status_code=result.http_status_code, payload=payload)
 
-        except DirectoryDeleteServiceError as error:
-            logger.error(f"Error deleting directory: {error.detail}")
-            raise HTTPException(status_code=error.status_code, detail=error.detail) from error
+    except DirectoryDeleteServiceError as error:
+        logger.error(f"Error deleting directory: {error.detail}")
+        raise HTTPException(status_code=error.status_code, detail=error.detail) from error

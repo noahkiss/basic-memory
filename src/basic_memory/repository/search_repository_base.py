@@ -8,7 +8,6 @@ from dataclasses import replace
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
 
-import logfire as logfire
 from loguru import logger
 from sqlalchemy import Executable, Result, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker

@@ -11,7 +11,6 @@ from typing import Dict, Optional, Tuple
 
 from loguru import logger
 
-from basic_memory import __version__
 from basic_memory import config_logging as _config_logging
 from basic_memory.config_migrations import RETIRED_PROJECT_KEYS, RETIRED_TOP_LEVEL_KEYS
 from basic_memory.config_models import (
@@ -32,7 +31,6 @@ from basic_memory.config_models import (
     resolve_data_dir as resolve_data_dir,
     shared_fastembed_cache_dir as shared_fastembed_cache_dir,
 )
-from basic_memory.telemetry import configure_telemetry
 from basic_memory.utils import generate_permalink, setup_logging
 
 
@@ -249,19 +247,9 @@ def save_basic_memory_config(file_path: Path, config: BasicMemoryConfig) -> None
         logger.error(f"Failed to save config: {error}")
 
 
-def _configure_logfire_for_entrypoint(entrypoint: str) -> None:
-    _config_logging.configure_logfire_for_entrypoint(
-        entrypoint,
-        config=ConfigManager().config,
-        service_version=__version__,
-        configure_telemetry=configure_telemetry,
-    )
-
-
 def init_cli_logging() -> None:
     """Initialize CLI logging without writing protocol output to stdout."""
     log_level = os.getenv("BASIC_MEMORY_LOG_LEVEL", "INFO")
-    _configure_logfire_for_entrypoint("cli")
     _config_logging.initialize_file_logging(
         log_level=log_level,
         setup_logging=setup_logging,
@@ -271,7 +259,6 @@ def init_cli_logging() -> None:
 def init_mcp_logging() -> None:
     """Initialize MCP logging without corrupting the JSON-RPC stream."""
     log_level = os.getenv("BASIC_MEMORY_LOG_LEVEL", "INFO")
-    _configure_logfire_for_entrypoint("mcp")
     _config_logging.initialize_file_logging(
         log_level=log_level,
         setup_logging=setup_logging,
@@ -281,7 +268,6 @@ def init_mcp_logging() -> None:
 def init_api_logging() -> None:
     """Initialize API file logging without writing to stdout."""
     log_level = os.getenv("BASIC_MEMORY_LOG_LEVEL", "INFO")
-    _configure_logfire_for_entrypoint("api")
     _config_logging.initialize_file_logging(
         log_level=log_level,
         setup_logging=setup_logging,

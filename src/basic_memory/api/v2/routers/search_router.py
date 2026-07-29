@@ -8,7 +8,6 @@ import asyncio
 
 from fastapi import APIRouter, HTTPException, Path
 
-import logfire
 from basic_memory.api.v2.utils import to_search_results
 from basic_memory.repository.semantic_errors import (
     SemanticDependenciesMissingError,
@@ -50,90 +49,43 @@ async def search(
     Returns:
         SearchResponse with paginated search results
     """
-    with logfire.span(
-        "api.request.search",
-        entrypoint="api",
-        domain="search",
-        action="search",
-        page=page,
-        page_size=page_size,
-        retrieval_mode=query.retrieval_mode.value,
-        has_query=bool(
-            (query.text and query.text.strip())
-            or query.title
-            or query.permalink
-            or query.permalink_match
-        ),
-        has_filters=bool(
-            query.note_types or query.entity_types or query.categories or query.metadata_filters
-        ),
-    ):
-        offset = (page - 1) * page_size
-        exact_count_available = query.retrieval_mode == SearchRetrievalMode.FTS
-        try:
-            with logfire.span(
-                "api.search.search.execute_query",
-                domain="search",
-                action="search",
-                phase="execute_query",
-                page=page,
-                page_size=page_size,
-            ):
-                if exact_count_available:
-                    results, total = await asyncio.gather(
-                        search_service.search(query, limit=page_size, offset=offset),
-                        search_service.count(query),
-                    )
-                else:
-                    results = await search_service.search(query, limit=page_size + 1, offset=offset)
-                    total = 0
-        except SemanticSearchDisabledError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        except SemanticDependenciesMissingError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-        with logfire.span(
-            "api.search.search.paginate_results",
-            domain="search",
-            action="search",
-            phase="paginate_results",
-            result_count=len(results),
-        ):
-            if exact_count_available:
-                has_more = offset + len(results) < total
-            else:
-                # Trigger: semantic modes would need another vector/hybrid retrieval to count.
-                # Why: search requests should not pay for a second semantic pass.
-                # Outcome: preserve probe pagination, leave total at 0, and mark it unknown.
-                has_more = len(results) > page_size
-                if has_more:
-                    results = results[:page_size]
-
-        with logfire.span(
-            "api.search.search.hydrate_results",
-            domain="search",
-            action="search",
-            phase="hydrate_results",
-            result_count=len(results),
-        ):
-            search_results = await to_search_results(entity_service, results)
-        with logfire.span(
-            "api.search.search.build_response",
-            domain="search",
-            action="search",
-            phase="build_response",
-            result_count=len(search_results),
-        ):
-            return SearchResponse(
-                results=search_results,
-                current_page=page,
-                page_size=page_size,
-                total=total,
-                total_is_exact=exact_count_available,
-                has_more=has_more,
+    offset = (page - 1) * page_size
+    exact_count_available = query.retrieval_mode == SearchRetrievalMode.FTS
+    try:
+        if exact_count_available:
+            results, total = await asyncio.gather(
+                search_service.search(query, limit=page_size, offset=offset),
+                search_service.count(query),
             )
+        else:
+            results = await search_service.search(query, limit=page_size + 1, offset=offset)
+            total = 0
+    except SemanticSearchDisabledError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except SemanticDependenciesMissingError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if exact_count_available:
+        has_more = offset + len(results) < total
+    else:
+        # Trigger: semantic modes would need another vector/hybrid retrieval to count.
+        # Why: search requests should not pay for a second semantic pass.
+        # Outcome: preserve probe pagination, leave total at 0, and mark it unknown.
+        has_more = len(results) > page_size
+        if has_more:
+            results = results[:page_size]
+
+    search_results = await to_search_results(entity_service, results)
+    return SearchResponse(
+        results=search_results,
+        current_page=page,
+        page_size=page_size,
+        total=total,
+        total_is_exact=exact_count_available,
+        has_more=has_more,
+    )
 
 
 @router.post("/search/reindex")

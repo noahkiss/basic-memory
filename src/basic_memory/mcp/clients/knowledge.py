@@ -7,8 +7,6 @@ from typing import Any
 
 from httpx import AsyncClient
 
-import logfire
-
 # call_* helpers live in basic_memory.mcp.tools.utils; importing that at module
 # level executes the whole tools package (fastmcp + mcp SDK) during CLI startup,
 # so each method defers the import to call time instead (#886).
@@ -63,19 +61,14 @@ class KnowledgeClient:
         """
         from basic_memory.mcp.tools.utils import call_post
 
-        with logfire.span(
-            "mcp.client.knowledge.create_entity",
+        response = await call_post(
+            self.http_client,
+            f"{self._base_path}/entities",
+            json=entity_data,
             client_name="knowledge",
             operation="create_entity",
-        ):
-            response = await call_post(
-                self.http_client,
-                f"{self._base_path}/entities",
-                json=entity_data,
-                client_name="knowledge",
-                operation="create_entity",
-                path_template="/v2/projects/{project_id}/knowledge/entities",
-            )
+            path_template="/v2/projects/{project_id}/knowledge/entities",
+        )
         return EntityResponse.model_validate(response.json())
 
     async def update_entity(
@@ -97,19 +90,14 @@ class KnowledgeClient:
         """
         from basic_memory.mcp.tools.utils import call_put
 
-        with logfire.span(
-            "mcp.client.knowledge.update_entity",
+        response = await call_put(
+            self.http_client,
+            f"{self._base_path}/entities/{entity_id}",
+            json=entity_data,
             client_name="knowledge",
             operation="update_entity",
-        ):
-            response = await call_put(
-                self.http_client,
-                f"{self._base_path}/entities/{entity_id}",
-                json=entity_data,
-                client_name="knowledge",
-                operation="update_entity",
-                path_template="/v2/projects/{project_id}/knowledge/entities/{entity_id}",
-            )
+            path_template="/v2/projects/{project_id}/knowledge/entities/{entity_id}",
+        )
         return EntityResponse.model_validate(response.json())
 
     async def get_entity(self, entity_id: str) -> EntityResponse:
@@ -126,18 +114,13 @@ class KnowledgeClient:
         """
         from basic_memory.mcp.tools.utils import call_get
 
-        with logfire.span(
-            "mcp.client.knowledge.get_entity",
+        response = await call_get(
+            self.http_client,
+            f"{self._base_path}/entities/{entity_id}",
             client_name="knowledge",
             operation="get_entity",
-        ):
-            response = await call_get(
-                self.http_client,
-                f"{self._base_path}/entities/{entity_id}",
-                client_name="knowledge",
-                operation="get_entity",
-                path_template="/v2/projects/{project_id}/knowledge/entities/{entity_id}",
-            )
+            path_template="/v2/projects/{project_id}/knowledge/entities/{entity_id}",
+        )
         return EntityResponse.model_validate(response.json())
 
     async def patch_entity(
@@ -159,19 +142,14 @@ class KnowledgeClient:
         """
         from basic_memory.mcp.tools.utils import call_patch
 
-        with logfire.span(
-            "mcp.client.knowledge.patch_entity",
+        response = await call_patch(
+            self.http_client,
+            f"{self._base_path}/entities/{entity_id}",
+            json=patch_data,
             client_name="knowledge",
             operation="patch_entity",
-        ):
-            response = await call_patch(
-                self.http_client,
-                f"{self._base_path}/entities/{entity_id}",
-                json=patch_data,
-                client_name="knowledge",
-                operation="patch_entity",
-                path_template="/v2/projects/{project_id}/knowledge/entities/{entity_id}",
-            )
+            path_template="/v2/projects/{project_id}/knowledge/entities/{entity_id}",
+        )
         return EntityResponse.model_validate(response.json())
 
     async def delete_entity(self, entity_id: str) -> DeleteEntitiesResponse:
@@ -188,18 +166,13 @@ class KnowledgeClient:
         """
         from basic_memory.mcp.tools.utils import call_delete
 
-        with logfire.span(
-            "mcp.client.knowledge.delete_entity",
+        response = await call_delete(
+            self.http_client,
+            f"{self._base_path}/entities/{entity_id}",
             client_name="knowledge",
             operation="delete_entity",
-        ):
-            response = await call_delete(
-                self.http_client,
-                f"{self._base_path}/entities/{entity_id}",
-                client_name="knowledge",
-                operation="delete_entity",
-                path_template="/v2/projects/{project_id}/knowledge/entities/{entity_id}",
-            )
+            path_template="/v2/projects/{project_id}/knowledge/entities/{entity_id}",
+        )
         return DeleteEntitiesResponse.model_validate(response.json())
 
     async def move_entity(self, entity_id: str, destination_path: str) -> EntityResponse:
@@ -217,19 +190,14 @@ class KnowledgeClient:
         """
         from basic_memory.mcp.tools.utils import call_put
 
-        with logfire.span(
-            "mcp.client.knowledge.move_entity",
+        response = await call_put(
+            self.http_client,
+            f"{self._base_path}/entities/{entity_id}/move",
+            json={"destination_path": destination_path},
             client_name="knowledge",
             operation="move_entity",
-        ):
-            response = await call_put(
-                self.http_client,
-                f"{self._base_path}/entities/{entity_id}/move",
-                json={"destination_path": destination_path},
-                client_name="knowledge",
-                operation="move_entity",
-                path_template="/v2/projects/{project_id}/knowledge/entities/{entity_id}/move",
-            )
+            path_template="/v2/projects/{project_id}/knowledge/entities/{entity_id}/move",
+        )
         return EntityResponse.model_validate(response.json())
 
     async def move_directory(
@@ -249,22 +217,17 @@ class KnowledgeClient:
         """
         from basic_memory.mcp.tools.utils import call_post
 
-        with logfire.span(
-            "mcp.client.knowledge.move_directory",
+        response = await call_post(
+            self.http_client,
+            f"{self._base_path}/move-directory",
+            json={
+                "source_directory": source_directory,
+                "destination_directory": destination_directory,
+            },
             client_name="knowledge",
             operation="move_directory",
-        ):
-            response = await call_post(
-                self.http_client,
-                f"{self._base_path}/move-directory",
-                json={
-                    "source_directory": source_directory,
-                    "destination_directory": destination_directory,
-                },
-                client_name="knowledge",
-                operation="move_directory",
-                path_template="/v2/projects/{project_id}/knowledge/move-directory",
-            )
+            path_template="/v2/projects/{project_id}/knowledge/move-directory",
+        )
         return DirectoryMoveResult.model_validate(response.json())
 
     async def delete_directory(self, directory: str) -> DirectoryDeleteResult:
@@ -281,19 +244,14 @@ class KnowledgeClient:
         """
         from basic_memory.mcp.tools.utils import call_post
 
-        with logfire.span(
-            "mcp.client.knowledge.delete_directory",
+        response = await call_post(
+            self.http_client,
+            f"{self._base_path}/delete-directory",
+            json={"directory": directory},
             client_name="knowledge",
             operation="delete_directory",
-        ):
-            response = await call_post(
-                self.http_client,
-                f"{self._base_path}/delete-directory",
-                json={"directory": directory},
-                client_name="knowledge",
-                operation="delete_directory",
-                path_template="/v2/projects/{project_id}/knowledge/delete-directory",
-            )
+            path_template="/v2/projects/{project_id}/knowledge/delete-directory",
+        )
         return DirectoryDeleteResult.model_validate(response.json())
 
     # --- Single-file indexing ---
@@ -312,19 +270,14 @@ class KnowledgeClient:
         """
         from basic_memory.mcp.tools.utils import call_post
 
-        with logfire.span(
-            "mcp.client.knowledge.index_file",
+        response = await call_post(
+            self.http_client,
+            f"{self._base_path}/index-file",
+            json={"file_path": file_path},
             client_name="knowledge",
             operation="index_file",
-        ):
-            response = await call_post(
-                self.http_client,
-                f"{self._base_path}/index-file",
-                json={"file_path": file_path},
-                client_name="knowledge",
-                operation="index_file",
-                path_template="/v2/projects/{project_id}/knowledge/index-file",
-            )
+            path_template="/v2/projects/{project_id}/knowledge/index-file",
+        )
         return EntityResponse.model_validate(response.json())
 
     # --- Orphan detection ---
@@ -333,18 +286,13 @@ class KnowledgeClient:
         """Get entities that have no incoming or outgoing relations."""
         from basic_memory.mcp.tools.utils import call_get
 
-        with logfire.span(
-            "mcp.client.knowledge.get_orphans",
+        response = await call_get(
+            self.http_client,
+            f"{self._base_path}/orphans",
             client_name="knowledge",
             operation="get_orphans",
-        ):
-            response = await call_get(
-                self.http_client,
-                f"{self._base_path}/orphans",
-                client_name="knowledge",
-                operation="get_orphans",
-                path_template="/v2/projects/{project_id}/knowledge/orphans",
-            )
+            path_template="/v2/projects/{project_id}/knowledge/orphans",
+        )
         return OrphanEntitiesResponse.model_validate(response.json()).entities
 
     # --- Resolution ---
@@ -358,19 +306,14 @@ class KnowledgeClient:
         """Request the complete entity-resolution payload."""
         from basic_memory.mcp.tools.utils import call_post
 
-        with logfire.span(
-            "mcp.client.knowledge.resolve_entity",
+        response = await call_post(
+            self.http_client,
+            f"{self._base_path}/resolve",
+            json={"identifier": identifier, "strict": strict},
             client_name="knowledge",
             operation="resolve_entity",
-        ):
-            response = await call_post(
-                self.http_client,
-                f"{self._base_path}/resolve",
-                json={"identifier": identifier, "strict": strict},
-                client_name="knowledge",
-                operation="resolve_entity",
-                path_template="/v2/projects/{project_id}/knowledge/resolve",
-            )
+            path_template="/v2/projects/{project_id}/knowledge/resolve",
+        )
         data: dict[str, Any] = response.json()
         return data
 

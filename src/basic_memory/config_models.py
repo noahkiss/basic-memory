@@ -178,24 +178,6 @@ class BasicMemoryConfig(BaseSettings):
     # overridden by ~/.basic-memory/config.json
     log_level: str = "INFO"
 
-    # Optional Logfire telemetry (disabled by default)
-    logfire_enabled: bool = Field(
-        default=False,
-        description="Enable Logfire instrumentation for local development or managed deployments.",
-    )
-    logfire_send_to_logfire: bool = Field(
-        default=False,
-        description="When true, allow Logfire to export telemetry to the configured backend.",
-    )
-    logfire_service_name: str = Field(
-        default="basic-memory",
-        description="Base service name used when constructing entrypoint-specific Logfire service names.",
-    )
-    logfire_environment: str | None = Field(
-        default=None,
-        description="Optional override for Logfire environment. Defaults to env when unset.",
-    )
-
     # Semantic search configuration
     semantic_search_enabled: bool = Field(
         default_factory=_default_semantic_search_enabled,

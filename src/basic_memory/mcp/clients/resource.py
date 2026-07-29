@@ -5,7 +5,6 @@ Encapsulates all /v2/projects/{project_id}/resource/* endpoints.
 
 from httpx import AsyncClient, Response
 
-import logfire
 # call_* helpers live in basic_memory.mcp.tools.utils; importing that at module
 # level executes the whole tools package (fastmcp + mcp SDK) during CLI startup,
 # so each method defers the import to call time instead (#886).
@@ -53,15 +52,10 @@ class ResourceClient:
         """
         from basic_memory.mcp.tools.utils import call_get
 
-        with logfire.span(
-            "mcp.client.resource.read",
+        return await call_get(
+            self.http_client,
+            f"{self._base_path}/{entity_id}",
             client_name="resource",
             operation="read",
-        ):
-            return await call_get(
-                self.http_client,
-                f"{self._base_path}/{entity_id}",
-                client_name="resource",
-                operation="read",
-                path_template="/v2/projects/{project_id}/resource/{entity_id}",
-            )
+            path_template="/v2/projects/{project_id}/resource/{entity_id}",
+        )

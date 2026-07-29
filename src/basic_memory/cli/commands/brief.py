@@ -7,7 +7,7 @@ work that is still open, and print it where an agent will see it at the top of a
 Three constraints shape the whole file, and each one is a reversal of how upstream did it:
 
 1. **It must be fast.** Upstream's brief reached through `basic_memory.mcp.tools`, which
-   pulls fastmcp, logfire, and the FastAPI ASGI app — measured at 4.2 s against a 1.0 s
+   pulls fastmcp and the FastAPI ASGI app — measured at 4.2 s against a 1.0 s
    floor for a native CLI command. A blocking multi-second hook on every session start is
    the reason the previous home-grown auto-injection got retired. So this queries the
    `entity` table directly through SQLAlchemy: no search index, no FTS, no HTTP, no MCP.

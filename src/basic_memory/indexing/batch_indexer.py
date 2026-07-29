@@ -12,7 +12,6 @@ from loguru import logger
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-import logfire
 from basic_memory import db
 from basic_memory.config import BasicMemoryConfig
 from basic_memory.file_utils import compute_checksum, has_frontmatter, remove_frontmatter
@@ -215,49 +214,35 @@ class BatchIndexer:
         if not self._is_markdown(file):
             raise ValueError(f"index_markdown_file requires markdown input: {file.path}")
 
-        with logfire.span("index.markdown_file.prepare", path=file.path):
-            prepared = await self._prepare_markdown_file(file)
+        prepared = await self._prepare_markdown_file(file)
         if existing_permalink_by_path is None:
-            with logfire.span("index.markdown_file.load_permalink_map", path=file.path):
-                existing_permalink_by_path = await self._get_file_path_to_permalink_map()
+            existing_permalink_by_path = await self._get_file_path_to_permalink_map()
 
         reserved_permalinks = {
             permalink
             for path, permalink in existing_permalink_by_path.items()
             if path != file.path and permalink
         }
-        with logfire.span("index.markdown_file.normalize", path=file.path):
-            prepared = await self._normalize_markdown_file(prepared, reserved_permalinks)
+        prepared = await self._normalize_markdown_file(prepared, reserved_permalinks)
         existing_permalink_by_path[file.path] = prepared.markdown.frontmatter.permalink
 
-        with logfire.span("index.markdown_file.persist", path=file.path, is_new=new):
-            persisted = await self._persist_markdown_file(
-                prepared,
-                is_new=new,
-                resolve_relations=resolve_relations,
-                reload_entity=False,
-            )
+        persisted = await self._persist_markdown_file(
+            prepared,
+            is_new=new,
+            resolve_relations=resolve_relations,
+            reload_entity=False,
+        )
         existing_permalink_by_path[file.path] = persisted.entity.permalink
 
-        with logfire.span(
-            "index.markdown_file.reload_entity",
-            path=file.path,
-            entity_id=persisted.entity.id,
-        ):
-            async with db.scoped_session(self.session_maker) as session:
-                refreshed = await self.entity_repository.find_by_ids(session, [persisted.entity.id])
+        async with db.scoped_session(self.session_maker) as session:
+            refreshed = await self.entity_repository.find_by_ids(session, [persisted.entity.id])
         if len(refreshed) != 1:  # pragma: no cover
             raise ValueError(f"Failed to reload indexed entity for {file.path}")
         entity = refreshed[0]
         prepared_entity = self._build_prepared_entity(persisted.prepared, entity)
 
         if index_search:
-            with logfire.span(
-                "index.markdown_file.refresh_search_index",
-                path=file.path,
-                entity_id=entity.id,
-            ):
-                return await self._refresh_search_index(prepared_entity, entity)
+            return await self._refresh_search_index(prepared_entity, entity)
 
         return IndexedEntity(
             path=prepared_entity.path,

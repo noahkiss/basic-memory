@@ -51,12 +51,6 @@ def anyio_backend():
 
 
 @pytest.fixture(autouse=True)
-def suppress_logfire_no_config_warning(monkeypatch) -> None:
-    """Keep tests focused on behavior instead of Logfire bootstrap warnings."""
-    monkeypatch.setenv("LOGFIRE_IGNORE_NO_CONFIG", "1")
-
-
-@pytest.fixture(autouse=True)
 def isolate_routing_env(monkeypatch) -> None:
     """Prevent command-routing env flags from leaking across tests."""
     monkeypatch.delenv("BASIC_MEMORY_FORCE_LOCAL", raising=False)

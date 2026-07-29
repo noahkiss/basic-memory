@@ -2,7 +2,6 @@
 
 from typing import TYPE_CHECKING, Annotated, Literal, Optional
 
-import logfire
 from httpx import HTTPStatusError
 from loguru import logger
 from fastmcp import Context
@@ -462,294 +461,86 @@ async def edit_note(
         if detected:
             project = detected
 
-    with logfire.span(
-        "mcp.tool.edit_note",
-        entrypoint="mcp",
-        tool_name="edit_note",
-        requested_project=project,
-        requested_project_id=project_id,
-        edit_operation=operation,
-        output_format=output_format,
-        has_section=bool(section),
-        has_find_text=bool(find_text),
-        expected_replacements=effective_replacements,
-        replace_subsections=effective_replace_subsections,
-        has_metadata=bool(metadata),
+    async with get_project_client(project, context=context, project_id=project_id) as (
+        client,
+        active_project,
     ):
-        async with get_project_client(project, context=context, project_id=project_id) as (
-            client,
-            active_project,
-        ):
-            logger.info(
-                f"MCP tool call tool=edit_note project={active_project.name} "
-                f"identifier={identifier} operation={operation} output_format={output_format}"
+        logger.info(
+            f"MCP tool call tool=edit_note project={active_project.name} "
+            f"identifier={identifier} operation={operation} output_format={output_format}"
+        )
+
+        # Validate operation
+        if operation not in EDIT_OPERATIONS:
+            raise ValueError(
+                f"Invalid operation '{operation}'. Must be one of: {', '.join(EDIT_OPERATIONS)}"
             )
 
-            # Validate operation
-            if operation not in EDIT_OPERATIONS:
+        # Validate required parameters for specific operations
+        if operation == "find_replace" and not find_text:
+            raise ValueError("find_text parameter is required for find_replace operation")
+        section_ops = ("replace_section", "insert_before_section", "insert_after_section")
+        if operation in section_ops and not section:
+            raise ValueError("section parameter is required for section-based operations")
+        # Reject null metadata values before dispatch so both the edit path and the
+        # append/prepend auto-create fallback behave identically — the service-side
+        # guard only covers existing notes, and an auto-created note would otherwise
+        # be written with a YAML null that indexing silently filters out.
+        if metadata:
+            null_keys = sorted(k for k, v in metadata.items() if v is None)
+            if null_keys:
                 raise ValueError(
-                    f"Invalid operation '{operation}'. Must be one of: {', '.join(EDIT_OPERATIONS)}"
+                    "metadata values cannot be null (key deletion is not supported): "
+                    + ", ".join(null_keys)
                 )
 
-            # Validate required parameters for specific operations
-            if operation == "find_replace" and not find_text:
-                raise ValueError("find_text parameter is required for find_replace operation")
-            section_ops = ("replace_section", "insert_before_section", "insert_after_section")
-            if operation in section_ops and not section:
-                raise ValueError("section parameter is required for section-based operations")
-            # Reject null metadata values before dispatch so both the edit path and the
-            # append/prepend auto-create fallback behave identically — the service-side
-            # guard only covers existing notes, and an auto-created note would otherwise
-            # be written with a YAML null that indexing silently filters out.
-            if metadata:
-                null_keys = sorted(k for k, v in metadata.items() if v is None)
-                if null_keys:
-                    raise ValueError(
-                        "metadata values cannot be null (key deletion is not supported): "
-                        + ", ".join(null_keys)
-                    )
+        # Use the PATCH endpoint to edit the entity
+        try:
+            # Import here to avoid circular import
+            from basic_memory.mcp.clients import KnowledgeClient
 
-            # Use the PATCH endpoint to edit the entity
+            # Use typed KnowledgeClient for API calls
+            knowledge_client = KnowledgeClient(client, active_project.external_id)
+            unresolved_project_route: UnresolvedProjectRouteError | None = None
             try:
-                # Import here to avoid circular import
-                from basic_memory.mcp.clients import KnowledgeClient
-
-                # Use typed KnowledgeClient for API calls
-                knowledge_client = KnowledgeClient(client, active_project.external_id)
-                unresolved_project_route: UnresolvedProjectRouteError | None = None
-                try:
-                    _, entity_identifier, _ = await resolve_project_and_path(
-                        client,
-                        identifier,
-                        active_project.name,
-                        context,
-                        strict_project_routing=True,
-                    )
-                except UnresolvedProjectRouteError as route_error:
-                    # Trigger: a memory URL's first segment is not a project, which
-                    #   can also describe a valid active-project path such as
-                    #   memory://src/existing-note.
-                    # Why: existing indexed notes must remain editable, but a miss
-                    #   must never reach append/prepend auto-create.
-                    # Outcome: resolve once with the read-compatible fallback, then
-                    #   raise the saved route error if normal recovery still misses.
-                    unresolved_project_route = route_error
-                    _, entity_identifier, _ = await resolve_project_and_path(
-                        client,
-                        identifier,
-                        active_project.name,
-                        context,
-                    )
-
-                file_created = False
-                entity_id = ""
-                result: EntityResponse | None = None
-
-                # Try to resolve the entity; for append/prepend, create it if not found
-                try:
-                    resolved_entity = await knowledge_client.resolve_entity_response(
-                        entity_identifier,
-                        strict=True,
-                    )
-                    if resolved_entity.project_external_id != active_project.external_id:
-                        # Trigger: the link resolver found a note owned by another project.
-                        # Why: patching through the active project's endpoint would leak
-                        #   an internal entity ID in a misleading 404 and cannot succeed.
-                        # Outcome: stop before mutation and provide the owning project ID.
-                        if output_format == "json":
-                            return {
-                                "title": None,
-                                "permalink": None,
-                                "file_path": None,
-                                "checksum": None,
-                                "operation": operation,
-                                "fileCreated": False,
-                                "error": "CROSS_PROJECT_ENTITY",
-                                "project": active_project.name,
-                                "targetProjectId": resolved_entity.project_external_id,
-                            }
-                        return _format_cross_project_entity_response(
-                            identifier=identifier,
-                            active_project=active_project.name,
-                            target_project_id=resolved_entity.project_external_id,
-                        )
-                    entity_id = resolved_entity.external_id
-                except Exception as resolve_error:
-                    error_msg = str(resolve_error).lower()
-                    is_not_found = "entity not found" in error_msg or "not found" in error_msg
-
-                    # Trigger: resolution missed but the file may already exist on disk
-                    # Why: files written directly to disk are invisible to identifier
-                    #      resolution until indexed; editing them should just work (#581)
-                    # Outcome: the single file is indexed and resolution retried once
-                    recovered_entity_id: str | None = None
-                    if is_not_found:
-                        recovered_entity_id = await _resolve_after_disk_recovery(
-                            knowledge_client, entity_identifier
-                        )
-
-                    if recovered_entity_id is not None:
-                        entity_id = recovered_entity_id
-                    elif is_not_found and unresolved_project_route is not None:
-                        raise unresolved_project_route
-                    elif is_not_found and operation in ("append", "prepend"):
-                        # Trigger: entity does not exist yet (on disk or in the index)
-                        # Why: append/prepend can meaningfully create a new note from the
-                        #      content, while find_replace/replace_section require existing
-                        #      content to modify
-                        # Outcome: note is created via the same path as write_note
-                        title, directory = _parse_identifier_to_title_and_directory(identifier)
-
-                        # Validate directory path (same security check as write_note)
-                        project_path = active_project.home
-                        if directory and not validate_project_path(directory, project_path):
-                            logger.warning(
-                                "Attempted path traversal attack blocked",
-                                directory=directory,
-                                project=active_project.name,
-                            )
-                            if output_format == "json":
-                                return {
-                                    "title": title,
-                                    "permalink": None,
-                                    "file_path": None,
-                                    "checksum": None,
-                                    "operation": operation,
-                                    "fileCreated": False,
-                                    "error": "SECURITY_VALIDATION_ERROR",
-                                }
-                            return f"# Error\n\nDirectory path '{directory}' is not allowed - paths must stay within project boundaries"
-
-                        entity = Entity(
-                            title=title,
-                            directory=directory,
-                            content_type="text/markdown",
-                            content=content,
-                            entity_metadata=metadata,
-                        )
-
-                        logger.info(
-                            "Creating note via edit_note auto-create",
-                            title=title,
-                            directory=directory,
-                            operation=operation,
-                        )
-                        result = await knowledge_client.create_entity(entity.model_dump())
-                        file_created = True
-                    else:
-                        # find_replace/replace_section require existing content — re-raise
-                        raise resolve_error
-
-                # --- Standard edit path (entity already existed) ---
-                if not file_created:
-                    # Prepare the edit request data
-                    edit_data = {
-                        "operation": operation,
-                        "content": content,
-                    }
-
-                    # Add optional parameters
-                    if section:
-                        edit_data["section"] = section
-                    if find_text:
-                        edit_data["find_text"] = find_text
-                    if effective_replacements != 1:  # Only send if different from default
-                        edit_data["expected_replacements"] = str(effective_replacements)
-                    if not effective_replace_subsections:  # Only send if different from default
-                        edit_data["replace_subsections"] = False
-                    if metadata:
-                        edit_data["metadata"] = metadata
-
-                    # Call the PATCH endpoint
-                    result = await knowledge_client.patch_entity(entity_id, edit_data)
-
-                # --- Format response ---
-                # result is always set: either by create_entity (auto-create) or patch_entity (edit)
-                assert result is not None
-                if file_created:
-                    summary = [
-                        f"# Created note ({operation})",
-                        f"project: {active_project.name}",
-                        f"file_path: {result.file_path}",
-                        f"permalink: {result.permalink}",
-                        f"checksum: {result.checksum[:8] if result.checksum else 'unknown'}",
-                        "fileCreated: true",
-                    ]
-                    lines_added = len(content.split("\n"))
-                    summary.append(f"operation: Created note with {lines_added} lines")
-                else:
-                    summary = [
-                        f"# Edited note ({operation})",
-                        f"project: {active_project.name}",
-                        f"file_path: {result.file_path}",
-                        f"permalink: {result.permalink}",
-                        f"checksum: {result.checksum[:8] if result.checksum else 'unknown'}",
-                    ]
-
-                    # Add operation-specific details
-                    if operation == "append":
-                        lines_added = len(content.split("\n"))
-                        summary.append(f"operation: Added {lines_added} lines to end of note")
-                    elif operation == "prepend":
-                        lines_added = len(content.split("\n"))
-                        summary.append(f"operation: Added {lines_added} lines to beginning of note")
-                    elif operation == "find_replace":
-                        # For find_replace, we can't easily count replacements from here
-                        # since we don't have the original content, but the server handled it
-                        summary.append("operation: Find and replace operation completed")
-                    elif operation == "replace_section":
-                        summary.append(f"operation: Replaced content under section '{section}'")
-                    elif operation == "insert_before_section":
-                        summary.append(f"operation: Inserted content before section '{section}'")
-                    elif operation == "insert_after_section":
-                        summary.append(f"operation: Inserted content after section '{section}'")
-
-                # Count observations by category (reuse logic from write_note)
-                categories = {}
-                if result.observations:
-                    for obs in result.observations:
-                        categories[obs.category] = categories.get(obs.category, 0) + 1
-
-                    summary.append("\n## Observations")
-                    for category, count in sorted(categories.items()):
-                        summary.append(f"- {category}: {count}")
-
-                # Count resolved/unresolved relations
-                unresolved = 0
-                resolved = 0
-                if result.relations:
-                    unresolved = sum(1 for r in result.relations if not r.to_id)
-                    resolved = len(result.relations) - unresolved
-
-                    summary.append("\n## Relations")
-                    summary.append(f"- Resolved: {resolved}")
-                    if unresolved:
-                        summary.append(f"- Unresolved: {unresolved}")
-
-                logger.info(
-                    f"MCP tool response: tool=edit_note project={active_project.name} "
-                    f"operation={operation} permalink={result.permalink} "
-                    f"observations_count={len(result.observations)} "
-                    f"relations_count={len(result.relations)} "
-                    f"file_created={str(file_created).lower()}"
+                _, entity_identifier, _ = await resolve_project_and_path(
+                    client,
+                    identifier,
+                    active_project.name,
+                    context,
+                    strict_project_routing=True,
+                )
+            except UnresolvedProjectRouteError as route_error:
+                # Trigger: a memory URL's first segment is not a project, which
+                #   can also describe a valid active-project path such as
+                #   memory://src/existing-note.
+                # Why: existing indexed notes must remain editable, but a miss
+                #   must never reach append/prepend auto-create.
+                # Outcome: resolve once with the read-compatible fallback, then
+                #   raise the saved route error if normal recovery still misses.
+                unresolved_project_route = route_error
+                _, entity_identifier, _ = await resolve_project_and_path(
+                    client,
+                    identifier,
+                    active_project.name,
+                    context,
                 )
 
-                if output_format == "json":
-                    return {
-                        "title": result.title,
-                        "permalink": result.permalink,
-                        "file_path": result.file_path,
-                        "checksum": result.checksum,
-                        "operation": operation,
-                        "fileCreated": file_created,
-                    }
+            file_created = False
+            entity_id = ""
+            result: EntityResponse | None = None
 
-                summary_result = "\n".join(summary)
-                return add_project_metadata(summary_result, active_project.name)
-
-            except Exception as e:
-                logger.error(f"Error editing note: {e}")
-                if isinstance(e, UnresolvedProjectRouteError):
+            # Try to resolve the entity; for append/prepend, create it if not found
+            try:
+                resolved_entity = await knowledge_client.resolve_entity_response(
+                    entity_identifier,
+                    strict=True,
+                )
+                if resolved_entity.project_external_id != active_project.external_id:
+                    # Trigger: the link resolver found a note owned by another project.
+                    # Why: patching through the active project's endpoint would leak
+                    #   an internal entity ID in a misleading 404 and cannot succeed.
+                    # Outcome: stop before mutation and provide the owning project ID.
                     if output_format == "json":
                         return {
                             "title": None,
@@ -758,14 +549,192 @@ async def edit_note(
                             "checksum": None,
                             "operation": operation,
                             "fileCreated": False,
-                            "error": "UNRESOLVED_PROJECT_ROUTE",
+                            "error": "CROSS_PROJECT_ENTITY",
                             "project": active_project.name,
-                            "projectRoute": e.project_prefix,
+                            "targetProjectId": resolved_entity.project_external_id,
                         }
-                    return _format_unresolved_project_route_response(
-                        error=e,
+                    return _format_cross_project_entity_response(
+                        identifier=identifier,
                         active_project=active_project.name,
+                        target_project_id=resolved_entity.project_external_id,
                     )
+                entity_id = resolved_entity.external_id
+            except Exception as resolve_error:
+                error_msg = str(resolve_error).lower()
+                is_not_found = "entity not found" in error_msg or "not found" in error_msg
+
+                # Trigger: resolution missed but the file may already exist on disk
+                # Why: files written directly to disk are invisible to identifier
+                #      resolution until indexed; editing them should just work (#581)
+                # Outcome: the single file is indexed and resolution retried once
+                recovered_entity_id: str | None = None
+                if is_not_found:
+                    recovered_entity_id = await _resolve_after_disk_recovery(
+                        knowledge_client, entity_identifier
+                    )
+
+                if recovered_entity_id is not None:
+                    entity_id = recovered_entity_id
+                elif is_not_found and unresolved_project_route is not None:
+                    raise unresolved_project_route
+                elif is_not_found and operation in ("append", "prepend"):
+                    # Trigger: entity does not exist yet (on disk or in the index)
+                    # Why: append/prepend can meaningfully create a new note from the
+                    #      content, while find_replace/replace_section require existing
+                    #      content to modify
+                    # Outcome: note is created via the same path as write_note
+                    title, directory = _parse_identifier_to_title_and_directory(identifier)
+
+                    # Validate directory path (same security check as write_note)
+                    project_path = active_project.home
+                    if directory and not validate_project_path(directory, project_path):
+                        logger.warning(
+                            "Attempted path traversal attack blocked",
+                            directory=directory,
+                            project=active_project.name,
+                        )
+                        if output_format == "json":
+                            return {
+                                "title": title,
+                                "permalink": None,
+                                "file_path": None,
+                                "checksum": None,
+                                "operation": operation,
+                                "fileCreated": False,
+                                "error": "SECURITY_VALIDATION_ERROR",
+                            }
+                        return f"# Error\n\nDirectory path '{directory}' is not allowed - paths must stay within project boundaries"
+
+                    entity = Entity(
+                        title=title,
+                        directory=directory,
+                        content_type="text/markdown",
+                        content=content,
+                        entity_metadata=metadata,
+                    )
+
+                    logger.info(
+                        "Creating note via edit_note auto-create",
+                        title=title,
+                        directory=directory,
+                        operation=operation,
+                    )
+                    result = await knowledge_client.create_entity(entity.model_dump())
+                    file_created = True
+                else:
+                    # find_replace/replace_section require existing content — re-raise
+                    raise resolve_error
+
+            # --- Standard edit path (entity already existed) ---
+            if not file_created:
+                # Prepare the edit request data
+                edit_data = {
+                    "operation": operation,
+                    "content": content,
+                }
+
+                # Add optional parameters
+                if section:
+                    edit_data["section"] = section
+                if find_text:
+                    edit_data["find_text"] = find_text
+                if effective_replacements != 1:  # Only send if different from default
+                    edit_data["expected_replacements"] = str(effective_replacements)
+                if not effective_replace_subsections:  # Only send if different from default
+                    edit_data["replace_subsections"] = False
+                if metadata:
+                    edit_data["metadata"] = metadata
+
+                # Call the PATCH endpoint
+                result = await knowledge_client.patch_entity(entity_id, edit_data)
+
+            # --- Format response ---
+            # result is always set: either by create_entity (auto-create) or patch_entity (edit)
+            assert result is not None
+            if file_created:
+                summary = [
+                    f"# Created note ({operation})",
+                    f"project: {active_project.name}",
+                    f"file_path: {result.file_path}",
+                    f"permalink: {result.permalink}",
+                    f"checksum: {result.checksum[:8] if result.checksum else 'unknown'}",
+                    "fileCreated: true",
+                ]
+                lines_added = len(content.split("\n"))
+                summary.append(f"operation: Created note with {lines_added} lines")
+            else:
+                summary = [
+                    f"# Edited note ({operation})",
+                    f"project: {active_project.name}",
+                    f"file_path: {result.file_path}",
+                    f"permalink: {result.permalink}",
+                    f"checksum: {result.checksum[:8] if result.checksum else 'unknown'}",
+                ]
+
+                # Add operation-specific details
+                if operation == "append":
+                    lines_added = len(content.split("\n"))
+                    summary.append(f"operation: Added {lines_added} lines to end of note")
+                elif operation == "prepend":
+                    lines_added = len(content.split("\n"))
+                    summary.append(f"operation: Added {lines_added} lines to beginning of note")
+                elif operation == "find_replace":
+                    # For find_replace, we can't easily count replacements from here
+                    # since we don't have the original content, but the server handled it
+                    summary.append("operation: Find and replace operation completed")
+                elif operation == "replace_section":
+                    summary.append(f"operation: Replaced content under section '{section}'")
+                elif operation == "insert_before_section":
+                    summary.append(f"operation: Inserted content before section '{section}'")
+                elif operation == "insert_after_section":
+                    summary.append(f"operation: Inserted content after section '{section}'")
+
+            # Count observations by category (reuse logic from write_note)
+            categories = {}
+            if result.observations:
+                for obs in result.observations:
+                    categories[obs.category] = categories.get(obs.category, 0) + 1
+
+                summary.append("\n## Observations")
+                for category, count in sorted(categories.items()):
+                    summary.append(f"- {category}: {count}")
+
+            # Count resolved/unresolved relations
+            unresolved = 0
+            resolved = 0
+            if result.relations:
+                unresolved = sum(1 for r in result.relations if not r.to_id)
+                resolved = len(result.relations) - unresolved
+
+                summary.append("\n## Relations")
+                summary.append(f"- Resolved: {resolved}")
+                if unresolved:
+                    summary.append(f"- Unresolved: {unresolved}")
+
+            logger.info(
+                f"MCP tool response: tool=edit_note project={active_project.name} "
+                f"operation={operation} permalink={result.permalink} "
+                f"observations_count={len(result.observations)} "
+                f"relations_count={len(result.relations)} "
+                f"file_created={str(file_created).lower()}"
+            )
+
+            if output_format == "json":
+                return {
+                    "title": result.title,
+                    "permalink": result.permalink,
+                    "file_path": result.file_path,
+                    "checksum": result.checksum,
+                    "operation": operation,
+                    "fileCreated": file_created,
+                }
+
+            summary_result = "\n".join(summary)
+            return add_project_metadata(summary_result, active_project.name)
+
+        except Exception as e:
+            logger.error(f"Error editing note: {e}")
+            if isinstance(e, UnresolvedProjectRouteError):
                 if output_format == "json":
                     return {
                         "title": None,
@@ -774,13 +743,29 @@ async def edit_note(
                         "checksum": None,
                         "operation": operation,
                         "fileCreated": False,
-                        "error": str(e),
+                        "error": "UNRESOLVED_PROJECT_ROUTE",
+                        "project": active_project.name,
+                        "projectRoute": e.project_prefix,
                     }
-                return _format_error_response(
-                    str(e),
-                    operation,
-                    identifier,
-                    find_text,
-                    effective_replacements,
-                    active_project.name,
+                return _format_unresolved_project_route_response(
+                    error=e,
+                    active_project=active_project.name,
                 )
+            if output_format == "json":
+                return {
+                    "title": None,
+                    "permalink": None,
+                    "file_path": None,
+                    "checksum": None,
+                    "operation": operation,
+                    "fileCreated": False,
+                    "error": str(e),
+                }
+            return _format_error_response(
+                str(e),
+                operation,
+                identifier,
+                find_text,
+                effective_replacements,
+                active_project.name,
+            )

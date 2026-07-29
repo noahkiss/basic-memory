@@ -16,7 +16,6 @@ from basic_memory.index.local_schedulers import drain_background_tasks
 from basic_memory.mcp.client_info import MCPClientInfoMiddleware
 from basic_memory.mcp.container import McpContainer, set_container
 from basic_memory.services.initialization import initialize_app
-import logfire
 
 
 async def _log_embedding_status(session_maker: async_sessionmaker[AsyncSession]) -> None:
@@ -64,75 +63,64 @@ async def lifespan(app: FastMCP):
     set_container(container)
 
     config = container.config
-    with logfire.span(
-        "mcp.lifecycle.startup",
-        entrypoint="mcp",
-        mode=container.mode.name.lower(),
-        default_project=config.default_project,
-    ):
-        logger.info(f"Starting Basic Memory MCP server (mode={container.mode.name})")
+    logger.info(f"Starting Basic Memory MCP server (mode={container.mode.name})")
+    logger.info(
+        f"Config: semantic_search_enabled={config.semantic_search_enabled}, "
+        f"default_project={config.default_project}"
+    )
+    if config.semantic_search_enabled:
         logger.info(
-            f"Config: semantic_search_enabled={config.semantic_search_enabled}, "
-            f"default_project={config.default_project}"
+            f"Semantic search: provider={config.semantic_embedding_provider}, "
+            f"model={config.semantic_embedding_model}, "
+            f"dimensions={config.semantic_embedding_dimensions or 'auto'}, "
+            f"batch_size={config.semantic_embedding_batch_size}, "
+            f"document_prefix_set={bool(config.semantic_embedding_document_prefix)}, "
+            f"query_prefix_set={bool(config.semantic_embedding_query_prefix)}"
         )
-        if config.semantic_search_enabled:
-            logger.info(
-                f"Semantic search: provider={config.semantic_embedding_provider}, "
-                f"model={config.semantic_embedding_model}, "
-                f"dimensions={config.semantic_embedding_dimensions or 'auto'}, "
-                f"batch_size={config.semantic_embedding_batch_size}, "
-                f"document_prefix_set={bool(config.semantic_embedding_document_prefix)}, "
-                f"query_prefix_set={bool(config.semantic_embedding_query_prefix)}"
-            )
 
-        # Log configured projects
-        for name, entry in config.projects.items():
-            default = " (default)" if name == config.default_project else ""
-            logger.info(f"Project: {name} -> {entry.path}{default}")
+    # Log configured projects
+    for name, entry in config.projects.items():
+        default = " (default)" if name == config.default_project else ""
+        logger.info(f"Project: {name} -> {entry.path}{default}")
 
-        # Track if we created the engine (vs test fixtures providing it)
-        # This prevents disposing an engine provided by test fixtures when
-        # multiple Client connections are made in the same test
-        engine_was_none = db._engine is None
+    # Track if we created the engine (vs test fixtures providing it)
+    # This prevents disposing an engine provided by test fixtures when
+    # multiple Client connections are made in the same test
+    engine_was_none = db._engine is None
 
-        # Initialize app (runs migrations, reconciles projects)
-        await initialize_app(container.config)
+    # Initialize app (runs migrations, reconciles projects)
+    await initialize_app(container.config)
 
-        # Log embedding status so it's easy to spot in the logs
-        if config.semantic_search_enabled and db._session_maker is not None:
-            await _log_embedding_status(db._session_maker)
+    # Log embedding status so it's easy to spot in the logs
+    if config.semantic_search_enabled and db._session_maker is not None:
+        await _log_embedding_status(db._session_maker)
 
-        # Create and start local watch coordinator (lifecycle centralized in coordinator)
-        watch_coordinator = container.create_watch_coordinator()
-        await watch_coordinator.start()
+    # Create and start local watch coordinator (lifecycle centralized in coordinator)
+    watch_coordinator = container.create_watch_coordinator()
+    await watch_coordinator.start()
 
     try:
         yield
     finally:
         # Shutdown - coordinator handles clean task cancellation
-        with logfire.span(
-            "mcp.lifecycle.shutdown",
-            entrypoint="mcp",
-            mode=container.mode.name.lower(),
-        ):
-            logger.debug("Shutting down Basic Memory MCP server")
+        logger.debug("Shutting down Basic Memory MCP server")
 
-            await watch_coordinator.stop()
+        await watch_coordinator.stop()
 
-            # A local note write returns 202 before its markdown file is written;
-            # shutdown can land while that materialization (and the vector sync /
-            # relation resolution it schedules) is still queued in the in-process
-            # pool. Drain both queues before the engine closes so an accepted
-            # write is never lost — mirrors the API lifespan shutdown.
-            await drain_pending_materializations()
-            await drain_background_tasks()
+        # A local note write returns 202 before its markdown file is written;
+        # shutdown can land while that materialization (and the vector sync /
+        # relation resolution it schedules) is still queued in the in-process
+        # pool. Drain both queues before the engine closes so an accepted
+        # write is never lost — mirrors the API lifespan shutdown.
+        await drain_pending_materializations()
+        await drain_background_tasks()
 
-            # Only shutdown DB if we created it (not if test fixture provided it)
-            if engine_was_none:
-                await db.shutdown_db()
-                logger.debug("Database connections closed")
-            else:  # pragma: no cover
-                logger.debug("Skipping DB shutdown - engine provided externally")
+        # Only shutdown DB if we created it (not if test fixture provided it)
+        if engine_was_none:
+            await db.shutdown_db()
+            logger.debug("Database connections closed")
+        else:  # pragma: no cover
+            logger.debug("Skipping DB shutdown - engine provided externally")
 
 
 mcp = FastMCP(

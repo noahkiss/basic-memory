@@ -27,7 +27,6 @@ from httpx._types import (
 )
 from loguru import logger
 
-import logfire
 from basic_memory.config import BasicMemoryConfig, ConfigManager
 from basic_memory.project_resolver import ProjectResolver
 from basic_memory.schemas.project_info import ProjectItem, ProjectList
@@ -156,45 +155,40 @@ async def resolve_project_parameter(
     Returns:
         Resolved project name or None if no resolution possible
     """
-    with logfire.span(
-        "routing.resolve_project",
-        requested_project=project,
-        allow_discovery=allow_discovery,
-    ):
-        config = ConfigManager().config
+    config = ConfigManager().config
 
-        # Trigger: project already resolved earlier in the same MCP request
-        # Why: the active project is request-constant, so re-discovering the
-        #   default project via /v2/projects/ just repeats work
-        # Outcome: reuse the cached project name as the explicit candidate
-        if project is None:
-            cached_project = await _get_cached_active_project(context)
-            if cached_project is not None:
-                project = cached_project.name
+    # Trigger: project already resolved earlier in the same MCP request
+    # Why: the active project is request-constant, so re-discovering the
+    #   default project via /v2/projects/ just repeats work
+    # Outcome: reuse the cached project name as the explicit candidate
+    if project is None:
+        cached_project = await _get_cached_active_project(context)
+        if cached_project is not None:
+            project = cached_project.name
 
-        # Trigger: there is no explicit project after env/context normalization
-        # Why: default-project discovery is only needed as a fallback; doing it
-        #   for explicit requests adds an avoidable /v2/projects/ round-trip
-        # Outcome: skip default lookup when the active project is already known
-        if default_project is None and project is None:
-            # Load config for any values not explicitly provided. When config
-            # records no default, fall back to the projects API is_default flag.
-            default_project = config.default_project
+    # Trigger: there is no explicit project after env/context normalization
+    # Why: default-project discovery is only needed as a fallback; doing it
+    #   for explicit requests adds an avoidable /v2/projects/ round-trip
+    # Outcome: skip default lookup when the active project is already known
+    if default_project is None and project is None:
+        # Load config for any values not explicitly provided. When config
+        # records no default, fall back to the projects API is_default flag.
+        default_project = config.default_project
 
-            if default_project is None:
-                default_project = await _get_cached_default_project(context)
+        if default_project is None:
+            default_project = await _get_cached_default_project(context)
 
-            if default_project is None:
-                default_project = await _resolve_default_project_from_api()
-                if default_project and context:
-                    await context.set_state("default_project_name", default_project)
+        if default_project is None:
+            default_project = await _resolve_default_project_from_api()
+            if default_project and context:
+                await context.set_state("default_project_name", default_project)
 
-        # Create resolver with configuration and resolve
-        resolver = ProjectResolver.from_env(
-            default_project=default_project,
-        )
-        result = resolver.resolve(project=project, allow_discovery=allow_discovery)
-        return _canonicalize_project_name(result.project, config)
+    # Create resolver with configuration and resolve
+    resolver = ProjectResolver.from_env(
+        default_project=default_project,
+    )
+    result = resolver.resolve(project=project, allow_discovery=allow_discovery)
+    return _canonicalize_project_name(result.project, config)
 
 
 async def get_project_names(client: AsyncClient, headers: HeaderTypes | None = None) -> List[str]:
@@ -226,58 +220,53 @@ async def get_active_project(
         ValueError: If no project can be resolved
         HTTPError: If project doesn't exist or is inaccessible
     """
-    with logfire.span(
-        "routing.validate_project",
-        requested_project=project,
-        has_context=context is not None,
-    ):
-        # Deferred import to avoid circular dependency with tools
-        from basic_memory.mcp.tools.utils import call_post
+    # Deferred import to avoid circular dependency with tools
+    from basic_memory.mcp.tools.utils import call_post
 
-        cached_project = await _get_cached_active_project(context)
-        if cached_project and _project_matches_identifier(cached_project, project):
-            logger.debug(f"Using cached project from context: {cached_project.name}")
-            return cached_project
+    cached_project = await _get_cached_active_project(context)
+    if cached_project and _project_matches_identifier(cached_project, project):
+        logger.debug(f"Using cached project from context: {cached_project.name}")
+        return cached_project
 
-        resolved_project = await resolve_project_parameter(project, context=context)
-        if not resolved_project:
-            project_names = await get_project_names(client, headers)
-            raise ValueError(
-                "No project specified. "
-                "Either set 'default_project' in config, or use 'project' argument.\n"
-                f"Available projects: {project_names}"
-            )
-
-        project = resolved_project
-
-        if cached_project and _project_matches_identifier(cached_project, project):
-            logger.debug(f"Using cached project from context: {cached_project.name}")
-            return cached_project
-
-        # Validate project exists by calling API
-        logger.debug(f"Validating project: {project}")
-        response = await call_post(
-            client,
-            "/v2/projects/resolve",
-            json={"identifier": project},
-            headers=headers,
-        )
-        resolved = ProjectResolveResponse.model_validate(response.json())
-        active_project = ProjectItem(
-            id=resolved.project_id,
-            external_id=resolved.external_id,
-            name=resolved.name,
-            path=resolved.path,
-            is_default=resolved.is_default,
+    resolved_project = await resolve_project_parameter(project, context=context)
+    if not resolved_project:
+        project_names = await get_project_names(client, headers)
+        raise ValueError(
+            "No project specified. "
+            "Either set 'default_project' in config, or use 'project' argument.\n"
+            f"Available projects: {project_names}"
         )
 
-        # Cache in context if available
-        await _set_cached_active_project(context, active_project)
-        if context:
-            logger.debug(f"Cached project in context: {project}")
+    project = resolved_project
 
-        logger.debug(f"Validated project: {active_project.name}")
-        return active_project
+    if cached_project and _project_matches_identifier(cached_project, project):
+        logger.debug(f"Using cached project from context: {cached_project.name}")
+        return cached_project
+
+    # Validate project exists by calling API
+    logger.debug(f"Validating project: {project}")
+    response = await call_post(
+        client,
+        "/v2/projects/resolve",
+        json={"identifier": project},
+        headers=headers,
+    )
+    resolved = ProjectResolveResponse.model_validate(response.json())
+    active_project = ProjectItem(
+        id=resolved.project_id,
+        external_id=resolved.external_id,
+        name=resolved.name,
+        path=resolved.path,
+        is_default=resolved.is_default,
+    )
+
+    # Cache in context if available
+    await _set_cached_active_project(context, active_project)
+    if context:
+        logger.debug(f"Cached project in context: {project}")
+
+    logger.debug(f"Validated project: {active_project.name}")
+    return active_project
 
 
 async def resolve_project_and_path(
@@ -315,99 +304,93 @@ async def resolve_project_and_path(
     is_memory_url = identifier.strip().startswith("memory://")
     config = ConfigManager().config
     include_project = config.permalinks_include_project if is_memory_url else None
-    with logfire.span(
-        "routing.resolve_memory_url",
-        is_memory_url=is_memory_url,
-        requested_project=project,
-        include_project_prefix=include_project,
-    ):
-        if not is_memory_url:
-            active_project = await get_active_project(client, project, context, headers)
-            return active_project, identifier, False
-
-        normalized_path = normalize_project_reference(memory_url_path(identifier))
-        cached_project = await _get_cached_active_project(context)
-
-        project_prefix, remainder = _split_project_prefix(normalized_path)
-        include_project = config.permalinks_include_project
-        # Trigger: memory URL begins with a potential project segment
-        # Why: allow project-scoped memory URLs without requiring a separate project parameter
-        # Outcome: attempt to resolve the prefix as a project and route to it
-        if project_prefix:
-            # Deferred: ToolError lives in the mcp SDK, which must not load at CLI startup (#886).
-            from mcp.server.fastmcp.exceptions import ToolError
-
-            if cached_project and _project_matches_identifier(cached_project, project_prefix):
-                resolved_project = await resolve_project_parameter(project_prefix, context=context)
-                if resolved_project and generate_permalink(resolved_project) != generate_permalink(
-                    project_prefix
-                ):
-                    raise ValueError(
-                        f"Project is constrained to '{resolved_project}', cannot use '{project_prefix}'."
-                    )
-
-                resolved_path = _canonical_memory_path_for_active_route(
-                    cached_project,
-                    remainder,
-                    include_project=include_project,
-                )
-                return cached_project, resolved_path, True
-
-            try:
-                from basic_memory.mcp.tools.utils import call_post
-
-                response = await call_post(
-                    client,
-                    "/v2/projects/resolve",
-                    json={"identifier": project_prefix},
-                    headers=headers,
-                )
-                resolved = ProjectResolveResponse.model_validate(response.json())
-            except ToolError as exc:
-                if "project not found" not in str(exc).lower():
-                    raise
-                if strict_project_routing and not allow_missing_project_fallback:
-                    # Mutations that can create content must not reinterpret a
-                    # missing project route as an active-project path (#1066).
-                    # Existing-target mutations may opt into that legacy path
-                    # fallback.
-                    raise UnresolvedProjectRouteError(identifier, project_prefix) from exc
-            else:
-                resolved_project = await resolve_project_parameter(project_prefix, context=context)
-                if resolved_project and generate_permalink(resolved_project) != generate_permalink(
-                    project_prefix
-                ):
-                    raise ValueError(
-                        f"Project is constrained to '{resolved_project}', cannot use '{project_prefix}'."
-                    )
-
-                active_project = ProjectItem(
-                    id=resolved.project_id,
-                    external_id=resolved.external_id,
-                    name=resolved.name,
-                    path=resolved.path,
-                    is_default=resolved.is_default,
-                )
-                if cache_resolved_project:
-                    await _set_cached_active_project(context, active_project)
-
-                resolved_path = _canonical_memory_path_for_active_route(
-                    active_project,
-                    remainder,
-                    include_project=include_project,
-                )
-                return active_project, resolved_path, True
-
-        # Trigger: memory URL has no resolvable project route segment
-        # Why: preserve active-project behavior
-        # Outcome: normalize the path against the already-selected project
+    if not is_memory_url:
         active_project = await get_active_project(client, project, context, headers)
-        resolved_path = _canonical_memory_path_for_active_route(
-            active_project,
-            normalized_path,
-            include_project=include_project,
-        )
-        return active_project, resolved_path, True
+        return active_project, identifier, False
+
+    normalized_path = normalize_project_reference(memory_url_path(identifier))
+    cached_project = await _get_cached_active_project(context)
+
+    project_prefix, remainder = _split_project_prefix(normalized_path)
+    include_project = config.permalinks_include_project
+    # Trigger: memory URL begins with a potential project segment
+    # Why: allow project-scoped memory URLs without requiring a separate project parameter
+    # Outcome: attempt to resolve the prefix as a project and route to it
+    if project_prefix:
+        # Deferred: ToolError lives in the mcp SDK, which must not load at CLI startup (#886).
+        from mcp.server.fastmcp.exceptions import ToolError
+
+        if cached_project and _project_matches_identifier(cached_project, project_prefix):
+            resolved_project = await resolve_project_parameter(project_prefix, context=context)
+            if resolved_project and generate_permalink(resolved_project) != generate_permalink(
+                project_prefix
+            ):
+                raise ValueError(
+                    f"Project is constrained to '{resolved_project}', cannot use '{project_prefix}'."
+                )
+
+            resolved_path = _canonical_memory_path_for_active_route(
+                cached_project,
+                remainder,
+                include_project=include_project,
+            )
+            return cached_project, resolved_path, True
+
+        try:
+            from basic_memory.mcp.tools.utils import call_post
+
+            response = await call_post(
+                client,
+                "/v2/projects/resolve",
+                json={"identifier": project_prefix},
+                headers=headers,
+            )
+            resolved = ProjectResolveResponse.model_validate(response.json())
+        except ToolError as exc:
+            if "project not found" not in str(exc).lower():
+                raise
+            if strict_project_routing and not allow_missing_project_fallback:
+                # Mutations that can create content must not reinterpret a
+                # missing project route as an active-project path (#1066).
+                # Existing-target mutations may opt into that legacy path
+                # fallback.
+                raise UnresolvedProjectRouteError(identifier, project_prefix) from exc
+        else:
+            resolved_project = await resolve_project_parameter(project_prefix, context=context)
+            if resolved_project and generate_permalink(resolved_project) != generate_permalink(
+                project_prefix
+            ):
+                raise ValueError(
+                    f"Project is constrained to '{resolved_project}', cannot use '{project_prefix}'."
+                )
+
+            active_project = ProjectItem(
+                id=resolved.project_id,
+                external_id=resolved.external_id,
+                name=resolved.name,
+                path=resolved.path,
+                is_default=resolved.is_default,
+            )
+            if cache_resolved_project:
+                await _set_cached_active_project(context, active_project)
+
+            resolved_path = _canonical_memory_path_for_active_route(
+                active_project,
+                remainder,
+                include_project=include_project,
+            )
+            return active_project, resolved_path, True
+
+    # Trigger: memory URL has no resolvable project route segment
+    # Why: preserve active-project behavior
+    # Outcome: normalize the path against the already-selected project
+    active_project = await get_active_project(client, project, context, headers)
+    resolved_path = _canonical_memory_path_for_active_route(
+        active_project,
+        normalized_path,
+        include_project=include_project,
+    )
+    return active_project, resolved_path, True
 
 
 async def detect_project_from_memory_url_prefix(
@@ -470,11 +453,6 @@ async def get_project_client(
                 f"Available projects: {project_names}"
             )
 
-    with logfire.span(
-        "routing.client_session",
-        project_name=resolved_project,
-        route_mode="local_asgi",
-    ):
-        async with get_client() as client:
-            active_project = await get_active_project(client, resolved_project, context)
-            yield client, active_project
+    async with get_client() as client:
+        active_project = await get_active_project(client, resolved_project, context)
+        yield client, active_project
