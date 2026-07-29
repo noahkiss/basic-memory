@@ -780,12 +780,24 @@ against.
 
 ### T18 — `AGENTS.md`'s performance baseline is stale by 9x, and the "fast native command" it names is not fast
 **Found 2026-07-28** while deciding the fate of that table in pass 4. Measured on this tree
-(`da4f8a59`), Linux/x86-64, Python 3.13, warm, three runs each:
+(`da4f8a59`), Linux/x86-64, Python 3.13, warm, three runs each.
 
-| Path | `AGENTS.md` claims | Actually measured | Delta |
+**Methodology note — read before quoting these.** The host was under sustained load throughout
+(6 cores, `loadavg` 5.8-6.5, an unrelated process pinning >100% CPU), so **wall-clock times are not
+usable** — the same `project list` invocation measured 4.9 s and 10.3 s depending on contention.
+The figures below are therefore **user CPU time** and **peak RSS**, both of which are essentially
+contention-independent. The fork-point table records wall time, so these are not directly
+comparable to it; the comparison holds only because CPU time is a *lower bound* on wall time, and
+the lower bound alone already exceeds the claim by an order of magnitude.
+
+| Path | `AGENTS.md` claims (wall) | Measured (user CPU) | Measured RSS vs claim |
 |---|---|---|---|
-| CLI native cmd (`project list`) | ~0.55 s / ~73 MB | **4.91 / 5.35 / 5.23 s / 231 MB** | ~9x slower, ~3x memory |
-| CLI `--version` floor | 0.33 s / 59 MB | 0.49 / 0.51 s / 65 MB | ~1.5x slower |
+| CLI native cmd (`project list`) | ~0.55 s / ~73 MB | **4.71 / 5.73 / 5.31 s** | **231 MB** vs 73 MB |
+| CLI `--version` floor | 0.33 s / 59 MB | 0.43 / 0.46 / 0.48 s | 65 MB vs 59 MB |
+
+The `--version` floor is roughly honest. `project list` is not: it burns ~5 CPU-seconds against a
+documented 0.55 s and holds 3x the claimed memory. RSS is unaffected by load, so the memory
+discrepancy needs no methodological caveat at all.
 
 **The stale number is not the real problem.** `AGENTS.md` draws a load-bearing architectural
 conclusion from it:
@@ -796,11 +808,13 @@ conclusion from it:
 > reach through the MCP tool layer.**
 
 `project list` is that document's own example of a fast native command, and it **imports both**.
-`python -X importtime -m basic_memory.cli.main project list` attributes 1.09 s to
-`basic_memory.api.app` and 0.63 s to `basic_memory.mcp.tools`. The imports are lazy — importing
-`basic_memory.cli.main` alone pulls in neither (`sys.modules` confirms both absent) — so they happen
-*inside the command*, which is why nothing static catches it. The single largest leaf is
-`basic_memory.api.v2.routers.prompt_router` at 217 ms.
+This part of the finding is load-independent and does not rest on any timing:
+`python -X importtime -m basic_memory.cli.main project list` lists `basic_memory.api.app` and
+`basic_memory.mcp.tools` in its output at all, and a `sys.modules` probe after invoking the command
+through `CliRunner` reports both as `True`. The imports are **lazy** — importing
+`basic_memory.cli.main` alone pulls in neither (same probe reports both `False`) — so they happen
+*inside the command body*, which is why nothing static catches it and why the module-level import
+graph looks clean. Largest single leaf: `basic_memory.api.v2.routers.prompt_router`.
 
 **The guidance is still correct; the claim that native commands currently honour it is false.** That
 matters for W1-W11: the fast `bm` verbs are specified against a boundary the existing native
