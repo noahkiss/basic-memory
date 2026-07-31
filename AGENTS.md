@@ -26,6 +26,13 @@ There is no compat tax to pay.
 
 - **Fix our own bugs in whatever shape suits this fork.** Never weigh a fix by how hard it would be
   to reconcile with upstream later — there is no later.
+- **Upstream behavior is not a design constraint — do what is right, not what matches.** This is a
+  divergent tool, not a patched copy. When a subsystem behaves in a way that is wrong for `bm`
+  (frontmatter invisible to search, no staleness query, deferred writes on a local-only tree),
+  the default answer is *change the subsystem*, not *design the feature around it*. "Adapt around
+  upstream's shape" is only ever correct when the workaround is better on its own merits — and
+  then the record should say so. (Rule earned 2026-07-31: O3 was first closed as "adapt", and the
+  user reversed it into W18.)
 - **Divergence is the goal, not a cost.** A test that only guards an upstream-shaped decision we
   have deliberately reversed can be rewritten.
 - **Don't spend tokens on code we will never run.** Reading, testing, or "keeping consistent" a
