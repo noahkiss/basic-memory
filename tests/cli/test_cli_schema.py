@@ -3,6 +3,7 @@
 Tests mock the MCP tool functions and verify Rich-formatted output.
 """
 
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from typer.testing import CliRunner
@@ -197,16 +198,45 @@ def test_infer_threshold_passthrough(mock_mcp, mock_config_cls):
 @patch(
     "basic_memory.mcp.tools.schema_infer",
     new_callable=AsyncMock,
-    return_value={"error": "No schema pattern found for 'person' (threshold: 25%)"},
+    return_value={"error": "Schema inference failed: database on fire"},
 )
 def test_infer_error_response(mock_mcp, mock_config_cls):
-    """bm schema infer shows error message from MCP tool."""
+    """A genuine failure goes to stderr and exits non-zero (GAPS O8)."""
+    mock_config_cls.return_value = _mock_config_manager()
+
+    result = runner.invoke(cli_app, ["schema", "infer", "person"])
+
+    assert result.exit_code == 1
+    assert "Schema inference failed" in result.stderr
+
+
+@patch("basic_memory.cli.commands.schema.ConfigManager")
+@patch(
+    "basic_memory.mcp.tools.schema_infer",
+    new_callable=AsyncMock,
+    return_value={
+        "note_type": "person",
+        "notes_analyzed": 5,
+        "threshold": 0.25,
+        "suggested_schema": None,
+        "reason": "No schema pattern found for 'person' (threshold: 25%)",
+    },
+)
+def test_infer_no_pattern_is_a_result_not_an_error(mock_mcp, mock_config_cls):
+    """A legitimate no-pattern answer renders as a message and exits 0 (GAPS O5)."""
     mock_config_cls.return_value = _mock_config_manager()
 
     result = runner.invoke(cli_app, ["schema", "infer", "person"])
 
     assert result.exit_code == 0
     assert "No schema pattern found" in result.output
+
+    json_result = runner.invoke(cli_app, ["schema", "infer", "person", "--json"])
+
+    assert json_result.exit_code == 0
+    parsed = json.loads(json_result.stdout)
+    assert "error" not in parsed
+    assert parsed["suggested_schema"] is None
 
 
 @patch("basic_memory.cli.commands.schema.ConfigManager")

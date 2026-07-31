@@ -460,11 +460,19 @@ async def schema_infer(
             # Outcome: return actionable guidance instead of a massive empty result
             if result.notes_analyzed > 0 and not result.suggested_schema:
                 if output_format == "json":
+                    # A no-pattern result is a legitimate empty answer, not a
+                    # failure: shaping it as {"error": ...} forced every caller
+                    # to parse prose to tell them apart (GAPS O5/O8). "error"
+                    # is reserved for genuine failures, which exit non-zero.
                     return {
-                        "error": (
+                        "note_type": note_type,
+                        "notes_analyzed": result.notes_analyzed,
+                        "threshold": threshold,
+                        "suggested_schema": None,
+                        "reason": (
                             f"No schema pattern found for '{note_type}' "
                             f"(threshold: {threshold:.0%})"
-                        )
+                        ),
                     }
                 return (
                     f"# No Schema Pattern Found\n\n"

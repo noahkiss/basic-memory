@@ -276,16 +276,26 @@ def infer(
             )
         )
 
-        # Handle error responses
+        # A genuine failure: JSON stream stays parseable JSON, humans get
+        # stderr, and the exit code says failure either way (GAPS O8).
         if isinstance(result, dict) and "error" in result:
             if json_output:
                 print(json.dumps(result, indent=2, default=str))
             else:
-                console.print(f"[yellow]{result['error']}[/yellow]")
-            return
+                typer.echo(f"Error: {result['error']}", err=True)
+            raise typer.Exit(1)
 
         # output_format="json" guarantees a dict return
         assert isinstance(result, dict)
+
+        # A legitimate empty answer: notes were analyzed, nothing met the
+        # threshold. Exit 0 — "no pattern" is a result, not a failure (GAPS O5).
+        if result.get("reason") and not result.get("suggested_schema"):
+            if json_output:
+                print(json.dumps(result, indent=2, default=str))
+            else:
+                console.print(f"[yellow]{result['reason']}[/yellow]")
+            return
 
         # Handle zero notes
         if result.get("notes_analyzed", 0) == 0:

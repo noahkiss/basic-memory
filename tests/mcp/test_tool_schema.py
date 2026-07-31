@@ -634,6 +634,19 @@ permalink: things/{name}
     assert "widget" in result
     assert "Suggestions" in result
 
+    # JSON mode must shape the same outcome as a legitimate empty result,
+    # not an error — "error" is reserved for real failures (GAPS O5/O8).
+    result_json = await schema_infer(
+        note_type="widget",
+        project=test_project.name,
+        output_format="json",
+    )
+    assert isinstance(result_json, dict)
+    assert "error" not in result_json
+    assert result_json["suggested_schema"] is None
+    assert "No schema pattern found" in result_json["reason"]
+    assert result_json["notes_analyzed"] == 5
+
 
 # --- No schema found guards ---
 

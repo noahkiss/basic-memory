@@ -1842,7 +1842,7 @@ predicate + explicit sort, not a patch to the MCP filter grammar.
   with positive control, count parity, both explicit orders end-to-end, and the three mode-guard
   raises.
 
-### O5 — `schema-infer` returns an error object where an empty result belongs — **RETESTED 2026-07-31: works on a fair corpus; the error-shape defect stands**
+### O5 — `schema-infer` returns an error object where an empty result belongs — **SHIPPED 2026-07-31: no-pattern is now a non-error result (see O8)**
 **Found:** BM spike, 2026-07-26.
 
 ```
@@ -2032,7 +2032,7 @@ ever exercised the branch was already replaced by the materialize test. The guar
 the impossible state (configured default registered nowhere) now falls through as a no-op instead of
 mis-promoting. Comment block updated to say why the state cannot occur.
 
-### O8 — CLI tool failures exit 0, and `--json` mode emits non-JSON or error-shaped prose
+### O8 — CLI tool failures exit 0, and `--json` mode emits non-JSON or error-shaped prose — **RE-VERIFIED 2026-07-31: instances 1–2 already fixed; instance 3 SHIPPED; rest is W7**
 **Found:** 2026-07-31, recurring across every phase-1 evidence run. Three instances, all captured
 in the entries that hit them:
 
@@ -2052,6 +2052,24 @@ reported `"total": 1` correctly).
 codes never signal failure and the JSON stream is not reliably JSON. Every scripted caller must
 currently parse prose to distinguish success from failure. Fold the fix into W7's contract work:
 non-zero exit on failure, errors to stderr, `--json` output always parseable JSON.
+
+**Re-verified 2026-07-31** (W7's opening move, per the phase-1 decision "shared exit path, W7's
+first commit"):
+
+- *Instance 1 fixed already*: `search-notes '**' --json` → empty stdout, error on stderr,
+  **exit 1**. `tool.py` grew per-command error detection (`result.get("error")` → stderr +
+  `typer.Exit(1)`) in the same unreconciled 07-26 fix batch as T1/T2/T5/B1.
+- *Instance 2 fixed already*: non-unique `edit-note find_replace` → stderr, **exit 1**, file
+  untouched.
+- *Instance 3 SHIPPED now*: `schema infer --json` no-pattern returns a non-error shape
+  (`{"note_type", "notes_analyzed", "threshold", "suggested_schema": null, "reason"}`), exit 0 —
+  "no pattern" is a result. Genuine infer errors now exit 1 with stderr diagnostics (JSON error
+  object stays on stdout in `--json` mode so the stream stays parseable). This also closes O5's
+  error-shape defect.
+- **Left for W7 proper**: `schema validate`/`schema diff` still shape legitimate empties
+  ("No schemas defined", "No schema found for type") as `{"error": ...}` with exit 0 — deciding
+  which of those become results vs failures is the contract design, not a mechanical fix. The
+  `search-notes` envelope miscount (`total: 0` beside one result) also remains unverified.
 
 ---
 
