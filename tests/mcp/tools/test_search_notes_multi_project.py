@@ -89,7 +89,7 @@ async def test_search_notes_search_all_projects_merges_and_ranks_results(monkeyp
         "Team MCP Test Note",
         "Personal MCP Test Note",
     ]
-    assert result["total_is_exact"] is True
+    assert result["total"] == 2
 
 
 @pytest.mark.asyncio
@@ -164,7 +164,6 @@ async def test_search_notes_search_all_projects_with_no_refs_returns_empty_all_p
         "current_page": 1,
         "page_size": 10,
         "total": 0,
-        "total_is_exact": True,
         "has_more": False,
     }
 
@@ -251,7 +250,8 @@ async def test_search_notes_search_all_projects_continues_after_project_failure(
     assert [item["title"] for item in result["results"]] == [
         "Personal MCP Test Note",
     ]
-    assert result["total"] == 1
-    assert result["total_is_exact"] is False
+    # A failed project makes the merged count unknown; exclude_none drops the
+    # null total from the payload entirely (docs/OUTPUT_CONTRACT.md).
+    assert "total" not in result
     assert any("team-paul" in warning for warning in warnings)
     assert any("team index unavailable" in warning for warning in warnings)

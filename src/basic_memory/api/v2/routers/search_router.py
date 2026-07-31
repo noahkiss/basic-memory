@@ -51,6 +51,7 @@ async def search(
     """
     offset = (page - 1) * page_size
     exact_count_available = query.retrieval_mode == SearchRetrievalMode.FTS
+    total: int | None
     try:
         if exact_count_available:
             results, total = await asyncio.gather(
@@ -59,7 +60,7 @@ async def search(
             )
         else:
             results = await search_service.search(query, limit=page_size + 1, offset=offset)
-            total = 0
+            total = None
     except SemanticSearchDisabledError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except SemanticDependenciesMissingError as exc:
@@ -67,12 +68,13 @@ async def search(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    if exact_count_available:
+    if total is not None:
         has_more = offset + len(results) < total
     else:
         # Trigger: semantic modes would need another vector/hybrid retrieval to count.
         # Why: search requests should not pay for a second semantic pass.
-        # Outcome: preserve probe pagination, leave total at 0, and mark it unknown.
+        # Outcome: preserve probe pagination and report the total as unknown (null),
+        #   never a sentinel (docs/OUTPUT_CONTRACT.md).
         has_more = len(results) > page_size
         if has_more:
             results = results[:page_size]
@@ -83,7 +85,6 @@ async def search(
         current_page=page,
         page_size=page_size,
         total=total,
-        total_is_exact=exact_count_available,
         has_more=has_more,
     )
 

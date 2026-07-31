@@ -1,4 +1,9 @@
-"""Tests for the structured search total exactness contract."""
+"""Tests for the structured search total contract.
+
+`total` is an exact int when known and null/absent when unknown — never a
+sentinel (docs/OUTPUT_CONTRACT.md). Semantic modes skip the count query, so
+their payloads carry no total.
+"""
 
 from contextlib import asynccontextmanager
 import importlib
@@ -11,19 +16,18 @@ from basic_memory.schemas.search import SearchItemType, SearchResponse, SearchRe
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("search_type", "retrieval_mode", "total", "total_is_exact"),
+    ("search_type", "retrieval_mode", "total"),
     [
-        ("text", "fts", 1, True),
-        ("vector", "vector", 0, False),
-        ("hybrid", "hybrid", 0, False),
+        ("text", "fts", 1),
+        ("vector", "vector", None),
+        ("hybrid", "hybrid", None),
     ],
 )
-async def test_search_notes_json_exposes_total_exactness(
+async def test_search_notes_json_exposes_total_or_unknown(
     monkeypatch,
     search_type: str,
     retrieval_mode: str,
-    total: int,
-    total_is_exact: bool,
+    total: int | None,
 ) -> None:
     """MCP JSON preserves the API's exact-versus-unknown total distinction."""
     search_mod = importlib.import_module("basic_memory.mcp.tools.search")
@@ -56,7 +60,6 @@ async def test_search_notes_json_exposes_total_exactness(
                 current_page=page,
                 page_size=page_size,
                 total=total,
-                total_is_exact=total_is_exact,
             )
 
     monkeypatch.setattr(search_mod, "get_project_client", fake_get_project_client)
@@ -72,5 +75,5 @@ async def test_search_notes_json_exposes_total_exactness(
 
     assert isinstance(result, dict)
     assert captured_payload["retrieval_mode"] == retrieval_mode
-    assert result["total"] == total
-    assert result["total_is_exact"] is total_is_exact
+    # exclude_none serialization drops a null total entirely — absent == unknown.
+    assert result.get("total") == total

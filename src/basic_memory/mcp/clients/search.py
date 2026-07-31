@@ -10,7 +10,7 @@ from httpx import AsyncClient
 # call_* helpers live in basic_memory.mcp.tools.utils; importing that at module
 # level executes the whole tools package (fastmcp + mcp SDK) during CLI startup,
 # so each method defers the import to call time instead (#886).
-from basic_memory.schemas.search import SearchResponse, SearchRetrievalMode
+from basic_memory.schemas.search import SearchResponse
 
 
 class SearchClient:
@@ -69,13 +69,4 @@ class SearchClient:
             operation="search",
             path_template="/v2/projects/{project_id}/search/",
         )
-        payload = response.json()
-
-        # Trigger: an older API server omits the exactness field.
-        # Why: the request mode still identifies whether that server used an exact count.
-        # Outcome: legacy semantic responses stay unknown instead of becoming exact zeroes.
-        if "total_is_exact" not in payload:
-            retrieval_mode = query.get("retrieval_mode", SearchRetrievalMode.FTS)
-            payload["total_is_exact"] = retrieval_mode == SearchRetrievalMode.FTS
-
-        return SearchResponse.model_validate(payload)
+        return SearchResponse.model_validate(response.json())

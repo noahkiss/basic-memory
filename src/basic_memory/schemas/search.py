@@ -165,12 +165,12 @@ class SearchResponse(BaseModel):
     results: List[SearchResult]
     current_page: int
     page_size: int
-    total: int = Field(
-        default=0,
-        description="Total matching results when total_is_exact is true; otherwise a sentinel or estimate",
-    )
-    total_is_exact: bool = Field(
-        default=True,
-        description="Whether total is an exact count that clients can use for pagination",
+    total: int | None = Field(
+        default=None,
+        description=(
+            "Exact count of matching results, or null/absent when unknown "
+            "(semantic modes skip the count query). Never a sentinel — use "
+            "has_more for pagination when total is unknown (docs/OUTPUT_CONTRACT.md)."
+        ),
     )
     has_more: bool = False

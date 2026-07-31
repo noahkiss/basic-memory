@@ -1419,7 +1419,7 @@ files in is bespoke code either way.
 Found in: sweep-status-agents.md:61, sweep-handoffs.md:37, sweep-inv-plan.md:49,
 sweep-decisions.md:25, sweep-prior-art.md:31.
 
-### W7 — an agent-facing output contract — **CONTRACT WRITTEN + schema commands conformed 2026-07-31**
+### W7 — an agent-facing output contract — **SHIPPED 2026-07-31: `docs/OUTPUT_CONTRACT.md` v1; schema commands + search envelope conformed**
 B3 records that one `--json` command exits 1. The underlying gap is that no contract exists for it to
 violate: JSON to stdout only, diagnostics to stderr, no ANSI inside JSON, non-zero exit on failure,
 and a versioned schema published alongside. Coverage is the other half — any command without
@@ -1440,7 +1440,13 @@ Found in: sweep-prior-art.md:49, sweep-beans.md:19.
   gained the same error branch the other tool commands already had.
 - **Counts: `total: int | null`, null/absent = unknown, never a sentinel; `total_is_exact` is
   deleted** (it existed solely to flag the sentinel — with an honest null it is redundant, and
-  there is no compat tax in this fork). Implementation lands as the next W7 commit.
+  there is no compat tax in this fork). Shipped in the W7 envelope commit: schema, v2 router,
+  client compat shim (removed), multi-project merge (any failed/unknown project → null), CLI
+  renderer, and the legacy-sentinel fallback tests that guarded the old semantics.
+- **Coverage rule is go-forward**: every new command intended for scripted use ships with
+  `--json` conforming to the contract — enforced at review time via `docs/OUTPUT_CONTRACT.md`,
+  which every verb built under phase 4 consumes. The 202-vs-200 status-code question noted in O6
+  is wire-internal (ASGI in-process) and stays deferred until something actually reads the code.
 - **Judgment call — no per-payload `schema_version` field.** The contract document carries the
   version; every consumer is in-repo and in-process, so a wire version field is speculative
   flexibility. Revisit only if an external consumer appears.
@@ -2050,7 +2056,7 @@ ever exercised the branch was already replaced by the materialize test. The guar
 the impossible state (configured default registered nowhere) now falls through as a no-op instead of
 mis-promoting. Comment block updated to say why the state cannot occur.
 
-### O8 — CLI tool failures exit 0, and `--json` mode emits non-JSON or error-shaped prose — **RE-VERIFIED 2026-07-31: instances 1–2 already fixed; instance 3 SHIPPED; rest is W7**
+### O8 — CLI tool failures exit 0, and `--json` mode emits non-JSON or error-shaped prose — **CLOSED 2026-07-31: all instances fixed; contract in `docs/OUTPUT_CONTRACT.md` (W7)**
 **Found:** 2026-07-31, recurring across every phase-1 evidence run. Three instances, all captured
 in the entries that hit them:
 
@@ -2089,6 +2095,13 @@ first commit"):
   are legitimate empties — now report-shaped results with `reason`, exit 0. `{"error"}` is
   reserved for genuine failures → stderr + exit 1 (both `bm schema *` and `bm tool schema-*`).
   Contract and rationale in `docs/OUTPUT_CONTRACT.md`; decision record in W7.
+- *Envelope sentinel FIXED 2026-07-31 (W7 envelope commit)*: `SearchResponse.total` is now
+  `int | None` — an exact count under FTS, `null`/absent when semantic modes skip the count.
+  `total_is_exact` deleted everywhere (schema, router, client shim, multi-project merge, CLI
+  renderer); the multi-project merge reports `total: null` when any project failed or reported
+  unknown. Guarded by `tests/mcp/test_search_total_exactness.py` (FTS→int, vector/hybrid→absent)
+  and the router test asserting `total: null` under semantic mode. **O8 is CLOSED.**
+  Original diagnosis kept below for the record.
 - *Envelope miscount DIAGNOSED 2026-07-31 — by design, but the sentinel is a trap.* Reproduced:
   text query with semantic deps present → `{"total": 0, "total_is_exact": false}` beside 2 real
   results; queryless metadata mode → `{"total": 1, "total_is_exact": true}`. Cause: the v2

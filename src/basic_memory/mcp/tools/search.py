@@ -446,17 +446,10 @@ def _result_dicts(results: list[SearchResult | dict[str, Any]]) -> list[dict[str
     ]
 
 
-def _result_total(results: dict[str, Any], raw_results: list[SearchResult | dict[str, Any]]) -> int:
-    """Return the best available total for a per-project search payload."""
+def _result_total(results: dict[str, Any]) -> int | None:
+    """Return a per-project payload's exact total, or None when unknown."""
     total = results.get("total")
-    if isinstance(total, int) and total > 0:
-        return total
-    return len(raw_results) + (1 if results.get("has_more") is True else 0)
-
-
-def _result_total_is_exact(results: dict[str, Any]) -> bool:
-    """Return whether a per-project payload explicitly guarantees an exact total."""
-    return results.get("total_is_exact") is True
+    return total if isinstance(total, int) else None
 
 
 def _project_ref_label(project_ref: dict[str, str | None]) -> str:
@@ -491,7 +484,6 @@ async def _search_all_projects(
             current_page=requested_page,
             page_size=requested_page_size,
             total=0,
-            total_is_exact=True,
             has_more=False,
         )
         if output_format == "json":
@@ -500,8 +492,10 @@ async def _search_all_projects(
 
     per_project_page_size = requested_page * requested_page_size
     merged_results: list[dict[str, Any]] = []
+    # A merged total is only honest if every project reported an exact count and
+    # no project failed; otherwise the total is unknown (docs/OUTPUT_CONTRACT.md).
     total = 0
-    total_is_exact = True
+    total_known = True
     any_project_has_more = False
 
     for project_ref in project_refs:
@@ -531,7 +525,7 @@ async def _search_all_projects(
             logger.warning(
                 f"Multi-project search failed for project {_project_ref_label(project_ref)}: {exc}"
             )
-            total_is_exact = False
+            total_known = False
             continue
 
         if isinstance(results, str):
@@ -541,12 +535,15 @@ async def _search_all_projects(
                 "Multi-project search failed for project "
                 f"{_project_ref_label(project_ref)}: {results}"
             )
-            total_is_exact = False
+            total_known = False
             continue
 
         raw_results = _raw_results_from_search_payload(results)
-        total += _result_total(results, raw_results)
-        total_is_exact = total_is_exact and _result_total_is_exact(results)
+        project_total = _result_total(results)
+        if project_total is None:
+            total_known = False
+        else:
+            total += project_total
         any_project_has_more = any_project_has_more or results.get("has_more") is True
         merged_results.extend(_result_dicts(raw_results))
 
@@ -559,9 +556,10 @@ async def _search_all_projects(
             "results": paged_results,
             "current_page": requested_page,
             "page_size": requested_page_size,
-            "total": total,
-            "total_is_exact": total_is_exact,
-            "has_more": any_project_has_more or total > end or len(sorted_results) > end,
+            "total": total if total_known else None,
+            "has_more": any_project_has_more
+            or (total_known and total > end)
+            or len(sorted_results) > end,
         }
     )
 
@@ -795,10 +793,10 @@ async def search_notes(
         Formatted markdown text (output_format="text"), dict (output_format="json"),
         or helpful error guidance string if search fails
 
-        Pagination note: use `total` as a count only when `total_is_exact` is true.
-        Vector and hybrid searches skip the count query (it would cost a second
-        semantic retrieval pass), report `total: 0` with `total_is_exact: false`,
-        and use `has_more` for pagination.
+        Pagination note: `total` is an exact count when present, and null/absent
+        when unknown. Vector and hybrid searches skip the count query (it would
+        cost a second semantic retrieval pass) and report no total — use
+        `has_more` for pagination.
 
     Examples:
         # Basic text search

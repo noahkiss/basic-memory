@@ -105,7 +105,6 @@ async def test_search_with_pagination(
     assert data["current_page"] == 1
     assert data["page_size"] == 3
     assert data["total"] == 5
-    assert data["total_is_exact"] is True
     assert data["has_more"] is True
 
     response = await client.post(
@@ -119,7 +118,6 @@ async def test_search_with_pagination(
     assert data["current_page"] == 2
     assert data["page_size"] == 3
     assert data["total"] == 5
-    assert data["total_is_exact"] is True
     assert data["has_more"] is False
     assert len(data["results"]) == 2
 
@@ -155,7 +153,6 @@ async def test_search_with_item_type_filter_returns_total(
     assert response.status_code == 200
     data = response.json()
     assert data["total"] == 5
-    assert data["total_is_exact"] is True
     assert data["has_more"] is True
     assert len(data["results"]) == 3
 
@@ -328,7 +325,6 @@ async def test_search_whitespace_text_is_treated_as_empty(
     assert response.status_code == 200
     data = response.json()
     assert data["total"] == 0
-    assert data["total_is_exact"] is True
     assert data["has_more"] is False
     assert data["results"] == []
 
@@ -509,8 +505,7 @@ async def test_semantic_search_uses_probe_pagination_without_count(
 
     assert response.status_code == 200
     data = response.json()
-    assert data["total"] == 0
-    assert data["total_is_exact"] is False
+    assert data["total"] is None
     assert data["has_more"] is True
     assert len(data["results"]) == 2
 

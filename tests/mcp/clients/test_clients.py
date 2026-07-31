@@ -253,51 +253,19 @@ class TestSearchClient:
         result = await client.search({"text": "query"}, page=1, page_size=10)
         assert result.results == []
         assert result.current_page == 1
-        assert result.total_is_exact is True
+        # No total in the payload means the count is unknown (docs/OUTPUT_CONTRACT.md).
+        assert result.total is None
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        "retrieval_mode",
-        [SearchRetrievalMode.VECTOR, SearchRetrievalMode.HYBRID],
-    )
-    async def test_search_infers_unknown_total_for_legacy_semantic_response(
-        self,
-        monkeypatch,
-        retrieval_mode,
-    ):
-        """Legacy semantic responses preserve their unknown total semantics."""
+    async def test_search_preserves_null_total(self, monkeypatch):
+        """A null total from the server stays null — unknown is unknown."""
 
         mock_response = MagicMock()
         mock_response.json.return_value = {
             "results": [],
             "current_page": 1,
             "page_size": 10,
-            "total": 0,
-            "has_more": False,
-        }
-
-        async def mock_call_post(client, url, **kwargs):
-            return mock_response
-
-        monkeypatch.setattr("basic_memory.mcp.tools.utils.call_post", mock_call_post)
-
-        client = SearchClient(MagicMock(), "proj-123")
-        result = await client.search({"text": "query", "retrieval_mode": retrieval_mode})
-
-        assert result.total == 0
-        assert result.total_is_exact is False
-
-    @pytest.mark.asyncio
-    async def test_search_preserves_explicit_total_exactness(self, monkeypatch):
-        """Server-provided exactness remains authoritative."""
-
-        mock_response = MagicMock()
-        mock_response.json.return_value = {
-            "results": [],
-            "current_page": 1,
-            "page_size": 10,
-            "total": 0,
-            "total_is_exact": True,
+            "total": None,
             "has_more": False,
         }
 
@@ -311,7 +279,7 @@ class TestSearchClient:
             {"text": "query", "retrieval_mode": SearchRetrievalMode.VECTOR}
         )
 
-        assert result.total_is_exact is True
+        assert result.total is None
 
 
 class TestMemoryClient:
