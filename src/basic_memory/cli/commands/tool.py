@@ -37,6 +37,7 @@ from basic_memory.cli.app import app
 from basic_memory.cli.commands.command_utils import run_with_cleanup
 from basic_memory.config import ConfigManager
 from basic_memory.file_utils import has_frontmatter, remove_frontmatter
+from basic_memory.project_marker import resolve_cli_project
 
 # MCP tool functions are imported inside each command: importing
 # basic_memory.mcp.tools loads the entire tool stack (fastmcp, mcp SDK,
@@ -651,7 +652,7 @@ def write_note(
                 title=title,
                 content=content,
                 directory=folder,
-                project=project,
+                project=resolve_cli_project(project),
                 project_id=project_id,
                 tags=tags,
                 note_type=note_type,
@@ -732,7 +733,7 @@ def read_note(
         result = run_with_cleanup(
             mcp_read_note(
                 identifier=identifier,
-                project=project,
+                project=resolve_cli_project(project),
                 project_id=project_id,
                 include_frontmatter=include_frontmatter,
                 output_format="json",
@@ -803,7 +804,7 @@ def delete_note(
             mcp_delete_note(
                 identifier=identifier,
                 is_directory=is_directory,
-                project=project,
+                project=resolve_cli_project(project),
                 project_id=project_id,
                 output_format="json",
             )
@@ -883,7 +884,7 @@ def edit_note(
                 identifier=identifier,
                 operation=operation,
                 content=content,
-                project=project,
+                project=resolve_cli_project(project),
                 project_id=project_id,
                 section=section,
                 find_text=find_text,
@@ -960,7 +961,7 @@ def build_context(
         result = run_with_cleanup(
             mcp_build_context(
                 url=url,
-                project=project,
+                project=resolve_cli_project(project),
                 project_id=project_id,
                 depth=depth,
                 timeframe=timeframe,
@@ -1046,7 +1047,7 @@ def recent_activity(
                 timeframe=timeframe if timeframe is not None else "7d",
                 page=page,
                 page_size=page_size,
-                project=project,
+                project=resolve_cli_project(project),
                 project_id=project_id,
                 output_format="json",
             )
@@ -1215,7 +1216,7 @@ def search_notes(
         result = run_with_cleanup(
             mcp_search(
                 query=query or None,
-                project=project,
+                project=resolve_cli_project(project),
                 project_id=project_id,
                 search_type=search_type,
                 output_format="json",
@@ -1340,7 +1341,7 @@ def schema_validate(
             mcp_schema_validate(
                 note_type=note_type,
                 identifier=identifier,
-                project=project,
+                project=resolve_cli_project(project),
                 project_id=project_id,
                 output_format="json",
             )
@@ -1402,7 +1403,7 @@ def schema_infer(
             mcp_schema_infer(
                 note_type=note_type,
                 threshold=threshold,
-                project=project,
+                project=resolve_cli_project(project),
                 project_id=project_id,
                 output_format="json",
             )
@@ -1459,7 +1460,7 @@ def schema_diff(
         result = run_with_cleanup(
             mcp_schema_diff(
                 note_type=note_type,
-                project=project,
+                project=resolve_cli_project(project),
                 project_id=project_id,
                 output_format="json",
             )

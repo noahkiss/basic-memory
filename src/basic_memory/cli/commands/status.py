@@ -10,8 +10,8 @@ from rich.panel import Panel
 from rich.tree import Tree
 
 from basic_memory.cli.app import app
-from basic_memory.config import ConfigManager
 from basic_memory.mcp.async_client import get_client
+from basic_memory.project_marker import resolve_cli_project
 from basic_memory.mcp.clients import ProjectClient
 from basic_memory.schemas import ProjectIndexStatusResponse
 from basic_memory.mcp.project_context import get_active_project
@@ -91,7 +91,7 @@ async def run_status(
     Returns (project_name, project_index_status) for the caller to render.
 
     """
-    project = project or ConfigManager().default_project
+    project = resolve_cli_project(project)
 
     # Reuse a single client/context across polls so we don't reconnect each loop.
     async with get_client() as client:

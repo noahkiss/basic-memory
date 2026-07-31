@@ -45,13 +45,13 @@ async def _fake_get_client(project_name=None):
     yield MagicMock()
 
 
-@patch("basic_memory.cli.commands.orphans.ConfigManager")
+@patch("basic_memory.cli.commands.orphans.resolve_cli_project")
 @patch("basic_memory.cli.commands.orphans.get_active_project", new_callable=AsyncMock)
 @patch("basic_memory.cli.commands.orphans.get_client")
 @patch("basic_memory.cli.commands.orphans.KnowledgeClient")
 def test_orphans_json_output(mock_knowledge_cls, mock_get_client, mock_get_active, mock_config_cls):
     """basic-memory orphans --json outputs a JSON array of orphan entity objects."""
-    mock_config_cls.return_value = _mock_config_manager()
+    mock_config_cls.return_value = "test-project"
     mock_get_active.return_value = _MOCK_PROJECT_ITEM
     mock_get_client.side_effect = _fake_get_client
     mock_knowledge = AsyncMock()
@@ -70,7 +70,7 @@ def test_orphans_json_output(mock_knowledge_cls, mock_get_client, mock_get_activ
     assert mock_get_active.await_args.args[1] == "test-project"
 
 
-@patch("basic_memory.cli.commands.orphans.ConfigManager")
+@patch("basic_memory.cli.commands.orphans.resolve_cli_project")
 @patch("basic_memory.cli.commands.orphans.get_active_project", new_callable=AsyncMock)
 @patch("basic_memory.cli.commands.orphans.get_client")
 @patch("basic_memory.cli.commands.orphans.KnowledgeClient")
@@ -78,7 +78,7 @@ def test_orphans_table_output(
     mock_knowledge_cls, mock_get_client, mock_get_active, mock_config_cls
 ):
     """basic-memory orphans renders a table with orphan titles and paths."""
-    mock_config_cls.return_value = _mock_config_manager()
+    mock_config_cls.return_value = "test-project"
     mock_get_active.return_value = _MOCK_PROJECT_ITEM
     mock_get_client.side_effect = _fake_get_client
     mock_knowledge = AsyncMock()
@@ -93,13 +93,13 @@ def test_orphans_table_output(
     assert "notes/isolated.md" in result.output
 
 
-@patch("basic_memory.cli.commands.orphans.ConfigManager")
+@patch("basic_memory.cli.commands.orphans.resolve_cli_project")
 @patch("basic_memory.cli.commands.orphans.get_active_project", new_callable=AsyncMock)
 @patch("basic_memory.cli.commands.orphans.get_client")
 @patch("basic_memory.cli.commands.orphans.KnowledgeClient")
 def test_orphans_no_results(mock_knowledge_cls, mock_get_client, mock_get_active, mock_config_cls):
     """basic-memory orphans prints a success message when no orphans are found."""
-    mock_config_cls.return_value = _mock_config_manager()
+    mock_config_cls.return_value = "test-project"
     mock_get_active.return_value = _MOCK_PROJECT_ITEM
     mock_get_client.side_effect = _fake_get_client
     mock_knowledge = AsyncMock()

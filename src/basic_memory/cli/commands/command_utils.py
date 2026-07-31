@@ -7,10 +7,10 @@ import typer
 
 from rich.console import Console
 
-from basic_memory.config import ConfigManager
 from basic_memory.mcp.async_client import get_client
 from basic_memory.mcp.clients import ProjectClient
 from basic_memory.mcp.project_context import get_active_project
+from basic_memory.project_marker import resolve_cli_project
 
 console = Console()
 
@@ -63,9 +63,8 @@ async def run_project_index(
     # Deferred: ToolError lives in the mcp SDK, which must not load at CLI startup (#886).
     from mcp.server.fastmcp.exceptions import ToolError
 
-    project = project or ConfigManager().default_project
-
     try:
+        project = resolve_cli_project(project)
         async with get_client() as client:
             project_item = await get_active_project(client, project, None)
             project_client = ProjectClient(client)

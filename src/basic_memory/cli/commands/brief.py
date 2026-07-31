@@ -31,6 +31,7 @@ import typer
 from loguru import logger
 
 from basic_memory.cli.app import app
+from basic_memory.project_marker import find_marker
 
 # Claude Code splices SessionStart stdout into the context window. Upstream used 10_000
 # chars and that ceiling has not caused trouble, so it carries over unchanged.
@@ -39,8 +40,6 @@ MAX_BRIEF_CHARS = 10_000
 # Per section. A brief is an orientation, not an inventory — `bm ls` is the place to go
 # wide. Five is what fits before the reader starts skimming.
 MAX_ROWS = 5
-
-MARKER_FILENAME = ".bm.yml"
 
 DEFAULT_TIMEFRAME_DAYS = 3
 
@@ -70,41 +69,20 @@ class Brief:
 # --- Project resolution ---
 
 
-def find_marker(start: Path) -> Optional[Path]:
-    """Walk up from `start` looking for a `.bm.yml` project marker.
-
-    Stops at the filesystem root. Returns the first marker found, so a nested project
-    wins over the one above it.
-    """
-    for directory in (start, *start.parents):
-        candidate = directory / MARKER_FILENAME
-        if candidate.is_file():
-            return candidate
-    return None
-
-
 def project_from_marker(marker: Path) -> Optional[str]:
-    """Read the optional `project:` key out of a `.bm.yml`.
+    """Read the optional `project:` key out of a `.bm.yml`, forgivingly.
 
-    The marker's full schema (the store id that `bm history`/`bm undo` key off) is not
-    built yet. `brief` reads one optional key and ignores everything else, so it stays
-    forward-compatible with whatever the marker grows into.
+    The shared reader in `basic_memory.project_marker` is strict; brief wraps
+    it because a broken marker is a config error, not a reason to fail a
+    session start (constraint 3 above) — fall through to the default project.
     """
-    import yaml
+    from basic_memory.project_marker import MarkerError, read_marker_project
 
     try:
-        data = yaml.safe_load(marker.read_text(encoding="utf-8"))
-    except (OSError, yaml.YAMLError) as exc:
-        # Trigger: unreadable or malformed marker.
-        # Why: a broken marker is a config error, not a reason to fail a session start.
-        # Outcome: fall through to the configured default project.
-        logger.debug(f"brief: ignoring unreadable {marker}: {exc}")
+        return read_marker_project(marker)
+    except MarkerError as exc:
+        logger.debug(f"brief: ignoring unusable {marker}: {exc}")
         return None
-
-    if not isinstance(data, dict):
-        return None
-    value = data.get("project")
-    return value.strip() if isinstance(value, str) and value.strip() else None
 
 
 def resolve_project(explicit: Optional[str], cwd: Path) -> Optional[str]:

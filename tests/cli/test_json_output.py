@@ -136,14 +136,14 @@ _MOCK_PROJECT_ITEM.name = "test-project"
 _MOCK_PROJECT_ITEM.external_id = "11111111-1111-1111-1111-111111111111"
 
 
-@patch("basic_memory.cli.commands.status.ConfigManager")
+@patch("basic_memory.cli.commands.status.resolve_cli_project")
 @patch("basic_memory.cli.commands.status.get_active_project", new_callable=AsyncMock)
 @patch("basic_memory.cli.commands.status.get_client")
 def test_status_json_outputs_project_index_status(
     mock_get_client, mock_get_active, mock_config_cls
 ):
     """bm status --json outputs a valid JSON project-index observation."""
-    mock_config_cls.return_value = _mock_config_manager()
+    mock_config_cls.return_value = "test-project"
     mock_get_active.return_value = _MOCK_PROJECT_ITEM
 
     mock_project_client = AsyncMock()
@@ -165,12 +165,12 @@ def test_status_json_outputs_project_index_status(
     assert "new" not in data
 
 
-@patch("basic_memory.cli.commands.status.ConfigManager")
+@patch("basic_memory.cli.commands.status.resolve_cli_project")
 @patch("basic_memory.cli.commands.status.get_active_project", new_callable=AsyncMock)
 @patch("basic_memory.cli.commands.status.get_client")
 def test_status_json_no_changes(mock_get_client, mock_get_active, mock_config_cls):
     """bm status --json with no observed files outputs total_files: 0."""
-    mock_config_cls.return_value = _mock_config_manager()
+    mock_config_cls.return_value = "test-project"
     mock_get_active.return_value = _MOCK_PROJECT_ITEM
 
     mock_project_client = AsyncMock()
@@ -199,12 +199,12 @@ def test_status_json_no_changes(mock_get_client, mock_get_active, mock_config_cl
 # ---------------------------------------------------------------------------
 
 
-@patch("basic_memory.cli.commands.status.ConfigManager")
+@patch("basic_memory.cli.commands.status.resolve_cli_project")
 @patch("basic_memory.cli.commands.status.get_active_project", new_callable=AsyncMock)
 @patch("basic_memory.cli.commands.status.get_client")
 def test_status_wait_succeeds_after_polling(mock_get_client, mock_get_active, mock_config_cls):
     """bm status --wait returns the current observation without polling."""
-    mock_config_cls.return_value = _mock_config_manager()
+    mock_config_cls.return_value = "test-project"
     mock_get_active.return_value = _MOCK_PROJECT_ITEM
 
     get_status = AsyncMock(return_value=PROJECT_INDEX_STATUS_WITH_FILES)
@@ -222,12 +222,12 @@ def test_status_wait_succeeds_after_polling(mock_get_client, mock_get_active, mo
     assert get_status.await_count == 1
 
 
-@patch("basic_memory.cli.commands.status.ConfigManager")
+@patch("basic_memory.cli.commands.status.resolve_cli_project")
 @patch("basic_memory.cli.commands.status.get_active_project", new_callable=AsyncMock)
 @patch("basic_memory.cli.commands.status.get_client")
 def test_status_wait_times_out(mock_get_client, mock_get_active, mock_config_cls):
     """bm status --wait no longer times out on a pending-change counter."""
-    mock_config_cls.return_value = _mock_config_manager()
+    mock_config_cls.return_value = "test-project"
     mock_get_active.return_value = _MOCK_PROJECT_ITEM
 
     get_status = AsyncMock(return_value=PROJECT_INDEX_STATUS_WITH_FILES)
@@ -257,12 +257,12 @@ def test_status_wait_negative_timeout_is_rejected():
     assert "must be >= 0" in result.output
 
 
-@patch("basic_memory.cli.commands.status.ConfigManager")
+@patch("basic_memory.cli.commands.status.resolve_cli_project")
 @patch("basic_memory.cli.commands.status.get_active_project", new_callable=AsyncMock)
 @patch("basic_memory.cli.commands.status.get_client")
 def test_status_wait_json_reports_total_zero(mock_get_client, mock_get_active, mock_config_cls):
     """bm status --wait --json emits the current project-index observation."""
-    mock_config_cls.return_value = _mock_config_manager()
+    mock_config_cls.return_value = "test-project"
     mock_get_active.return_value = _MOCK_PROJECT_ITEM
 
     get_status = AsyncMock(return_value=PROJECT_INDEX_STATUS_EMPTY)
@@ -281,12 +281,12 @@ def test_status_wait_json_reports_total_zero(mock_get_client, mock_get_active, m
     assert data["total_files"] == 0
 
 
-@patch("basic_memory.cli.commands.status.ConfigManager")
+@patch("basic_memory.cli.commands.status.resolve_cli_project")
 @patch("basic_memory.cli.commands.status.get_active_project", new_callable=AsyncMock)
 @patch("basic_memory.cli.commands.status.get_client")
 def test_status_wait_json_timeout_emits_error(mock_get_client, mock_get_active, mock_config_cls):
     """bm status --wait --json ignores timeout and emits observation JSON."""
-    mock_config_cls.return_value = _mock_config_manager()
+    mock_config_cls.return_value = "test-project"
     mock_get_active.return_value = _MOCK_PROJECT_ITEM
 
     get_status = AsyncMock(return_value=PROJECT_INDEX_STATUS_WITH_FILES)

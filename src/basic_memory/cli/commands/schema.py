@@ -19,6 +19,7 @@ from rich.table import Table
 from basic_memory.cli.app import app
 from basic_memory.cli.commands.command_utils import run_with_cleanup
 from basic_memory.config import ConfigManager
+from basic_memory.project_marker import resolve_cli_project
 
 # MCP tool functions are imported inside each command: importing
 # basic_memory.mcp.tools loads the entire tool stack (fastmcp, mcp SDK,
@@ -31,15 +32,14 @@ app.add_typer(schema_app, name="schema")
 
 
 def _resolve_project_name(project: Optional[str]) -> Optional[str]:
-    """Resolve project name from CLI argument or config default."""
-    config_manager = ConfigManager()
+    """Resolve project name: CLI argument > .bm.yml marker > config default."""
     if project is not None:
-        project_name, _ = config_manager.get_project(project)
+        project_name, _ = ConfigManager().get_project(project)
         if not project_name:
             typer.echo(f"No project found named: {project}", err=True)
             raise typer.Exit(1)
         return project_name
-    return config_manager.default_project
+    return resolve_cli_project(None)
 
 
 # --- Rendering helpers ---

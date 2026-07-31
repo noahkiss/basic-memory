@@ -9,10 +9,10 @@ from rich.console import Console
 from rich.table import Table
 
 from basic_memory.cli.app import app
-from basic_memory.config import ConfigManager
 from basic_memory.mcp.async_client import get_client
 from basic_memory.mcp.clients.knowledge import KnowledgeClient
 from basic_memory.mcp.project_context import get_active_project
+from basic_memory.project_marker import resolve_cli_project
 from basic_memory.schemas.v2.graph import GraphNode
 
 console = Console()
@@ -20,7 +20,7 @@ console = Console()
 
 async def run_orphans(project: Optional[str] = None) -> tuple[str, list[GraphNode]]:
     """Fetch entities that have no relations in the knowledge graph."""
-    project = project or ConfigManager().default_project
+    project = resolve_cli_project(project)
 
     async with get_client() as client:
         project_item = await get_active_project(client, project, None)

@@ -1247,7 +1247,7 @@ by design, and the ~1.1 s direct floor (SQLAlchemy + pydantic + alembic) plus th
 interpreter floor bound every fast verb. Close B4 when the verbs land on the direct path and the
 floor is either accepted or reduced.
 
-### B5 — no cwd → project resolution: no walk-up, no marker-file detection
+### B5 — no cwd → project resolution: no walk-up, no marker-file detection — **SHIPPED 2026-07-31: `.bm.yml` walk-up wired into the CLI layer**
 **Found:** BM spike, 2026-07-26.
 
 ```
@@ -1282,6 +1282,34 @@ of the registry cluster and deliberately abandoned as its own project. Three ind
 Half of any implementation today would be speculative code written against an undecided schema.
 **Blocked on T9 / the store design settling the id-and-permalink question first** — do not start B5
 before that lands.
+
+**SHIPPED 2026-07-31** (T9 landed; decisions delegated by the user). The three blockers dissolved
+smaller than feared because `bm brief` had already prototyped the chain in-tree:
+
+- **Marker schema (what B5 needs of it):** `.bm.yml` at the project root with one read key —
+  `project: <registered name>`. All other keys are ignored, so the store design remains free to
+  add its id (`bm history`/`bm undo`) without churn here. No new identity was invented — that was
+  blocker 1's trap, and carrying the name instead of an opaque id removes blocker 2 (no id→name
+  lookup layer needed; the name resolves through the existing `ConfigManager.get_project`).
+- **Layering:** cwd is a *CLI-boundary* concept. `src/basic_memory/project_marker.py` owns
+  `find_marker` (walk-up, nearest wins), `read_marker_project` (strict), and
+  `resolve_cli_project` (explicit `--project` > marker > config default, marker names validated
+  against the registry so a stale marker fails with its own path in the message). The MCP server,
+  API, and `ProjectResolver` never see cwd — resolution happens once at CLI entry and flows down
+  as an explicit project name. That kills blocker 3: no construction-site wiring in the index/
+  storage layers at all.
+- **Strict by default, forgiving where documented:** a malformed marker or unregistered name is a
+  `MarkerError` (ValueError → exit 1 at every wired site, per `docs/OUTPUT_CONTRACT.md` —
+  addressing failure). `bm brief` keeps its own forgiving wrapper because a broken marker must
+  not fail a session start (its constraint 3); that divergence is deliberate and local to brief.
+- **Wired sites:** `bm tool *` (all 10 project-taking commands), `bm schema *`, `bm status`,
+  `bm orphans`, `run_project_index`, and `bm brief` (already had it). `bm doctor --project` and
+  the `bm project *` management commands stay explicit-name-only on purpose — registry
+  manipulation should never be implicitly retargeted by cwd.
+- **Known hazard, accepted:** a `.bm.yml` anywhere above a working directory changes the default
+  project for commands run below it. That is the feature; the validation error names the marker
+  path so surprises are diagnosable. Nothing writes markers yet — humans create them; the store
+  verbs will automate it (W3/W4).
 
 ---
 
