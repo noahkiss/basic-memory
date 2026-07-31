@@ -678,6 +678,31 @@ class SearchService:
 
         await self.repository.delete_entity_vector_rows(entity_id)
 
+    @staticmethod
+    def _frontmatter_search_terms(entity: Entity) -> List[str]:
+        """Flatten frontmatter keys and scalar values into FTS-searchable text (W18).
+
+        Frontmatter used to be reachable only through exact-match --meta/--filter
+        queries — an id stored there was invisible to a plain search. Keys and
+        scalar values (including list elements) join the entity's content_stems;
+        `tags` is skipped because _extract_entity_tags already indexes it, and
+        nested dicts are skipped — the record vocabulary (W4) is flat.
+        """
+        metadata = entity.entity_metadata or {}
+        terms: List[str] = []
+        for key, value in metadata.items():
+            if key == "tags":
+                continue
+            terms.append(str(key))
+            values = value if isinstance(value, list) else [value]
+            for item in values:
+                if item is None or isinstance(item, (dict, list)):
+                    continue
+                text_value = str(item).strip()
+                if text_value:
+                    terms.append(text_value)
+        return terms
+
     async def index_entity_file(
         self,
         entity: Entity,
@@ -737,6 +762,11 @@ class SearchService:
         content_snippet = ""
         title_variants = self._generate_variants(entity.title)
         content_stems.extend(title_variants)
+
+        # Frontmatter terms go ahead of the body: content_stems is capped at
+        # MAX_CONTENT_STEMS_SIZE and truncation cuts the tail, so anything
+        # appended after a large body silently falls out of the index.
+        content_stems.extend(self._frontmatter_search_terms(entity))
 
         if content is None:
             content = await self.file_service.read_entity_content(entity)

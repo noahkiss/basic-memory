@@ -1600,3 +1600,73 @@ async def test_reindex_vectors_no_callback(
     stats = await search_service.reindex_vectors()
     assert stats["total_entities"] >= 1
     assert stats["embedded"] + stats["errors"] == stats["total_entities"]
+
+
+# --- frontmatter values in full-text search (W18) ---
+
+
+@pytest.mark.asyncio
+async def test_frontmatter_search_terms_flatten(search_service):
+    """Keys and scalar/list values are indexed; tags, None, and nested dicts are not."""
+    from basic_memory.models import Entity
+
+    entity = Entity(
+        title="Terms Entity",
+        note_type="note",
+        entity_metadata={
+            "record_id": "zq7-frontmatter-only-93kx",
+            "review-by": "2026-08-15",
+            "depends_on": ["alpha-note", "beta-note"],
+            "priority": 2,
+            "tags": ["skipped-tag"],
+            "empty": None,
+            "nested": {"inner": "hidden"},
+        },
+        content_type="text/markdown",
+        file_path="test/terms.md",
+        project_id=1,
+    )
+
+    terms = search_service._frontmatter_search_terms(entity)
+
+    assert "record_id" in terms
+    assert "zq7-frontmatter-only-93kx" in terms
+    assert "2026-08-15" in terms
+    assert "alpha-note" in terms and "beta-note" in terms
+    assert "2" in terms
+    # tags has its own indexing path; None and nested dicts contribute no values.
+    assert "skipped-tag" not in terms
+    assert "hidden" not in terms
+    # the keys themselves are still discoverable
+    assert "nested" in terms and "empty" in terms and "tags" not in terms
+
+
+@pytest.mark.asyncio
+async def test_search_finds_frontmatter_only_value(search_service, entity_service):
+    """The O3 fixture, inverted: a value living only in frontmatter must be
+    reachable by plain FTS, alongside the body-string positive control."""
+    from basic_memory.schemas import Entity as EntitySchema
+
+    entity, _ = await entity_service.create_or_update_entity(
+        EntitySchema(
+            title="Frontmatter Reachability",
+            directory="w18",
+            note_type="note",
+            content="# Frontmatter Reachability\n\nxylophone-body-control-77 lives in the body.",
+            entity_metadata={"record_id": "zq7-frontmatter-only-93kx"},
+        )
+    )
+
+    await search_service.index_entity(entity)
+
+    # Positive control: body text is indexed.
+    body_hits = await search_service.search(SearchQuery(text="xylophone-body-control-77"))
+    assert any(r.permalink == entity.permalink for r in body_hits)
+
+    # The fix: the frontmatter-only value is now indexed.
+    fm_hits = await search_service.search(SearchQuery(text="zq7-frontmatter-only-93kx"))
+    assert any(r.permalink == entity.permalink for r in fm_hits)
+
+    # Negative control: a token present nowhere still returns nothing.
+    none_hits = await search_service.search(SearchQuery(text="vermilion-absent-token-55"))
+    assert not any(r.permalink == entity.permalink for r in none_hits)

@@ -1523,7 +1523,7 @@ failed** (336 − 6, the tests in `test_litellm_live_harness.py`, which carried 
 and so were in the baseline — `test_litellm_live_models.py` was marked `semantic` and never
 counted); `just doctor` green.
 
-### W18 — index frontmatter values into full-text search
+### W18 — index frontmatter values into full-text search — **SHIPPED 2026-07-31**
 **Opened 2026-07-31**, reversing O3's original "adapt around it" consequence — user call: this is
 our tool, and frontmatter nobody can find without already knowing the key defeats the point of
 frontmatter. When the indexer builds an entity's `search_index` row, include frontmatter key/value
@@ -1531,6 +1531,16 @@ text so plain FTS reaches ids, dates, and vocabulary values. Keep `--meta`/`--fi
 exact-match path; this adds discovery, not structure. Schedule alongside the other index-layer
 work (T18 fast path, O4's `updated_at` predicate + sort) so the index is touched once. Evidence
 and fixture in O3.
+
+**Shipped 2026-07-31.** `SearchService._frontmatter_search_terms(entity)` flattens frontmatter
+keys and scalar values (list elements included; `tags` skipped — it has its own indexing path;
+`None` and nested dicts contribute nothing) into the entity's `content_stems`. Terms are inserted
+**ahead of the body**: `content_stems` truncates at `MAX_CONTENT_STEMS_SIZE` from the tail, so
+anything appended after a large body silently falls out of the index — the pre-existing order
+already exposes permalink/file-path/tag variants to that crowding on >6000-char notes, which is
+worth its own look someday. Tests replay O3's fixture inverted: the frontmatter-only id
+(`record_id: zq7-…`) is now reachable by plain FTS next to the body-string positive control, plus
+an absent-token negative control. `--meta`/`--filter` unchanged as the exact-match path.
 
 ---
 
