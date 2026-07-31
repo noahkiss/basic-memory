@@ -15,6 +15,7 @@ subprocess and asserts that ``basic_memory.api.app``, ``basic_memory.mcp.tools``
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from basic_memory.repository.entity_repository import PermalinkIntegrityIssue
     from basic_memory.repository.relation_repository import UnresolvedRelationReportRow
     from basic_memory.services.project_service import ProjectService
 
@@ -39,10 +40,10 @@ async def direct_project_service() -> "ProjectService":
     return ProjectService(repository=ProjectRepository(), session_maker=session_maker)
 
 
-async def direct_unresolved_relation_report(
+async def direct_corpus_integrity_report(
     project_name: str,
-) -> "list[UnresolvedRelationReportRow]":
-    """Fetch the dangling forward references for one project, oldest source first.
+) -> "tuple[list[UnresolvedRelationReportRow], list[PermalinkIntegrityIssue]]":
+    """Fetch a project's dangling forward references and permalink-invariant issues.
 
     Raises ValueError for an unknown project so the CLI can fail loudly instead
     of reporting a clean corpus for a name that resolves to nothing.
@@ -51,6 +52,7 @@ async def direct_unresolved_relation_report(
     # load at CLI import time — only when a command actually runs (#886).
     from basic_memory import db
     from basic_memory.config import ConfigManager
+    from basic_memory.repository.entity_repository import EntityRepository
     from basic_memory.repository.project_repository import ProjectRepository
     from basic_memory.repository.relation_repository import RelationRepository
 
@@ -60,6 +62,10 @@ async def direct_unresolved_relation_report(
         project = await ProjectRepository().get_by_name(session, project_name)
         if project is None:
             raise ValueError(f"Project not found: '{project_name}'")
-        return await RelationRepository(project_id=project.id).find_unresolved_relation_report(
-            session
-        )
+        unresolved = await RelationRepository(
+            project_id=project.id
+        ).find_unresolved_relation_report(session)
+        permalink_issues = await EntityRepository(
+            project_id=project.id
+        ).find_permalink_integrity_issues(session)
+        return unresolved, permalink_issues

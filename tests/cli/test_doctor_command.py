@@ -69,15 +69,16 @@ def test_doctor_project_report_lists_unresolved_relations(monkeypatch):
 
     async def fake_report(project_name: str):
         assert project_name == "alpha"
-        return rows
+        return rows, []
 
-    monkeypatch.setattr(direct, "direct_unresolved_relation_report", fake_report)
+    monkeypatch.setattr(direct, "direct_corpus_integrity_report", fake_report)
 
     result = runner.invoke(app, ["doctor", "--project", "alpha"], env={"COLUMNS": "200"})
 
     assert result.exit_code == 0, result.output
     assert "1 unresolved relation(s) in 'alpha'" in result.output
     assert "2026-01-01  notes/a.md  -supersedes-> [[Ghost Note]]" in result.output
+    assert "no permalink integrity issues" in result.output
 
 
 def test_doctor_project_report_clean_corpus(monkeypatch):
@@ -85,14 +86,15 @@ def test_doctor_project_report_clean_corpus(monkeypatch):
     import basic_memory.cli.direct as direct
 
     async def fake_report(project_name: str):
-        return []
+        return [], []
 
-    monkeypatch.setattr(direct, "direct_unresolved_relation_report", fake_report)
+    monkeypatch.setattr(direct, "direct_corpus_integrity_report", fake_report)
 
     result = runner.invoke(app, ["doctor", "--project", "alpha"])
 
     assert result.exit_code == 0
     assert "no unresolved relations" in result.output
+    assert "no permalink integrity issues" in result.output
 
 
 def test_doctor_project_report_unknown_project_fails(monkeypatch):
@@ -102,9 +104,42 @@ def test_doctor_project_report_unknown_project_fails(monkeypatch):
     async def fake_report(project_name: str):
         raise ValueError(f"Project not found: '{project_name}'")
 
-    monkeypatch.setattr(direct, "direct_unresolved_relation_report", fake_report)
+    monkeypatch.setattr(direct, "direct_corpus_integrity_report", fake_report)
 
     result = runner.invoke(app, ["doctor", "--project", "nope"])
 
     assert result.exit_code == 1
     assert "Doctor failed: Project not found: 'nope'" in result.output
+
+
+def test_doctor_project_report_lists_permalink_issues(monkeypatch):
+    """Drift and underscore violations print with their permalinks, exit 0."""
+    import basic_memory.cli.direct as direct
+    from basic_memory.repository.entity_repository import PermalinkIntegrityIssue
+
+    issues = [
+        PermalinkIntegrityIssue(
+            file_path="notes/a.md",
+            issue="drift",
+            permalink="notes/a",
+            frontmatter_permalink="notes/a-edited",
+        ),
+        PermalinkIntegrityIssue(
+            file_path="notes/b.md",
+            issue="underscore",
+            permalink="tnd_b",
+            frontmatter_permalink="tnd_b",
+        ),
+    ]
+
+    async def fake_report(project_name: str):
+        return [], issues
+
+    monkeypatch.setattr(direct, "direct_corpus_integrity_report", fake_report)
+
+    result = runner.invoke(app, ["doctor", "--project", "alpha"], env={"COLUMNS": "200"})
+
+    assert result.exit_code == 0, result.output
+    assert "2 permalink integrity issue(s) in 'alpha'" in result.output
+    assert "drift" in result.output and "frontmatter=notes/a-edited" in result.output
+    assert "underscore" in result.output and "permalink=tnd_b" in result.output

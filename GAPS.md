@@ -427,7 +427,7 @@ flag ON : 62 fastembed/onnxruntime import lines; 5.32 s user CPU; 445 MB peak RS
 The flag-ON run is its own positive control (the trace does catch the import when enabled).
 `config set semantic_search_enabled false` now buys exactly what it advertises.
 
-### T9 — the permalink is the only identity BM honours, and it is neither stable nor verbatim
+### T9 — the permalink is the only identity BM honours, and it is neither stable nor verbatim — **DECIDED + SHIPPED 2026-07-31: id == permalink set-once, checked by `bm doctor --project`**
 **Found:** 2026-07-26, schema §12 testing and the BM spike. Three findings, one root cause.
 
 ```

@@ -37,6 +37,16 @@ class AcceptedPendingEntityWrite:
     external_id: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class PermalinkIntegrityIssue:
+    """One note whose stored identity violates the id == permalink invariant."""
+
+    file_path: str
+    issue: str  # "drift" (DB vs frontmatter) or "underscore" (slugification hazard)
+    permalink: str
+    frontmatter_permalink: str | None
+
+
 class EntityRepository(Repository[Entity]):
     """Repository for Entity model.
 
@@ -51,6 +61,56 @@ class EntityRepository(Repository[Entity]):
             project_id: Project ID to filter all operations by
         """
         super().__init__(Entity, project_id=project_id)
+
+    async def find_permalink_integrity_issues(
+        self, session: AsyncSession
+    ) -> List[PermalinkIntegrityIssue]:
+        """Find notes whose permalink violates the set-once identity invariant (GAPS T9).
+
+        Two checkable violations:
+        - drift: the DB permalink and the indexed frontmatter permalink disagree
+          (a hand-edited ``permalink:`` after first index — identity is no longer
+          set-once).
+        - underscore: relation targets are slugified (``_`` -> ``-``), so an
+          underscore permalink and its hyphenated twin collide into one relation
+          row and ``memory://`` addressing becomes unreliable.
+        """
+        query = (
+            select(
+                Entity.file_path,
+                Entity.permalink,
+                func.json_extract(Entity.entity_metadata, "$.permalink"),
+            )
+            .where(
+                Entity.project_id == self.project_id,
+                Entity.permalink.is_not(None),
+                Entity.content_type == "text/markdown",
+            )
+            .order_by(Entity.file_path.asc())
+        )
+        result = await session.execute(query)
+
+        issues: List[PermalinkIntegrityIssue] = []
+        for file_path, permalink, frontmatter_permalink in result.all():
+            if frontmatter_permalink is not None and frontmatter_permalink != permalink:
+                issues.append(
+                    PermalinkIntegrityIssue(
+                        file_path=file_path,
+                        issue="drift",
+                        permalink=permalink,
+                        frontmatter_permalink=frontmatter_permalink,
+                    )
+                )
+            if "_" in permalink:
+                issues.append(
+                    PermalinkIntegrityIssue(
+                        file_path=file_path,
+                        issue="underscore",
+                        permalink=permalink,
+                        frontmatter_permalink=frontmatter_permalink,
+                    )
+                )
+        return issues
 
     async def create_pending_accepted_entity(
         self,

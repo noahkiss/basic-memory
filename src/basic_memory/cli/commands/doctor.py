@@ -194,28 +194,43 @@ async def run_doctor() -> None:
     console.print("[green]Doctor checks passed.[/green]")
 
 
-async def run_unresolved_relation_report(project_name: str) -> None:
-    """Print the project's dangling forward references, oldest source first."""
-    from basic_memory.cli.direct import direct_unresolved_relation_report
+async def run_corpus_integrity_report(project_name: str) -> None:
+    """Print the project's dangling forward references and permalink-invariant issues."""
+    from basic_memory.cli.direct import direct_corpus_integrity_report
 
-    rows = await direct_unresolved_relation_report(project_name)
-    if not rows:
+    unresolved, permalink_issues = await direct_corpus_integrity_report(project_name)
+
+    if not unresolved:
         console.print(f"[green]OK[/green] {project_name}: no unresolved relations")
-        return
-
-    console.print(
-        f"[yellow]{len(rows)} unresolved relation(s) in '{project_name}'[/yellow] — "
-        "a recently-touched source may await its target; an old one is likely a typo "
-        "or a dead reference. Oldest first:"
-    )
-    for row in rows:
-        touched = row.source_updated_at.date().isoformat()
-        # markup=False: [[target]] is literal wikilink syntax, not rich markup.
+    else:
         console.print(
-            f"  {touched}  {row.file_path}  -{row.relation_type}-> [[{row.to_name}]]",
-            markup=False,
-            highlight=False,
+            f"[yellow]{len(unresolved)} unresolved relation(s) in '{project_name}'[/yellow] — "
+            "a recently-touched source may await its target; an old one is likely a typo "
+            "or a dead reference. Oldest first:"
         )
+        for row in unresolved:
+            touched = row.source_updated_at.date().isoformat()
+            # markup=False: [[target]] is literal wikilink syntax, not rich markup.
+            console.print(
+                f"  {touched}  {row.file_path}  -{row.relation_type}-> [[{row.to_name}]]",
+                markup=False,
+                highlight=False,
+            )
+
+    if not permalink_issues:
+        console.print(f"[green]OK[/green] {project_name}: no permalink integrity issues")
+        return
+    console.print(
+        f"[yellow]{len(permalink_issues)} permalink integrity issue(s) in "
+        f"'{project_name}'[/yellow] — identity is the permalink and must be set once "
+        "(GAPS T9). 'drift' = frontmatter edited after first index; 'underscore' = "
+        "relation targets slugify '_' to '-', so links may bind to a different string:"
+    )
+    for issue in permalink_issues:
+        detail = f"  {issue.issue:<10} {issue.file_path}  permalink={issue.permalink}"
+        if issue.issue == "drift":
+            detail += f"  frontmatter={issue.frontmatter_permalink}"
+        console.print(detail, markup=False, highlight=False)
 
 
 @app.command()
@@ -223,8 +238,8 @@ def doctor(
     project: str | None = typer.Option(
         None,
         "--project",
-        help="Report corpus integrity for this project (unresolved relations) "
-        "instead of running the file/database self-test.",
+        help="Report corpus integrity for this project (unresolved relations, "
+        "permalink invariant) instead of running the file/database self-test.",
     ),
 ) -> None:
     """Run local consistency checks to verify file/database indexing."""
@@ -233,7 +248,7 @@ def doctor(
 
     try:
         if project is not None:
-            run_with_cleanup(run_unresolved_relation_report(project))
+            run_with_cleanup(run_corpus_integrity_report(project))
             return
         run_with_cleanup(run_doctor())
     except (ToolError, ValueError) as e:

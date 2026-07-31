@@ -1378,3 +1378,74 @@ async def test_find_without_relations_empty_project(
     async with db.scoped_session(session_maker) as session:
         result = await entity_repository.find_without_relations(session)
     assert result == []
+
+
+@pytest.mark.asyncio
+async def test_find_permalink_integrity_issues_reports_drift_and_underscore(
+    entity_repository: EntityRepository, session_maker, test_project: Project
+):
+    """Drift (DB vs frontmatter) and underscore permalinks are flagged; a clean
+    note with matching hyphenated identity stays out of the report."""
+    now = datetime.now(timezone.utc)
+
+    def note(title: str, file_path: str, permalink: str, frontmatter_permalink: str) -> Entity:
+        return Entity(
+            project_id=test_project.id,
+            title=title,
+            note_type="note",
+            permalink=permalink,
+            file_path=file_path,
+            content_type="text/markdown",
+            entity_metadata={"permalink": frontmatter_permalink},
+            created_at=now,
+            updated_at=now,
+        )
+
+    async with db.scoped_session(session_maker) as session:
+        session.add_all(
+            [
+                note("clean", "notes/clean.md", "tnd-clean", "tnd-clean"),
+                note("drifted", "notes/drifted.md", "tnd-old", "tnd-new"),
+                note("snaked", "notes/snaked.md", "tnd_snake", "tnd_snake"),
+            ]
+        )
+        await session.flush()
+
+    async with db.scoped_session(session_maker) as session:
+        issues = await entity_repository.find_permalink_integrity_issues(session)
+
+    assert [(i.file_path, i.issue) for i in issues] == [
+        ("notes/drifted.md", "drift"),
+        ("notes/snaked.md", "underscore"),
+    ]
+    drift = issues[0]
+    assert drift.permalink == "tnd-old"
+    assert drift.frontmatter_permalink == "tnd-new"
+
+
+@pytest.mark.asyncio
+async def test_find_permalink_integrity_issues_ignores_metadata_without_permalink(
+    entity_repository: EntityRepository, session_maker, test_project: Project
+):
+    """A note whose indexed metadata carries no permalink key is not drift."""
+    now = datetime.now(timezone.utc)
+    async with db.scoped_session(session_maker) as session:
+        session.add(
+            Entity(
+                project_id=test_project.id,
+                title="no-frontmatter-permalink",
+                note_type="note",
+                permalink="notes/plain",
+                file_path="notes/plain.md",
+                content_type="text/markdown",
+                entity_metadata={"title": "no-frontmatter-permalink"},
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        await session.flush()
+
+    async with db.scoped_session(session_maker) as session:
+        issues = await entity_repository.find_permalink_integrity_issues(session)
+
+    assert issues == []
