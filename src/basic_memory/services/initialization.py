@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Protocol
 
 
 from loguru import logger
+from sqlalchemy import func, select
 
 from basic_memory import db
 from basic_memory.config import BasicMemoryConfig
@@ -137,6 +138,26 @@ async def reconcile_projects_with_config(app_config: BasicMemoryConfig):
     except Exception as e:
         logger.error(f"Error during project synchronization: {e}")
         logger.info("Continuing with initialization despite synchronization error")
+
+
+async def reconcile_projects_if_registry_empty(app_config: BasicMemoryConfig) -> None:
+    """Sync config-declared projects into an empty database registry (GAPS B2).
+
+    A fresh config auto-declares a default project, but most CLI commands skip
+    ``ensure_initialization`` for startup latency — so on a brand-new machine
+    every project-scoped command failed with "no projects are set up" until
+    something ran the full init. The empty-registry state is unambiguous (there
+    is nothing to drift against), so syncing it on first touch is safe; any
+    other config/DB disagreement is left to the explicit init paths.
+    """
+    _, session_maker = await db.get_or_create_db(app_config.database_path)
+    async with db.scoped_session(session_maker) as session:
+        registry_has_projects = (
+            await session.execute(select(func.count()).select_from(Project))
+        ).scalar()
+    if registry_has_projects or not app_config.projects:
+        return
+    await reconcile_projects_with_config(app_config)
 
 
 # Strong references for fire-and-forget startup index tasks; the event loop

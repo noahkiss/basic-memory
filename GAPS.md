@@ -1186,6 +1186,23 @@ only paths, so a project cannot be identified by the name you would pass to `--p
 matters:** R8's design has one BM project per tracked repo, keyed by an opaque id, with the human
 label carried separately. That is unworkable while the registry is ambiguous and unnamed in output.
 
+**Amended + partially SHIPPED 2026-07-31.** Three of the operational bites are gone:
+
+- *Unnamed output*: fixed with T18 — `project list` renders Name/Path/Default and warns when a
+  config project is missing from the index.
+- *Fresh config unusable*: bit this session twice — most CLI commands skip
+  `ensure_initialization` for startup latency (`cli/app.py` skip list), so on a brand-new config
+  `bm status` / `bm tool` / project resolution all failed with "no projects are set up" until
+  `bm reindex` happened to run the sync. Shipped `reconcile_projects_if_registry_empty`
+  (`services/initialization.py`): when the DB registry is empty and config declares projects,
+  sync on first touch — wired into the prepared-ASGI seam (`mcp/async_client.py`) and the native
+  direct path (`cli/direct.py`). Empty-registry only: a populated registry is never touched, so
+  real drift stays the explicit init paths' business. Verified live: first-ever command on a
+  fresh config (`bm status`, `bm project list`) now works.
+- What REMAINS of B2: the registry is still structurally split (adds/removes must keep two
+  stores agreeing), which is the design question R8's id-keyed layout has to answer — revisit
+  when `.bm.yml` (W4/B5) lands.
+
 ### B3 — `bm tool list-projects --json` fails — **REFUTED 2026-07-31**
 **Found:** 2026-07-26. Claimed to exit 1 and emit nothing parseable as JSON. No output was ever
 captured, and it stayed in BLOCKERS only because W7 is built on it.

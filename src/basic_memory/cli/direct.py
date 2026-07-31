@@ -33,10 +33,12 @@ async def direct_project_service() -> "ProjectService":
     from basic_memory import db
     from basic_memory.config import ConfigManager
     from basic_memory.repository.project_repository import ProjectRepository
+    from basic_memory.services.initialization import reconcile_projects_if_registry_empty
     from basic_memory.services.project_service import ProjectService
 
     config = ConfigManager().config
     _, session_maker = await db.get_or_create_db(config.database_path, config=config)
+    await reconcile_projects_if_registry_empty(config)
     return ProjectService(repository=ProjectRepository(), session_maker=session_maker)
 
 
@@ -55,9 +57,11 @@ async def direct_corpus_integrity_report(
     from basic_memory.repository.entity_repository import EntityRepository
     from basic_memory.repository.project_repository import ProjectRepository
     from basic_memory.repository.relation_repository import RelationRepository
+    from basic_memory.services.initialization import reconcile_projects_if_registry_empty
 
     config = ConfigManager().config
     _, session_maker = await db.get_or_create_db(config.database_path, config=config)
+    await reconcile_projects_if_registry_empty(config)
     async with db.scoped_session(session_maker) as session:
         project = await ProjectRepository().get_by_name(session, project_name)
         if project is None:

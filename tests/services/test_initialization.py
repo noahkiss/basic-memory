@@ -90,6 +90,82 @@ async def test_reconcile_projects_with_config_creates_projects_and_default(
 
 
 @pytest.mark.asyncio
+async def test_reconcile_if_registry_empty_syncs_fresh_config(
+    app_config: BasicMemoryConfig, config_manager, config_home
+):
+    """An empty DB registry adopts the config's projects on first touch (GAPS B2)."""
+    from basic_memory.config import ProjectEntry
+    from basic_memory.services.initialization import reconcile_projects_if_registry_empty
+
+    await db.shutdown_db()
+    try:
+        proj_a = config_home / "proj-a"
+        proj_a.mkdir(parents=True, exist_ok=True)
+        updated = app_config.model_copy(
+            update={
+                "projects": {"proj-a": ProjectEntry(path=str(proj_a))},
+                "default_project": "proj-a",
+            }
+        )
+        config_manager.save_config(updated)
+
+        await reconcile_projects_if_registry_empty(updated)
+
+        _, session_maker = await db.get_or_create_db(
+            updated.database_path, db_type=db.DatabaseType.FILESYSTEM
+        )
+        async with db.scoped_session(session_maker) as session:
+            active = await ProjectRepository().get_active_projects(session)
+            assert {p.name for p in active} == {"proj-a"}
+    finally:
+        await db.shutdown_db()
+
+
+@pytest.mark.asyncio
+async def test_reconcile_if_registry_empty_leaves_populated_registry_alone(
+    app_config: BasicMemoryConfig, config_manager, config_home, monkeypatch
+):
+    """A populated registry is never touched — drift stays the explicit paths' business."""
+    from basic_memory.config import ProjectEntry
+    from basic_memory.services import initialization as init_mod
+
+    await db.shutdown_db()
+    try:
+        proj_a = config_home / "proj-a"
+        proj_b = config_home / "proj-b"
+        proj_a.mkdir(parents=True, exist_ok=True)
+        proj_b.mkdir(parents=True, exist_ok=True)
+        seeded = app_config.model_copy(
+            update={
+                "projects": {"proj-a": ProjectEntry(path=str(proj_a))},
+                "default_project": "proj-a",
+            }
+        )
+        config_manager.save_config(seeded)
+        await initialize_database(seeded)
+        await reconcile_projects_with_config(seeded)
+
+        # Config now declares an extra project the DB has never seen.
+        drifted = seeded.model_copy(
+            update={
+                "projects": {
+                    "proj-a": ProjectEntry(path=str(proj_a)),
+                    "proj-b": ProjectEntry(path=str(proj_b)),
+                },
+            }
+        )
+        config_manager.save_config(drifted)
+
+        full_sync = AsyncMock()
+        monkeypatch.setattr(init_mod, "reconcile_projects_with_config", full_sync)
+        await init_mod.reconcile_projects_if_registry_empty(drifted)
+
+        full_sync.assert_not_awaited()
+    finally:
+        await db.shutdown_db()
+
+
+@pytest.mark.asyncio
 async def test_reconcile_projects_with_config_swallow_errors(
     monkeypatch, app_config: BasicMemoryConfig
 ):
