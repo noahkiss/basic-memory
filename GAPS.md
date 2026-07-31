@@ -1142,7 +1142,7 @@ it is worth setting once, after **T18**'s fast-path work settles which modules s
 
 ## BLOCKERS / gaps in capability
 
-### B1 — no `contains` operator in metadata filters; multi-value is AND-only
+### B1 — no `contains` operator in metadata filters; multi-value is AND-only — **RESOLVED 2026-07-31: `$contains` and `$in` exist (since `43d1a3a4`); verified live**
 **Found:** 2026-07-26.
 
 ```
@@ -1156,6 +1156,19 @@ Lower priority **now** than when first found: the §11 Q3 decision moved superse
 frontmatter and into `## Relations`, so we no longer need list-valued frontmatter queries for the
 edge store. Kept because any future list-valued field hits the same wall, and because T1 is its
 silent-failure sibling.
+
+**Resolved 2026-07-31, no new code** — the same `43d1a3a4` batch that fixed T1. Verified live on
+a scratch corpus (note with `supersedes: [tnd-aaaa1111]`):
+
+```
+{"supersedes":{"$contains":"tnd-aaaa1111"}}                  -> ['succ']    # element-wise
+{"supersedes":{"$in":["tnd-aaaa1111","tnd-zzzz9999"]}}       -> ['succ']    # OR semantics
+{"supersedes":{"contains": ...}}  (the old bare spelling)     -> "Unsupported operator 'contains'
+    ... Supported operators: $in, $contains, $gt, $gte, $lt, $lte, $between"
+```
+
+The bare-list form keeps AND/contains-all semantics deliberately (`$contains`/`$in` state the
+other intents explicitly). The error's exit-0-prose shape is O8/W7's business, not B1's.
 
 ### B2 — project registry is split between the database and `config.json`
 **Found:** 2026-07-26.
