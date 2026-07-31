@@ -228,7 +228,7 @@ total: 0 []
 total: 1 ['successor']
 ```
 
-### T2 — `bm status` reports files as observed that are not indexed
+### T2 — `bm status` reports files as observed that are not indexed — **RESOLVED 2026-07-31: fixed in-tree since `9e4f3c8c` (2026-07-26); verified live**
 **Found:** 2026-07-26, same session.
 
 ```
@@ -251,6 +251,22 @@ must reindex or its writes are invisible — and nothing in the tool tells you t
 reindex + embed of 67 files at **81 s and 762 MB peak RSS**. The gardener and the migration both sit
 downstream of this, on a corpus already at 53 files and growing, so "just reindex after writing" is
 not a cheap workaround. Found in: sweep-status-agents.md:37, sweep-inv-plan.md:19.
+
+**Resolved 2026-07-31, no new code.** Fixed by `9e4f3c8c` (2026-07-26, the same unreconciled fix
+batch as T1/T3/T5) via the "distinguish and warn" branch of the fix list; 4 tests in
+`tests/cli/test_status_unindexed_warning.py`. Verified live 2026-07-31, isolated scratch project:
+file written to the project dir after init, before any reindex:
+
+```
+│ main: Project Index                                                          │
+│ ├── 1 observed file                                                          │
+│ └── 1 observed file is NOT indexed — invisible to search and read until      │
+│     'basic-memory reindex'                                                   │
+```
+
+The amended reindex-cost note referenced the retired fork-point embed baseline; the structural
+point (tend verbs that write via the filesystem must reindex) stands and is what the warning now
+surfaces.
 
 ### T3 — `bm --version` reports upstream's version, not the installed build
 **Found:** at fork setup; re-confirmed 2026-07-26.
@@ -299,7 +315,7 @@ detects observations and relations by their syntax patterns anywhere in the docu
 (a `- [note] ...` bullet, an incidental `[[...]]`) becomes graph data with no opt-out, which is the
 mechanism that manufactures these edges in the first place. Found in: sweep-prior-art.md:19.
 
-### T5 — `bm project add` silently makes the new project the default
+### T5 — `bm project add` silently makes the new project the default — **RESOLVED 2026-07-31: fixed in-tree since `1baceca5` (2026-07-26); verified live**
 **Found:** 2026-07-26.
 
 ```
@@ -317,6 +333,14 @@ default on every single one.
 the choice as a parameter: `create_memory_project(project_name, project_path, set_default)`. The CLI
 `project add` path exposes no equivalent, so the fix is most likely a flag on `project add` rather
 than a service-layer change. Found in: sweep-status-agents.md:67.
+
+**Resolved 2026-07-31, no new code.** `1baceca5` (2026-07-26) removed the promote-on-add
+(`ProjectService.add_project` promoted the new project whenever the configured default had no DB
+row — every fresh config), and the CLI now exposes the choice as `project add --default`, the
+flag the amendment asked for. Verified live 2026-07-31, scratch config: default stayed `main`
+after `project add second`, `project remove second` succeeded (the original repro's failure
+mode), and `--default` appears in `project add --help`. The dead default-repair branch this
+left behind was cleaned separately under O7.
 
 ### T6 — RESOLVED, no defect. See **R-T6** in the RESOLVED section.
 The number is retained as a tombstone so existing cross-references do not silently retarget. Retested

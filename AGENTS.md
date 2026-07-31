@@ -43,9 +43,9 @@ records provenance only — it is not a merge base and nothing needs to update i
 remote is fetch-only (push URL `DISABLED`) for as-needed lookups: `git log 232f2c2..upstream/main`
 to see if they already diagnosed something, `git show <sha> -- src/basic_memory` to lift one fix.
 
-**`basic-memory --version` lies.** It reads a hardcoded string that only moves on release, so both
-upstream `main` and this tree self-report `0.22.1`. The *package* version is derived from git and is
-reliable — use `uv tool list` (or `pip show basic-memory`) and read the `+<sha>` suffix.
+**`basic-memory --version` reports the installed build** (e.g. `0.22.2.dev165+117308fb`, fixed in
+`9e4f3c8c` — GAPS T3). Note the `+<sha>` reflects the last `uv sync`/install, not the working
+tree's HEAD; after pulling, re-sync before trusting it.
 
 ## What this fork is for
 
