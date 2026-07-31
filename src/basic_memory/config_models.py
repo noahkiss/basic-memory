@@ -295,16 +295,6 @@ class BasicMemoryConfig(BaseSettings):
         "When unset, defaults to 'hybrid' if semantic search is enabled, otherwise 'text'.",
     )
 
-    # Background materialization (local runtime)
-    materialization_workers: int = Field(
-        default=4,
-        description="Number of in-process workers that materialize accepted note "
-        "writes (write the markdown file + index it) off the accept path. Bounds "
-        "concurrent materializations so they don't contend en masse for the DB "
-        "writer under high write load.",
-        gt=0,
-    )
-
     # SQLite tuning. The index DB is a cache rebuildable from the markdown files
     # (the source of truth), so durability *could* be traded for throughput — but
     # benchmarks showed OFF buys nothing over the NORMAL default (WAL + NORMAL

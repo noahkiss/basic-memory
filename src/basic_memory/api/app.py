@@ -19,7 +19,6 @@ from basic_memory.api.v2.routers import (
     importer_router as v2_importer,
     schema_router as v2_schema,
 )
-from basic_memory.index.note_content_materialization import drain_pending_materializations
 from basic_memory.config import init_api_logging
 from basic_memory.index.local_schedulers import drain_background_tasks
 from basic_memory.services.exceptions import EntityAlreadyExistsError
@@ -61,11 +60,9 @@ async def lifespan(app: FastAPI):  # pragma: no cover
     # Shutdown - coordinator handles clean task cancellation
     logger.info("Shutting down Basic Memory API")
     await watch_coordinator.stop()
-    # A local note write returns 202 before its markdown file is written;
-    # SIGTERM can land while that materialization (and the vector sync /
-    # relation resolution it schedules) is still queued. Drain both queues
-    # before the engine closes so an accepted write is never lost.
-    await drain_pending_materializations()
+    # Note writes materialize inline, but the vector sync / relation
+    # resolution they schedule is still deferred; drain it before the engine
+    # closes so semantic search and inbound wikilinks aren't left stale.
     await drain_background_tasks()
     await container.shutdown_database()
 

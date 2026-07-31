@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import asyncio
-from collections.abc import Coroutine, Mapping
-from contextlib import suppress
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
-from typing import Any, Protocol
+from typing import Protocol
 
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -33,7 +31,6 @@ from basic_memory.runtime.note_content import (
     RuntimeNoteMaterializationJobRequest,
     RuntimeNoteMaterializationResult,
     RuntimeNoteMaterializationStatus,
-    RuntimePendingNoteMaterialization,
     plan_accepted_note_response,
     plan_note_materialization_job_request,
 )
@@ -43,113 +40,6 @@ from basic_memory.models import Entity
 from basic_memory.repository import EntityRepository, NoteContentRepository
 from basic_memory.schemas.response import ObservationResponse, RelationResponse
 from basic_memory.services.file_service import FileService
-
-
-# The (project_id, entity_id) identity that pins all of one note's queued
-# materializations to a single worker.
-type _NoteRoutingKey = tuple[int, int]
-
-
-class _MaterializationWorkerPool:
-    """Bounded in-process worker pool that drains queued note materializations.
-
-    Mirrors the cloud's queue worker model locally: the accept enqueues a
-    materialization and returns; a fixed number of workers pull from per-worker
-    queues and run them. Bounding concurrency to `workers` is the point —
-    fire-and-forget `create_task` let every deferred file write + index run at
-    once, and at high write load they contended en masse for the single SQLite
-    writer and the event loop, collapsing the tail (p99) and throughput
-    (measured under write load; the benchmark harness that produced the
-    numbers has since been removed). With N workers only N
-    materializations are in flight; the rest wait in the queues and drain over
-    time, so the accept path stays light AND the writer isn't thrashed.
-
-    Jobs are routed to a worker by their note identity (project_id, entity_id),
-    so all jobs for one note run on the same worker FIFO in submission order.
-    Materializations for the same note must never run concurrently: the older
-    job's file write changes the on-disk checksum, so the newer job's writer
-    guard reads unexpected content and publishes a false
-    external_change_detected on the LATEST accepted row — the note is never
-    materialized and is falsely flagged as conflicted.
-    """
-
-    def __init__(self) -> None:
-        self._queues: list[asyncio.Queue[Coroutine[Any, Any, object]]] = []
-        self._workers: list[asyncio.Task[None]] = []
-        self._loop: asyncio.AbstractEventLoop | None = None
-
-    def submit(
-        self,
-        work: Coroutine[Any, Any, object],
-        *,
-        workers: int,
-        key: _NoteRoutingKey,
-    ) -> None:
-        self._ensure_workers(workers)
-        self._queues[self._worker_index(key)].put_nowait(work)
-
-    def _worker_index(self, key: _NoteRoutingKey) -> int:
-        # hash() of an int tuple is stable within one process, which is all
-        # routing needs: a job only has to serialize against other jobs queued
-        # in the same process lifetime.
-        return hash(key) % len(self._queues)
-
-    def _ensure_workers(self, workers: int) -> None:
-        # Trigger: first submit, or submit on a different event loop than the one
-        # the workers were bound to (e.g. a fresh per-test loop).
-        # Why: workers are long-lived tasks bound to one loop; reusing queues
-        # whose workers live on a dead loop would hang. Outcome: (re)create one
-        # queue + worker task pair per worker on the current running loop.
-        # Orphaned workers on a closed loop are already dead, so dropping them
-        # is safe.
-        loop = asyncio.get_running_loop()
-        if self._queues and self._loop is loop:
-            return
-        self._loop = loop
-        self._queues = [asyncio.Queue() for _ in range(max(1, workers))]
-        self._workers = [asyncio.create_task(self._run(queue)) for queue in self._queues]
-
-    async def _run(self, queue: asyncio.Queue[Coroutine[Any, Any, object]]) -> None:
-        while True:
-            work = await queue.get()
-            try:
-                await work
-            except Exception:  # pragma: no cover - defensive worker guard
-                logger.exception("Local note materialization failed")
-            finally:
-                queue.task_done()
-
-    async def join(self) -> None:
-        """Block until every queued materialization has completed."""
-        for queue in self._queues:
-            await queue.join()
-
-    async def aclose(self) -> None:
-        """Cancel workers and reset the pool (clean test teardown / shutdown)."""
-        workers = self._workers
-        self._workers = []
-        self._queues = []
-        self._loop = None
-        for worker in workers:
-            worker.cancel()
-        for worker in workers:
-            with suppress(asyncio.CancelledError):
-                await worker
-
-
-_materialization_pool = _MaterializationWorkerPool()
-
-
-async def drain_pending_materializations() -> None:
-    """Block until queued local materializations finish writing + indexing.
-
-    One-shot clients (``bm tool write-note``, importers) return right after the
-    accept enqueues the markdown write/index; without this drain the event loop can
-    close before the worker writes the source-of-truth file, silently losing the
-    write even though the API already reported it accepted. Long-lived servers keep
-    the loop alive and don't need it.
-    """
-    await _materialization_pool.join()
 
 
 # --- Startup Recovery ---
@@ -440,53 +330,24 @@ class LocalNoteContentMaterializationProvider:
     session_maker: async_sessionmaker[AsyncSession]
     file_service: FileService
     file_indexer: IndexFileExecutor | None = None
-    test_mode: bool = False
-    materialization_workers: int = 4
     relation_resolution_scheduler: RelationResolutionScheduling | None = None
 
     async def materialize_write_change(
         self,
         accepted: RuntimeAcceptedNoteChange[RuntimeNoteContentResponsePayload],
     ) -> RuntimeAcceptedNoteChange[RuntimeNoteContentResponsePayload]:
-        """Materialize an accepted note write OFF the accept path.
+        """Materialize an accepted note write ON the accept path.
 
-        Cloud/local parity (DO NOT UNDO): cloud's materialize_write_change
-        enqueues a queue job and returns immediately, letting Tigris object storage
-        + indexing catch up asynchronously because S3 writes are slow. Locally we
-        mirror that with an in-process background task. The accept has already
-        persisted note_content (the write/read-through cache that serves reads);
-        here we only schedule writing the markdown file (the source of truth) and
-        indexing it. Writing + indexing the file is the heavy part of a write, so
-        doing it inline reintroduces a ~3x write-load regression (measured;
-        the benchmark harness that produced the number has since been removed).
-
-        PARITY INVARIANT: production must defer. Test mode runs inline ONLY so
-        tests can assert file/search state synchronously — never make the
-        production path synchronous to "simplify" this.
+        Synchronous write-through: when a v2 write/edit/move returns, the
+        markdown file (the source of truth) is on disk and indexed. The
+        deferred worker-pool this replaced existed for cloud parity (S3 writes
+        are slow); on this local-only tree deferral measured no cheaper in CPU
+        or total wall and worse in tail latency, while leaving an accept→flush
+        window where the DB row was the note's only copy (GAPS.md O6/T12).
         """
-        materialization = accepted.materialization
-        if materialization is None:
+        if accepted.materialization is None:
             return accepted
-        if self.test_mode:
-            return await self._materialize_write_now(accepted)
-        self._schedule_materialization(accepted, materialization)
-        return accepted
-
-    def _schedule_materialization(
-        self,
-        accepted: RuntimeAcceptedNoteChange[RuntimeNoteContentResponsePayload],
-        materialization: RuntimePendingNoteMaterialization,
-    ) -> None:
-        # Hand the materialization to the bounded worker pool instead of spawning
-        # an unbounded task per write — see _MaterializationWorkerPool for why.
-        # Keyed on the note's identity so two quick writes to the same note run
-        # sequentially on one worker instead of racing the writer guard into a
-        # false external_change_detected on the newer accepted row.
-        _materialization_pool.submit(
-            self._materialize_write_now(accepted),
-            workers=self.materialization_workers,
-            key=(materialization.project_id, materialization.entity_id),
-        )
+        return await self._materialize_write_now(accepted)
 
     async def _materialize_write_now(
         self,

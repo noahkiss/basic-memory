@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import os
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -98,16 +97,11 @@ def accepted_materialization_change() -> RuntimeAcceptedNoteChange[
 
 def local_materialization_provider(
     indexer: RecordingFileIndexer,
-    *,
-    test_mode: bool = True,
 ) -> LocalNoteContentMaterializationProvider:
-    # test_mode=True keeps materialization inline so these tests can assert the
-    # result synchronously; production defers it to a background task.
     return LocalNoteContentMaterializationProvider(
         session_maker=cast(async_sessionmaker[AsyncSession], object()),
         file_service=cast(FileService, object()),
         file_indexer=indexer,
-        test_mode=test_mode,
     )
 
 
@@ -228,73 +222,6 @@ async def test_local_materialization_returns_conflict_without_indexing(
 
 
 @pytest.mark.asyncio
-async def test_local_materialization_defers_write_off_the_accept_path(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Production (test_mode=False) returns the accepted DB state at once, writes async.
-
-    Cloud parity: the accept persists note_content and returns 202; the markdown
-    file (source of truth) and its index are written off the request path.
-    """
-    requests: list[RuntimeNoteMaterializationJobRequest] = []
-
-    async def fake_run_note_materialization(
-        request: RuntimeNoteMaterializationJobRequest,
-        **_: Any,
-    ) -> RuntimeNoteMaterializationResult:
-        requests.append(request)
-        return RuntimeNoteMaterializationResult(
-            entity_id=42,
-            status=RuntimeNoteMaterializationStatus.conflict,
-            reason="deferred",
-            file_path="notes/test.md",
-            file_checksum="c",
-        )
-
-    monkeypatch.setattr(
-        note_content_materialization,
-        "run_note_materialization",
-        fake_run_note_materialization,
-    )
-    # Isolate the module-global pool so its workers don't outlive this test loop.
-    pool = note_content_materialization._MaterializationWorkerPool()
-    monkeypatch.setattr(note_content_materialization, "_materialization_pool", pool)
-    indexer = RecordingFileIndexer()
-    accepted = accepted_materialization_change()
-
-    result = await local_materialization_provider(
-        indexer, test_mode=False
-    ).materialize_write_change(accepted)
-
-    # Returned immediately with the accepted DB state — no inline write yet.
-    assert result is accepted
-    assert requests == []
-
-    # The write happens off the accept path via the bounded pool; drain to confirm.
-    await pool.join()
-    assert len(requests) == 1
-    await pool.aclose()
-
-
-@pytest.mark.asyncio
-async def test_drain_pending_materializations_waits_for_queued_work(monkeypatch) -> None:
-    """One-shot clients must drain queued file writes before the loop closes, or the
-    source-of-truth markdown file is lost even though the API reported it accepted."""
-    pool = note_content_materialization._MaterializationWorkerPool()
-    monkeypatch.setattr(note_content_materialization, "_materialization_pool", pool)
-    ran = asyncio.Event()
-
-    async def work() -> None:
-        ran.set()
-
-    pool.submit(work(), workers=1, key=(1, 1))
-    await note_content_materialization.drain_pending_materializations()
-
-    assert ran.is_set()
-    await pool.aclose()
-
-
-@pytest.mark.asyncio
 async def test_local_materialization_schedules_relation_resolution_after_index(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -337,7 +264,6 @@ async def test_local_materialization_schedules_relation_resolution_after_index(
         session_maker=cast(async_sessionmaker[AsyncSession], object()),
         file_service=cast(FileService, object()),
         file_indexer=RecordingFileIndexer(),
-        test_mode=True,
         relation_resolution_scheduler=RecordingScheduler(),
     )
 
@@ -345,114 +271,6 @@ async def test_local_materialization_schedules_relation_resolution_after_index(
 
     assert accepted.materialization is not None
     assert scheduled == [accepted.materialization.project_id]
-
-
-@pytest.mark.asyncio
-async def test_materialization_pool_bounds_concurrency_and_drains() -> None:
-    """Failsafe: the pool runs at most `workers` materializations at once.
-
-    This bound is the whole point — unbounded create_task let every deferred
-    write run concurrently and collapsed the tail under load.
-    """
-    pool = note_content_materialization._MaterializationWorkerPool()
-    in_flight = 0
-    peak = 0
-    done = 0
-
-    async def work() -> None:
-        nonlocal in_flight, peak, done
-        in_flight += 1
-        peak = max(peak, in_flight)
-        await asyncio.sleep(0.01)
-        in_flight -= 1
-        done += 1
-
-    # Distinct note keys so the jobs spread across the pool instead of
-    # serializing on one worker.
-    for entity_id in range(20):
-        pool.submit(work(), workers=3, key=(1, entity_id))
-    await pool.join()
-
-    assert done == 20  # every submitted materialization ran
-    assert peak <= 3  # never more than `workers` in flight at once
-    await pool.aclose()
-
-
-@pytest.mark.asyncio
-async def test_materialization_pool_serializes_same_note_jobs_in_submission_order() -> None:
-    """Two queued writes for one note run on the same worker FIFO, in order.
-
-    Concurrent preflights for one note race the writer guard: the older job's
-    file write changes the on-disk checksum, so the newer job reads unexpected
-    content and publishes a false external_change_detected on the LATEST
-    accepted row — the note is never materialized and is falsely flagged as
-    conflicted.
-    """
-    pool = note_content_materialization._MaterializationWorkerPool()
-    events: list[str] = []
-    first_started = asyncio.Event()
-    release_first = asyncio.Event()
-
-    async def first_write() -> None:
-        events.append("first:start")
-        first_started.set()
-        await release_first.wait()
-        events.append("first:end")
-
-    async def second_write() -> None:
-        events.append("second:start")
-        events.append("second:end")
-
-    note_key = (7, 42)
-    pool.submit(first_write(), workers=4, key=note_key)
-    pool.submit(second_write(), workers=4, key=note_key)
-
-    await first_started.wait()
-    # Give the three idle workers every chance to (wrongly) start the second
-    # job while the first is still in flight.
-    for _ in range(10):
-        await asyncio.sleep(0)
-    assert events == ["first:start"], "second write for the same note started concurrently"
-
-    release_first.set()
-    await pool.join()
-    assert events == ["first:start", "first:end", "second:start", "second:end"]
-    await pool.aclose()
-
-
-@pytest.mark.asyncio
-async def test_materialization_pool_runs_different_notes_concurrently() -> None:
-    """A blocked note must not stall materializations for unrelated notes."""
-    pool = note_content_materialization._MaterializationWorkerPool()
-    blocked_started = asyncio.Event()
-    release_blocked = asyncio.Event()
-    other_done = asyncio.Event()
-
-    async def blocked_write() -> None:
-        blocked_started.set()
-        await release_blocked.wait()
-
-    async def other_write() -> None:
-        other_done.set()
-
-    blocked_key = (1, 1)
-    pool.submit(blocked_write(), workers=4, key=blocked_key)
-    # Pick a note the pool's own routing sends to a different worker, so the
-    # test cannot drift from the production hash routing.
-    other_key = next(
-        (1, entity_id)
-        for entity_id in range(2, 100)
-        if pool._worker_index((1, entity_id)) != pool._worker_index(blocked_key)
-    )
-    pool.submit(other_write(), workers=4, key=other_key)
-
-    await blocked_started.wait()
-    # The unrelated note completes while the first note's worker is blocked.
-    await asyncio.wait_for(other_done.wait(), timeout=1)
-
-    release_blocked.set()
-    await pool.join()
-    await pool.aclose()
 
 
 # --- Startup recovery of stuck materializations ---

@@ -540,7 +540,7 @@ exit=0                               # full Rich traceback into alembic internal
 Neither says "this database was migrated by a newer build" nor names a way out. The fix stands as
 written above; add a non-zero exit while there.
 
-### T12 — `bm reset` claims your markdown is safe while unflushed writes live only in the DB — **SHIPPED 2026-07-31 (guard); root fix tracked under O6**
+### T12 — `bm reset` claims your markdown is safe while unflushed writes live only in the DB — **SHIPPED 2026-07-31 (guard + O6 write-through root fix)**
 **Found:** 2026-07-27, in `.forked/release-design.md` §2. Both sites re-verified before recording.
 
 `NoteContent` (`src/basic_memory/models/knowledge.py:159-224`) materializes `markdown_content` in
@@ -1770,7 +1770,7 @@ Found in: sweep-spike.md:31, sweep-status-agents.md:55.
   Third member of the frontmatter-blindness class (O2, O3): W4/W5's closed vocabulary cannot lean
   on `schema infer` for frontmatter keys.
 
-### O6 — two unaudited write-path behaviours: non-unique replace, and move-vs-rewrite — **RESOLVED (replace) / CONFIRMED-WORSE (move) 2026-07-31**
+### O6 — two unaudited write-path behaviours: non-unique replace, and move-vs-rewrite — **RESOLVED (replace) 2026-07-31; move root-caused; synchronous write-through SHIPPED 2026-07-31**
 **Found:** 2026-07-26. Both are claims about our code prompted by observing the failure elsewhere;
 neither has been checked against this tree.
 
@@ -1815,6 +1815,85 @@ one operation, and write = file first, index second, and the `pending` window di
 Touches the mutation service and the materialization runner; scope it in phase 2/3 before the
 verbs. The `bm reset` guard (T12's fix) is still worth shipping independently — it is cheap and
 guards hand-edited or crashed states regardless.
+
+**Scoped 2026-07-31 — DECISION: ship the inline write-through. SHIPPED same day.** After the
+change, the production path re-measured median 116 ms/write with a 0.00 s drain (nothing ever
+queued) — better than both pre-change variants.
+
+ Full subsystem map captured
+(worker pool + runner + recovery + status plumbing ≈ 4,000 src lines / ~300 tests), but the
+write-through itself is small because the seam already exists: every router awaits
+`materialize_write_change` (`index/note_content_materialization.py:447`), which *already runs the
+full materialization inline under `test_mode`* and only defers to the in-process
+`_MaterializationWorkerPool` in production. The change is "make production take the branch tests
+have always taken," not a rewrite.
+
+The deferral's stated justification was a "~3x write-load regression (measured; the benchmark
+harness that produced the number has since been removed)" plus a cloud-parity invariant
+("production must defer"). The cloud is gone (W12), and the figure **does not reproduce** —
+same unreproducible-inherited-number pattern as T18. Measured 2026-07-31, scratch harness
+(isolated HOME/config, dev env, in-process ASGI client, 50 `create_entity` calls after warmup,
+deferred = production path, inline = `materialize_write_change` patched to
+`_materialize_write_now`; two runs each, second run shown, first agreed):
+
+```
+mode=deferred n=50
+per-write latency ms: median=87.9 p90=609.4 max=1929.4
+request-loop wall s: 9.86  drain wall s: 2.29
+total wall (writes+drain) s: 12.15
+user CPU for 50 writes s: 36.54
+mode=inline n=50
+per-write latency ms: median=169.9 p90=257.8 max=910.9
+request-loop wall s: 10.13  drain wall s: 0.00
+total wall (writes+drain) s: 10.13
+user CPU for 50 writes s: 36.42
+```
+
+Equal CPU, inline slightly *less* total wall, and inline's tail latency is better — the deferred
+pool contends with incoming accepts on the same event loop, so deferral doesn't even buy accept
+latency under load. Median per-write goes 88→170 ms because the response now waits for the file
+and its index; that is the price of "return means on disk" and it is well under the W3 git-commit
+budget conversation (12 ms/commit was called cheap; 80 ms for durability on a local tool is too).
+
+**Touchpoints of the shipped change** (everything else stays):
+- `index/note_content_materialization.py` — `materialize_write_change` always materializes
+  inline; delete `_MaterializationWorkerPool`, `_materialization_pool`,
+  `_schedule_materialization`, `drain_pending_materializations`, the `test_mode` /
+  `materialization_workers` fields, and the cloud-parity docstring.
+- Drain call sites: `api/app.py`, `mcp/server.py`, `cli/commands/command_utils.py`
+  (`drain_background_tasks` stays — vector sync and relation resolution remain scheduled).
+- `deps/services.py` provider wiring; `config_models.py` `materialization_workers` field.
+- Tests of the pool/drain in `tests/index/test_note_content_materialization.py`,
+  `tests/cli/test_command_utils.py`, `tests/mcp/test_server_lifespan_branches.py`, plus any
+  fixture that set `materialization_workers`.
+
+**What this closes:** the observable accept→flush window. When any v2 write/edit/move returns,
+the file is on disk and indexed — the T12 kill-between-accept-and-flush repro and this entry's
+interrupted-move duplication repro (kill after the CLI call completed) are dead as captured.
+
+**Deliberately out of scope, and why:**
+- **The `pending`/`writing` states themselves stay.** They now exist only transiently inside a
+  request, plus as the crash-mid-request record. Removing them means inverting to file-first
+  (rewriting `accepted_note_mutation_runner.py` (1,020 lines), `note_content_writes.py`, the
+  reconciliation planners, and ~300 tests' worth of surface) for no observable behaviour change —
+  that is the metastasis case the scoping was told to watch for. The recovery sweep
+  (`recover_project_materializations`) and the T12 reset guard stay as the crash-mid-request
+  defense; the guard's flush step now normally finds nothing.
+- **Move stays write-new + delete-old (not `rename(2)`).** The rename-based
+  `EntityService.move_entity` path exists but bypasses `note_content`; grafting it in is real
+  design work and the mtime-untruthfulness it would fix is already handled by the standing rule
+  (W2 reads `updated_at` from the index, never `stat()`). Revisit only if a real need for inode
+  identity appears.
+- **Concurrent same-note writes** could previously race the writer guard into false
+  `external_change_detected`; the pool serialized them per note. Inline, the db_version
+  compare-and-set in materialization preflight still refuses stale materializations, and
+  same-note concurrent writes from a single local agent are effectively nonexistent. Accepted.
+- **Routers still return 202.** The status code is now cosmetically wrong (the work is done, not
+  accepted-for-later); folding it to 200 is wire-shape churn better taken with W7's error
+  contract.
+- W12 residue found by the mapping (`indexing/accepted_note_enqueue_runner.py` — 216 lines, no
+  src caller, 9 tests; `RepositoryNoteMaterializationFailureMarker`; queue job payloads;
+  `NoteMaterializationSessionLock`) — deleted in a follow-up commit, not this one.
 
 ### O7 — `add_project`'s default-repair logging is unformatted, and one of its branches is now dead — **SHIPPED 2026-07-31**
 **Found:** 2026-07-27, while repairing the W12 cloud strip.
