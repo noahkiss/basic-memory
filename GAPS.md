@@ -486,7 +486,7 @@ a non-empty result alone. Fork fix removes the lie; the verb-level check enforce
 Upstream states a "fail-fast / no-silent-fallback" house style (see #1151) and would probably take
 this, but we do not track upstream — reporting it is a courtesy, not a dependency.
 
-### T11 — no newer-schema guard: an older build over a newer DB dies in a raw stack trace
+### T11 — no newer-schema guard: an older build over a newer DB dies in a raw stack trace — **CONFIRMED 2026-07-31**
 **Found:** 2026-07-27, in `.forked/release-design.md` §2. Code sites re-verified before recording.
 
 `run_migrations` (`src/basic_memory/db.py:525`) builds the Alembic config and calls
@@ -513,9 +513,24 @@ bites this install.
 script directory does not contain, fail with something like "this database was migrated by a newer
 Basic Memory; reinstall the newer build or run `bm reset --reindex`".
 
-**The code evidence above is captured; the runtime repro is not.** By this file's own rule the
-crash *shape* is still a claim. To capture it: migrate on `main`, `git checkout` a commit before the
-newest migration, reinstall, run any command, and paste the traceback here.
+**Runtime repro captured 2026-07-31** — via a git worktree at `9e3fe26a~1` (one commit before the
+newest migration, `n7i8j9k0l1m2`) with its own venv, against a config dir freshly migrated by
+current `main`. No install was touched. Two shapes, both worse than useless and both **exit 0**
+(the O8 class again):
+
+```
+$ (older build) bm project list      # against the newer DB
+Error listing projects: Can't locate revision identified by 'n7i8j9k0l1m2'
+exit=0
+$ (older build) bm reindex
+│ ❱  245 │   │   │   raise util.CommandError(resolution) from re              │
+╰─────────────────────────────────────────────────────────────────────────────╯
+CommandError: Can't locate revision identified by 'n7i8j9k0l1m2'
+exit=0                               # full Rich traceback into alembic internals
+```
+
+Neither says "this database was migrated by a newer build" nor names a way out. The fix stands as
+written above; add a non-zero exit while there.
 
 ### T12 — `bm reset` claims your markdown is safe while unflushed writes live only in the DB — **CONFIRMED 2026-07-31, observed loss**
 **Found:** 2026-07-27, in `.forked/release-design.md` §2. Both sites re-verified before recording.
@@ -1684,6 +1699,15 @@ Found in: sweep-beans.md:7, sweep-transcript.md:55.
    path from the DB *and* re-indexed the leftover old file as a second entity. **An interrupted move
    plus reindex silently duplicates the note** (both `synced` afterwards). `bm gc` needs a dedupe
    check for exactly this shape, and W3's git history is the real safety net.
+
+**Proposed root fix (2026-07-31, not yet scoped): synchronous write-through.** The DB-first
+deferred-write architecture exists so a hosted runtime can accept writes without a filesystem —
+and this fork stripped the hosted runtime (W12). On a local-only tree it buys nothing and is the
+root cause of both this entry's move behaviour and T12: make move = `rename(2)` + index update in
+one operation, and write = file first, index second, and the `pending` window disappears entirely.
+Touches the mutation service and the materialization runner; scope it in phase 2/3 before the
+verbs. The `bm reset` guard (T12's fix) is still worth shipping independently — it is cheap and
+guards hand-edited or crashed states regardless.
 
 ### O7 — `add_project`'s default-repair logging is unformatted, and one of its branches is now dead — **SHIPPED 2026-07-31**
 **Found:** 2026-07-27, while repairing the W12 cloud strip.
