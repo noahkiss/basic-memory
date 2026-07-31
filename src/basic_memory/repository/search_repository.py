@@ -15,7 +15,7 @@ from basic_memory.repository.embedding_provider_factory import create_embedding_
 from basic_memory.repository.search_index_row import SearchIndexRow
 from basic_memory.repository.search_repository_base import VectorSyncBatchResult
 from basic_memory.repository.sqlite_search_repository import SQLiteSearchRepository
-from basic_memory.schemas.search import SearchItemType, SearchRetrievalMode
+from basic_memory.schemas.search import SearchItemType, SearchOrder, SearchRetrievalMode
 
 
 class SearchRepository(Protocol):
@@ -35,11 +35,13 @@ class SearchRepository(Protocol):
         title: Optional[str] = None,
         note_types: Optional[List[str]] = None,
         after_date: Optional[datetime] = None,
+        before_date: Optional[datetime] = None,
         search_item_types: Optional[List[SearchItemType]] = None,
         categories: Optional[List[str]] = None,
         metadata_filters: Optional[dict] = None,
         retrieval_mode: SearchRetrievalMode = SearchRetrievalMode.FTS,
         min_similarity: Optional[float] = None,
+        order_by: SearchOrder = SearchOrder.RELEVANCE,
         limit: int = 10,
         offset: int = 0,
         allow_relaxed: bool = False,
@@ -56,6 +58,7 @@ class SearchRepository(Protocol):
         title: Optional[str] = None,
         note_types: Optional[List[str]] = None,
         after_date: Optional[datetime] = None,
+        before_date: Optional[datetime] = None,
         search_item_types: Optional[List[SearchItemType]] = None,
         categories: Optional[List[str]] = None,
         metadata_filters: Optional[dict] = None,

@@ -1652,7 +1652,7 @@ with the phase-2/3 index work (T18 / the O4 date predicate). Two parts stand unc
 body relations (`## Relations` carries a typed, link-resolved edge — kept on merit, see O2), and
 O5's inference blindness is moot once picoschema is stripped.
 
-### O4 — no demonstrated filter or sort over `updated_at` — **CONFIRMED 2026-07-31, with two footholds**
+### O4 — no demonstrated filter or sort over `updated_at` — **SHIPPED 2026-07-31 (repository layer)**
 **Found:** 2026-07-26. Only the `review-by` *frontmatter* filter was actually proven. `updated_at` is
 DB metadata rather than frontmatter, and no working `--filter` form for it has been shown.
 
@@ -1685,6 +1685,22 @@ but real. W2's staleness sweep (`updated_at < cutoff`) has **no query form at al
 a `$lt` predicate over the DB column or set subtraction (all minus `--after_date` survivors). The
 fast verbs talk to the repository layer directly (T18/B4), so the right fix is a repository-level
 predicate + explicit sort, not a patch to the MCP filter grammar.
+
+**Shipped 2026-07-31, per the decided design — repository layer only, MCP grammar untouched:**
+
+- `search()`/`count()` take `before_date: datetime | None` — compiles to
+  `datetime(search_index.updated_at) < datetime(:before_date)`, the DB column, strictly `<`.
+  W2's sweep is now `search(before_date=cutoff, order_by=UPDATED_ASC)`.
+- `search()` takes `order_by: SearchOrder` (`RELEVANCE` default / `UPDATED_DESC` / `UPDATED_ASC`,
+  new enum in `schemas/search.py`). Explicit orders replace score order, with score as tiebreak;
+  RELEVANCE preserves the historical after_date tiebreak byte-for-byte. W9's headline no longer
+  rides the -0.0-score tiebreak: `order_by=UPDATED_DESC, limit=1`.
+- Both are **FTS-only and fail fast**: passing either with VECTOR/HYBRID raises `ValueError` —
+  a silently ignored staleness cutoff would return fresh notes from a sweep that promised stale
+  ones. Wiring them through the vector fusion path is work the verbs don't need.
+- Tests: `tests/repository/test_search_repository.py` — three dated rows; strict-`<` selection
+  with positive control, count parity, both explicit orders end-to-end, and the three mode-guard
+  raises.
 
 ### O5 — `schema-infer` returns an error object where an empty result belongs — **RETESTED 2026-07-31: works on a fair corpus; the error-shape defect stands**
 **Found:** BM spike, 2026-07-26.

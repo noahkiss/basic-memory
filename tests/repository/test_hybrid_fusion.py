@@ -16,7 +16,7 @@ import pytest
 from basic_memory.repository.embedding_provider import EmbeddingProvider
 from basic_memory.repository.search_index_row import SearchIndexRow
 from basic_memory.repository.search_repository_base import FUSION_BONUS, SearchRepositoryBase
-from basic_memory.schemas.search import SearchItemType, SearchRetrievalMode
+from basic_memory.schemas.search import SearchItemType, SearchOrder, SearchRetrievalMode
 
 
 @dataclass
@@ -70,11 +70,13 @@ class ConcreteSearchRepo(SearchRepositoryBase):
         title: Optional[str] = None,
         note_types: Optional[list[str]] = None,
         after_date: Optional[datetime] = None,
+        before_date: Optional[datetime] = None,
         search_item_types: Optional[list[SearchItemType]] = None,
         categories: Optional[list[str]] = None,
         metadata_filters: Optional[dict[str, Any]] = None,
         retrieval_mode: SearchRetrievalMode = SearchRetrievalMode.FTS,
         min_similarity: Optional[float] = None,
+        order_by: SearchOrder = SearchOrder.RELEVANCE,
         limit: int = 10,
         offset: int = 0,
         allow_relaxed: bool = False,

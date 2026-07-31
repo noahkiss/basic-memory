@@ -1178,3 +1178,96 @@ async def test_cjk_compound_query_relaxes_with_backend_prefix_terms(
 
     total = await search_repository.count(search_text="季度 报告", allow_relaxed=True)
     assert total == 1
+
+
+# --- updated_at predicate and explicit ordering (O4) ---
+
+
+@pytest_asyncio.fixture
+async def dated_rows(search_repository):
+    """Index three rows with known, distinct updated_at values."""
+    times = {
+        "old": datetime(2026, 7, 1, 12, 0, 0, tzinfo=timezone.utc),
+        "mid": datetime(2026, 7, 15, 12, 0, 0, tzinfo=timezone.utc),
+        "new": datetime(2026, 7, 29, 12, 0, 0, tzinfo=timezone.utc),
+    }
+    for offset, (label, when) in enumerate(times.items(), start=1):
+        await search_repository.index_item(
+            SearchIndexRow(
+                id=9000 + offset,
+                type=SearchItemType.ENTITY.value,
+                title=f"dated note {label}",
+                content_stems=f"dated corpus {label}",
+                content_snippet=f"dated corpus {label}",
+                permalink=f"dated/{label}",
+                file_path=f"dated/{label}.md",
+                entity_id=9000 + offset,
+                metadata={"note_type": "note"},
+                created_at=when,
+                updated_at=when,
+                project_id=search_repository.project_id,
+            )
+        )
+    return times
+
+
+@pytest.mark.asyncio
+async def test_before_date_selects_only_stale_rows(search_repository, dated_rows):
+    """before_date is a strict updated_at < cutoff over the DB column (O4)."""
+    cutoff = datetime(2026, 7, 20, 0, 0, 0, tzinfo=timezone.utc)
+
+    results = await search_repository.search(before_date=cutoff, limit=10)
+    labels = {r.permalink for r in results}
+    assert labels == {"dated/old", "dated/mid"}
+
+    # Positive control: without the cutoff all three rows come back.
+    all_rows = await search_repository.search(search_text="dated corpus", limit=10)
+    assert {r.permalink for r in all_rows} == {"dated/old", "dated/mid", "dated/new"}
+
+
+@pytest.mark.asyncio
+async def test_before_date_count_matches_search(search_repository, dated_rows):
+    cutoff = datetime(2026, 7, 20, 0, 0, 0, tzinfo=timezone.utc)
+    assert await search_repository.count(before_date=cutoff) == 2
+
+
+@pytest.mark.asyncio
+async def test_order_by_updated_asc_returns_oldest_first(search_repository, dated_rows):
+    """The staleness sweep's order: oldest updated_at first, deterministic."""
+    from basic_memory.schemas.search import SearchOrder
+
+    results = await search_repository.search(order_by=SearchOrder.UPDATED_ASC, limit=10)
+    assert [r.permalink for r in results] == ["dated/old", "dated/mid", "dated/new"]
+
+
+@pytest.mark.asyncio
+async def test_order_by_updated_desc_returns_newest_first(search_repository, dated_rows):
+    """The recency headline's order (W9): newest updated_at first, no
+    reliance on the -0.0-score after_date tiebreak."""
+    from basic_memory.schemas.search import SearchOrder
+
+    results = await search_repository.search(order_by=SearchOrder.UPDATED_DESC, limit=10)
+    assert [r.permalink for r in results] == ["dated/new", "dated/mid", "dated/old"]
+
+
+@pytest.mark.asyncio
+async def test_before_date_and_order_by_reject_non_fts_modes(search_repository, dated_rows):
+    """Silently ignoring a staleness cutoff would be worse than an error."""
+    from basic_memory.schemas.search import SearchOrder, SearchRetrievalMode
+
+    cutoff = datetime(2026, 7, 20, 0, 0, 0, tzinfo=timezone.utc)
+
+    with pytest.raises(ValueError, match="before_date"):
+        await search_repository.search(
+            search_text="dated", before_date=cutoff, retrieval_mode=SearchRetrievalMode.VECTOR
+        )
+    with pytest.raises(ValueError, match="order_by"):
+        await search_repository.search(
+            search_text="dated",
+            order_by=SearchOrder.UPDATED_ASC,
+            retrieval_mode=SearchRetrievalMode.HYBRID,
+        )
+    with pytest.raises(ValueError, match="before_date"):
+        await search_repository.count(
+            search_text="dated", before_date=cutoff, retrieval_mode=SearchRetrievalMode.VECTOR
+        )

@@ -14,7 +14,7 @@ import pytest
 
 from basic_memory.repository.search_repository_base import SearchRepositoryBase
 from basic_memory.repository.search_index_row import SearchIndexRow
-from basic_memory.schemas.search import SearchItemType, SearchRetrievalMode
+from basic_memory.schemas.search import SearchItemType, SearchOrder, SearchRetrievalMode
 
 
 @dataclass
@@ -55,11 +55,13 @@ class ConcreteSearchRepo(SearchRepositoryBase):
         title: str | None = None,
         note_types: list[str] | None = None,
         after_date: datetime | None = None,
+        before_date: datetime | None = None,
         search_item_types: list[SearchItemType] | None = None,
         categories: list[str] | None = None,
         metadata_filters: dict[str, Any] | None = None,
         retrieval_mode: SearchRetrievalMode = SearchRetrievalMode.FTS,
         min_similarity: float | None = None,
+        order_by: SearchOrder = SearchOrder.RELEVANCE,
         limit: int = 10,
         offset: int = 0,
         allow_relaxed: bool = False,

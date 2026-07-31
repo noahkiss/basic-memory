@@ -18,7 +18,7 @@ from basic_memory.repository.search_repository_base import (
 )
 from basic_memory.repository.sqlite_search_repository import SQLiteSearchRepository
 from basic_memory.repository.semantic_errors import SemanticSearchDisabledError
-from basic_memory.schemas.search import SearchItemType, SearchRetrievalMode
+from basic_memory.schemas.search import SearchItemType, SearchOrder, SearchRetrievalMode
 
 
 # --- Helpers ---
@@ -53,11 +53,13 @@ class _ConcreteRepo(SearchRepositoryBase):
         title: str | None = None,
         note_types: list[str] | None = None,
         after_date: datetime | None = None,
+        before_date: datetime | None = None,
         search_item_types: list[SearchItemType] | None = None,
         categories: list[str] | None = None,
         metadata_filters: dict[str, Any] | None = None,
         retrieval_mode: SearchRetrievalMode = SearchRetrievalMode.FTS,
         min_similarity: float | None = None,
+        order_by: SearchOrder = SearchOrder.RELEVANCE,
         limit: int = 10,
         offset: int = 0,
         allow_relaxed: bool = False,

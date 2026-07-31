@@ -30,6 +30,20 @@ class SearchRetrievalMode(str, Enum):
     HYBRID = "hybrid"
 
 
+class SearchOrder(str, Enum):
+    """Explicit result ordering for FTS queries.
+
+    RELEVANCE keeps bm25 score order (with the historical updated_at tiebreak
+    when after_date is set). The UPDATED_* orders exist for date-driven sweeps
+    — staleness (oldest first) and recency (newest first) — where relevance is
+    meaningless because the query is filter-only.
+    """
+
+    RELEVANCE = "relevance"
+    UPDATED_DESC = "updated_desc"
+    UPDATED_ASC = "updated_asc"
+
+
 class SearchQuery(BaseModel):
     """Search query parameters.
 

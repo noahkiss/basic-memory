@@ -38,7 +38,7 @@ from basic_memory.repository.semantic_vector_sync import (
     VectorChunkState,
     VectorSyncBatchResult,
 )
-from basic_memory.schemas.search import SearchItemType, SearchRetrievalMode
+from basic_memory.schemas.search import SearchItemType, SearchOrder, SearchRetrievalMode
 
 # --- Semantic search constants ---
 
@@ -120,11 +120,13 @@ class SearchRepositoryBase(ABC):
         title: Optional[str] = None,
         note_types: Optional[List[str]] = None,
         after_date: Optional[datetime] = None,
+        before_date: Optional[datetime] = None,
         search_item_types: Optional[List[SearchItemType]] = None,
         categories: Optional[List[str]] = None,
         metadata_filters: Optional[Dict[str, Any]] = None,
         retrieval_mode: SearchRetrievalMode = SearchRetrievalMode.FTS,
         min_similarity: Optional[float] = None,
+        order_by: SearchOrder = SearchOrder.RELEVANCE,
         limit: int = 10,
         offset: int = 0,
         allow_relaxed: bool = False,
@@ -138,6 +140,8 @@ class SearchRepositoryBase(ABC):
             title: Title search
             note_types: Filter by note types (from metadata.note_type)
             after_date: Filter by created_at > after_date
+            before_date: Filter by updated_at < before_date (staleness; FTS only)
+            order_by: Explicit result ordering (FTS only; default relevance)
             search_item_types: Filter by SearchItemType (ENTITY, OBSERVATION, RELATION)
             categories: Filter observations by exact category (e.g. "requirement")
             metadata_filters: Structured frontmatter metadata filters
@@ -158,6 +162,7 @@ class SearchRepositoryBase(ABC):
         title: Optional[str] = None,
         note_types: Optional[List[str]] = None,
         after_date: Optional[datetime] = None,
+        before_date: Optional[datetime] = None,
         search_item_types: Optional[List[SearchItemType]] = None,
         categories: Optional[List[str]] = None,
         metadata_filters: Optional[Dict[str, Any]] = None,

@@ -28,7 +28,7 @@ from basic_memory.repository.search_query import relaxed_query_words
 from basic_memory.repository.search_repository_base import SearchRepositoryBase
 from basic_memory.repository.metadata_filters import parse_metadata_filters, build_sqlite_json_path
 from basic_memory.repository.semantic_errors import SemanticDependenciesMissingError
-from basic_memory.schemas.search import SearchItemType, SearchRetrievalMode
+from basic_memory.schemas.search import SearchItemType, SearchOrder, SearchRetrievalMode
 
 
 class SQLiteSearchRepository(SearchRepositoryBase):
@@ -755,6 +755,7 @@ class SQLiteSearchRepository(SearchRepositoryBase):
         title: Optional[str] = None,
         note_types: Optional[List[str]] = None,
         after_date: Optional[datetime] = None,
+        before_date: Optional[datetime] = None,
         search_item_types: Optional[List[SearchItemType]] = None,
         categories: Optional[List[str]] = None,
         metadata_filters: Optional[dict] = None,
@@ -861,6 +862,13 @@ class SQLiteSearchRepository(SearchRepositoryBase):
 
             # order by most recent first
             order_by_clause = ", search_index.updated_at DESC"
+
+        # Staleness predicate: strictly older than the cutoff (O4). This is the
+        # DB column, not frontmatter — the gardener's sweep must see every note
+        # regardless of what its metadata claims.
+        if before_date:
+            params["before_date"] = before_date
+            conditions.append("datetime(search_index.updated_at) < datetime(:before_date)")
 
         # Handle structured metadata filters (frontmatter)
         if metadata_filters:
@@ -987,11 +995,13 @@ class SQLiteSearchRepository(SearchRepositoryBase):
         title: Optional[str] = None,
         note_types: Optional[List[str]] = None,
         after_date: Optional[datetime] = None,
+        before_date: Optional[datetime] = None,
         search_item_types: Optional[List[SearchItemType]] = None,
         categories: Optional[List[str]] = None,
         metadata_filters: Optional[dict] = None,
         retrieval_mode: SearchRetrievalMode = SearchRetrievalMode.FTS,
         min_similarity: Optional[float] = None,
+        order_by: SearchOrder = SearchOrder.RELEVANCE,
         limit: int = 10,
         offset: int = 0,
         allow_relaxed: bool = False,
@@ -1004,6 +1014,15 @@ class SQLiteSearchRepository(SearchRepositoryBase):
         branch otherwise contributes nothing for question-form queries.
         Service-level FTS searches keep their own conservative fallback.
         """
+        # before_date and explicit ordering are FTS-only (O4): the vector and
+        # hybrid paths do not implement them, and silently ignoring a staleness
+        # cutoff would return fresh notes from a sweep that promised stale ones.
+        if retrieval_mode != SearchRetrievalMode.FTS:
+            if before_date is not None:
+                raise ValueError("before_date is only supported with FTS retrieval mode")
+            if order_by != SearchOrder.RELEVANCE:
+                raise ValueError("order_by is only supported with FTS retrieval mode")
+
         # --- Dispatch vector / hybrid modes (shared logic) ---
         dispatched = await self._dispatch_retrieval_mode(
             search_text=search_text,
@@ -1031,10 +1050,20 @@ class SQLiteSearchRepository(SearchRepositoryBase):
             title=title,
             note_types=note_types,
             after_date=after_date,
+            before_date=before_date,
             search_item_types=search_item_types,
             categories=categories,
             metadata_filters=metadata_filters,
         )
+
+        # Explicit ordering replaces score order entirely; score stays as the
+        # deterministic tiebreak for rows sharing an updated_at.
+        if order_by == SearchOrder.UPDATED_DESC:
+            order_sql = "datetime(search_index.updated_at) DESC, score ASC"
+        elif order_by == SearchOrder.UPDATED_ASC:
+            order_sql = "datetime(search_index.updated_at) ASC, score ASC"
+        else:
+            order_sql = f"score ASC {order_by_clause}"
 
         # set limit on search query
         params["limit"] = limit
@@ -1060,7 +1089,7 @@ class SQLiteSearchRepository(SearchRepositoryBase):
                 bm25(search_index) as score
             FROM {from_clause}
             WHERE {where_clause}
-            ORDER BY score ASC {order_by_clause}
+            ORDER BY {order_sql}
             LIMIT :limit
             OFFSET :offset
         """
@@ -1124,6 +1153,7 @@ class SQLiteSearchRepository(SearchRepositoryBase):
         title: Optional[str] = None,
         note_types: Optional[List[str]] = None,
         after_date: Optional[datetime] = None,
+        before_date: Optional[datetime] = None,
         search_item_types: Optional[List[SearchItemType]] = None,
         categories: Optional[List[str]] = None,
         metadata_filters: Optional[dict] = None,
@@ -1133,6 +1163,10 @@ class SQLiteSearchRepository(SearchRepositoryBase):
     ) -> int:
         """Count indexed content matching the SQLite FTS query."""
         if retrieval_mode != SearchRetrievalMode.FTS:
+            # Same contract as search(): a silently ignored staleness cutoff is
+            # worse than an error (O4).
+            if before_date is not None:
+                raise ValueError("before_date is only supported with FTS retrieval mode")
             return await super().count(
                 search_text=search_text,
                 permalink=permalink,
@@ -1154,6 +1188,7 @@ class SQLiteSearchRepository(SearchRepositoryBase):
             title=title,
             note_types=note_types,
             after_date=after_date,
+            before_date=before_date,
             search_item_types=search_item_types,
             categories=categories,
             metadata_filters=metadata_filters,
