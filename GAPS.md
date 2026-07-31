@@ -382,7 +382,7 @@ same corpus (the pre-existing payload-level test could not catch a server-side r
 reappearing). The `**`-error-as-prose-with-exit-0 half lives on in **O8/W7**; nothing else of T7
 remains.
 
-### T8 — `semantic_search_enabled` does not gate the embedding cost it advertises
+### T8 — `semantic_search_enabled` does not gate the embedding cost it advertises — **RESOLVED 2026-07-31: the flag now gates ~2.2 s CPU / ~250 MB; verified by import trace**
 **Found:** BM spike, 2026-07-26.
 
 ```
@@ -399,6 +399,21 @@ embedding stack is cheap and looks elsewhere. **Fix:** make the flag actually de
 have `config set semantic_search_enabled false` say plainly that it does not affect startup cost.
 
 Found in: sweep-spike.md:19.
+
+**Resolved 2026-07-31, no new code.** The lazy structure (TYPE_CHECKING-only `fastembed` import
+in `fastembed_provider.py`, provider imported inside the `provider_name == "fastembed"` branch of
+`embedding_provider_factory.py`) dates to upstream #550; what un-gated it at the fork point was
+eager imports elsewhere in the graph, since removed by this fork's dependency prune (W17) and
+the #886 leaf-deferral work shipped with T18. Measured 2026-07-31, scratch config,
+`bm tool search-notes` under `-X importtime` and `/usr/bin/time -v`:
+
+```
+flag OFF: 0 fastembed/onnxruntime import lines; 3.14 s user CPU; 197 MB peak RSS
+flag ON : 62 fastembed/onnxruntime import lines; 5.32 s user CPU; 445 MB peak RSS
+```
+
+The flag-ON run is its own positive control (the trace does catch the import when enabled).
+`config set semantic_search_enabled false` now buys exactly what it advertises.
 
 ### T9 — the permalink is the only identity BM honours, and it is neither stable nor verbatim
 **Found:** 2026-07-26, schema §12 testing and the BM spike. Three findings, one root cause.
