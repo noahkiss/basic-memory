@@ -540,7 +540,7 @@ exit=0                               # full Rich traceback into alembic internal
 Neither says "this database was migrated by a newer build" nor names a way out. The fix stands as
 written above; add a non-zero exit while there.
 
-### T12 — `bm reset` claims your markdown is safe while unflushed writes live only in the DB — **CONFIRMED 2026-07-31, observed loss**
+### T12 — `bm reset` claims your markdown is safe while unflushed writes live only in the DB — **SHIPPED 2026-07-31 (guard); root fix tracked under O6**
 **Found:** 2026-07-27, in `.forked/release-design.md` §2. Both sites re-verified before recording.
 
 `NoteContent` (`src/basic_memory/models/knowledge.py:159-224`) materializes `markdown_content` in
@@ -591,6 +591,24 @@ exit=1                                   # the note body is nowhere, including t
 No warning about the pending row, and the content is unrecoverable. The pending state was produced
 by killing the process inside the accept→flush window; that window is real in the live server (the
 runner is asynchronous by design), so this is the advertised-safe data loss, observed.
+
+**Guard shipped 2026-07-31** (first preference from the fix list — flush, then refuse):
+
+- Before any file is unlinked, `reset` runs `_flush_unflushed_note_content`: query
+  `note_content` for `pending`/`writing`/`failed`, drive the same per-project recovery sweep
+  startup and `bm reindex` use (`recover_project_materializations`), re-query.
+- Anything still unflushed → refusal with a `project/file_path (status)` list and exit 1;
+  `--force` proceeds with an explicit "the content above is lost" warning (help text updated).
+- The false "your markdown note files will not be affected" message replaced with the truthful
+  flush-first description.
+- Tests (`tests/cli/test_db_reset_guard.py`): the query reports pending and ignores synced; the
+  refusal/force/clean branches; and the flush half end-to-end — a seeded pending row reaches disk
+  and drops off the list.
+
+Live repro inverted in the same harness shape as the original capture: seeded `pending` row with
+body nowhere on disk → `echo y | bm reset` → flush materializes `probes/unflushed live.md`
+(content intact on disk) → reset proceeds. The accept→flush window itself (the root cause) stays
+open until the synchronous write-through decision recorded under **O6**.
 
 ### T13 — a dependency reference naming `basic-memory` silently resolves to UPSTREAM — **SHIPPED `cece1087` + `e11cc1d7`**
 **Done 2026-07-27.** All six benchmark sites repointed at `noahkiss/basic-memory`, plus two the

@@ -119,6 +119,79 @@ def _abort_if_mcp_processes_alive() -> None:
     raise typer.Exit(1)
 
 
+async def _unflushed_note_content(session_maker) -> list[tuple[str, str, str]]:
+    """(project_name, file_path, status) for note_content rows not yet on disk.
+
+    While a row is pending/writing/failed, the database row is the ONLY copy
+    of that note — the markdown file has not been written (T12). Everything
+    else in the database is derivable from the files; these rows are not.
+    """
+    from sqlalchemy import text
+
+    from basic_memory import db
+
+    async with db.scoped_session(session_maker) as session:
+        result = await session.execute(
+            text(
+                "SELECT p.name, n.file_path, n.file_write_status "
+                "FROM note_content n JOIN project p ON p.id = n.project_id "
+                "WHERE n.file_write_status IN ('pending', 'writing', 'failed') "
+                "ORDER BY p.name, n.file_path"
+            )
+        )
+        return [(row[0], row[1], row[2]) for row in result.fetchall()]
+
+
+async def _flush_unflushed_note_content(app_config) -> list[tuple[str, str, str]]:
+    """Flush accepted-but-unwritten notes to disk; return what still remains.
+
+    Runs the same per-project recovery sweep as startup and `bm reindex`
+    (recover_project_materializations), then re-queries. A non-empty return
+    means flushing failed and deleting the database would destroy content.
+    """
+    from basic_memory import db
+    from basic_memory.repository import ProjectRepository
+    from basic_memory.services.initialization import recover_project_materializations
+
+    _, session_maker = await db.get_or_create_db(
+        db_path=app_config.database_path,
+        db_type=db.DatabaseType.FILESYSTEM,
+    )
+    rows = await _unflushed_note_content(session_maker)
+    if not rows:
+        return []
+
+    affected_projects = {project_name for project_name, _, _ in rows}
+    project_repository = ProjectRepository()
+    async with db.scoped_session(session_maker) as session:
+        projects = await project_repository.get_active_projects(session)
+    for project in projects:
+        if project.name in affected_projects:
+            await recover_project_materializations(project, session_maker)
+
+    return await _unflushed_note_content(session_maker)
+
+
+def _abort_or_warn_unflushed(unflushed: list[tuple[str, str, str]], force: bool) -> None:
+    """Refuse to reset over unrecoverable note content, unless forced."""
+    if not unflushed:
+        return
+
+    console.print(
+        "[red]Refusing to reset:[/red] accepted note writes have not reached disk "
+        "and could not be flushed. Deleting the database would destroy them:"
+    )
+    for project_name, file_path, status in unflushed:
+        console.print(f"  [cyan]{project_name}[/cyan]/{file_path} [yellow]({status})[/yellow]")
+    if not force:
+        console.print(
+            "\nFix the write errors (see logs), or re-run with [green]--force[/green] "
+            "to reset anyway and lose this content."
+        )
+        raise typer.Exit(1)
+    console.print("[yellow]--force given: continuing; the content above is lost.[/yellow]")
+
+
 @dataclass(slots=True)
 class EmbeddingProgress:
     """Typed CLI progress payload for embedding backfills."""
@@ -184,10 +257,11 @@ def reset(
         False,
         "--force",
         help=(
-            "Skip the pre-flight check that refuses to reset while "
-            "basic-memory MCP processes are running. Use only in "
-            "automated workflows where you've already ensured no MCP "
-            "clients are attached to the database."
+            "Skip the pre-flight checks: the refusal to reset while "
+            "basic-memory MCP processes are running, and the refusal to "
+            "reset while accepted note writes have not reached disk "
+            "(the latter loses that content). Use only in automated "
+            "workflows where you've already ensured neither applies."
         ),
     ),
 ):  # pragma: no cover
@@ -199,8 +273,9 @@ def reset(
     from basic_memory import db
 
     console.print(
-        "[yellow]Note:[/yellow] This only deletes the index database. "
-        "Your markdown note files will not be affected.\n"
+        "[yellow]Note:[/yellow] This deletes the index database. Markdown files on "
+        "disk are not affected; notes accepted but not yet written to disk are "
+        "flushed first, and the reset refuses if any cannot be flushed.\n"
         "Use [green]bm reset --reindex[/green] to automatically rebuild the index afterward."
     )
     if typer.confirm("Reset the database index?"):
@@ -215,6 +290,14 @@ def reset(
         logger.info("Resetting database...")
         config_manager = ConfigManager()
         app_config = config_manager.config
+
+        # T12 guard: while a note_content row is pending/writing/failed, the
+        # database holds the only copy of that note. Flush to disk before any
+        # file is unlinked; refuse (listing what would be lost) if flushing
+        # leaves anything behind. --force proceeds and accepts the loss.
+        unflushed = run_with_cleanup(_flush_unflushed_note_content(app_config))
+        _abort_or_warn_unflushed(unflushed, force)
+
         # Get database path
         db_path = app_config.app_database_path
 
