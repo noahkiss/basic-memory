@@ -1483,6 +1483,15 @@ failed** (336 − 6, the tests in `test_litellm_live_harness.py`, which carried 
 and so were in the baseline — `test_litellm_live_models.py` was marked `semantic` and never
 counted); `just doctor` green.
 
+### W18 — index frontmatter values into full-text search
+**Opened 2026-07-31**, reversing O3's original "adapt around it" consequence — user call: this is
+our tool, and frontmatter nobody can find without already knowing the key defeats the point of
+frontmatter. When the indexer builds an entity's `search_index` row, include frontmatter key/value
+text so plain FTS reaches ids, dates, and vocabulary values. Keep `--meta`/`--filter` as the
+exact-match path; this adds discovery, not structure. Schedule alongside the other index-layer
+work (T18 fast path, O4's `updated_at` predicate + sort) so the index is touched once. Evidence
+and fixture in O3.
+
 ---
 
 ## OPEN — observed, not diagnosed
@@ -1592,10 +1601,16 @@ $ bm tool search-notes "zq7-frontmatter-only-93kx" --project scratch --json
 
 Positive control passed; the frontmatter-only value is unreachable by FTS. Frontmatter *is* stored
 (`entity_metadata` — a queryless `--filter` on `review-by` matched this same note, see O4) and is
-exact-match filterable via `--meta`/`--filter`, but it never enters the FTS index. Together with O2
-(frontmatter edges are not relations) and O5 (schema inference never counts frontmatter fields):
-**anything that must be searchable, graph-visible, or inferable has to live in the body**
-(observations/relations); frontmatter is only for exact-match filter keys.
+exact-match filterable via `--meta`/`--filter`, but it never enters the FTS index.
+
+**Decision reversed 2026-07-31 (user call): this is a defect to fix, not a constraint to design
+around.** This fork owns the indexer; there is no upstream shape to preserve. Frontmatter that can
+only be queried by someone who already knows the key is a trap — a plain search for an id finding
+nothing is what misled the original spike. Fix: include frontmatter key/value text when the
+indexer builds the entity's `search_index` row, so FTS reaches it. Tracked as **W18**; schedule
+with the phase-2/3 index work (T18 / the O4 date predicate). Two parts stand unchanged: edges stay
+body relations (`## Relations` carries a typed, link-resolved edge — kept on merit, see O2), and
+O5's inference blindness is moot once picoschema is stripped.
 
 ### O4 — no demonstrated filter or sort over `updated_at` — **CONFIRMED 2026-07-31, with two footholds**
 **Found:** 2026-07-26. Only the `review-by` *frontmatter* filter was actually proven. `updated_at` is
