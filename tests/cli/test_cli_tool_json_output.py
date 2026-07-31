@@ -748,18 +748,19 @@ def test_schema_validate_identifier_heuristic(mock_mcp):
 @patch(
     "basic_memory.mcp.tools.schema_validate",
     new_callable=AsyncMock,
-    return_value={"error": "No notes found of type 'person'"},
+    return_value={"error": "Schema validation failed: database on fire"},
 )
 def test_schema_validate_error_response(mock_mcp):
-    """schema-validate outputs error JSON when MCP returns error dict."""
+    """schema-validate keeps error JSON on stdout and exits 1 (docs/OUTPUT_CONTRACT.md)."""
     result = runner.invoke(
         cli_app,
         ["tool", "schema-validate", "person"],
     )
 
-    assert result.exit_code == 0, f"CLI failed: {result.output}"
-    data = json.loads(result.output)
+    assert result.exit_code == 1
+    data = json.loads(result.stdout)
     assert "error" in data
+    assert "Schema validation failed" in result.stderr
 
 
 # --- schema-infer ---

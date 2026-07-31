@@ -461,10 +461,13 @@ async def test_schema_validate_all_types_no_schemas_returns_guidance(
 
 @pytest.mark.asyncio
 async def test_schema_validate_all_types_no_schemas_json(app, test_project, index_project):
-    """JSON output with no schemas defined returns a clear error dict."""
+    """JSON output with no schemas defined is a result with a reason, not an error."""
     result = await schema_validate(project=test_project.name, output_format="json")
 
-    assert result == {"error": "No schemas defined in this project"}
+    assert isinstance(result, dict)
+    assert "error" not in result
+    assert result["reason"] == "No schemas defined in this project"
+    assert result["total_notes"] == 0
 
 
 # --- write_note metadata → schema workflow ---

@@ -206,16 +206,26 @@ def validate(
             )
         )
 
-        # Handle error responses
+        # A genuine failure: JSON stream stays parseable JSON, humans get
+        # stderr, and the exit code says failure (docs/OUTPUT_CONTRACT.md).
         if isinstance(result, dict) and "error" in result:
             if json_output:
                 print(json.dumps(result, indent=2, default=str))
             else:
-                console.print(f"[yellow]{result['error']}[/yellow]")
-            return
+                typer.echo(f"Error: {result['error']}", err=True)
+            raise typer.Exit(1)
 
         # output_format="json" guarantees a dict return
         assert isinstance(result, dict)
+
+        # A legitimate empty answer (no schemas defined, no notes of the type,
+        # no schema for the type): exit 0 — it is a result, not a failure.
+        if result.get("reason"):
+            if json_output:
+                print(json.dumps(result, indent=2, default=str))
+            else:
+                console.print(f"[yellow]{result['reason']}[/yellow]")
+            return
 
         if json_output:
             print(json.dumps(result, indent=2, default=str))
@@ -360,16 +370,25 @@ def diff(
             )
         )
 
-        # Handle error responses
+        # A genuine failure: JSON stream stays parseable JSON, humans get
+        # stderr, and the exit code says failure (docs/OUTPUT_CONTRACT.md).
         if isinstance(result, dict) and "error" in result:
             if json_output:
                 print(json.dumps(result, indent=2, default=str))
             else:
-                console.print(f"[yellow]{result['error']}[/yellow]")
-            return
+                typer.echo(f"Error: {result['error']}", err=True)
+            raise typer.Exit(1)
 
         # output_format="json" guarantees a dict return
         assert isinstance(result, dict)
+
+        # A legitimate empty answer (no schema to diff against): exit 0.
+        if result.get("reason") and not result.get("schema_found"):
+            if json_output:
+                print(json.dumps(result, indent=2, default=str))
+            else:
+                console.print(f"[yellow]{result['reason']}[/yellow]")
+            return
 
         if json_output:
             print(json.dumps(result, indent=2, default=str))

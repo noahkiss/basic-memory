@@ -331,7 +331,13 @@ async def schema_validate(
             if note_type is None and identifier is None:
                 if not result.type_summaries:
                     if output_format == "json":
-                        return {"error": "No schemas defined in this project"}
+                        # A legitimate empty: nothing to validate is a result,
+                        # not a failure — "error" is reserved for genuine
+                        # failures, which exit non-zero (docs/OUTPUT_CONTRACT.md).
+                        return {
+                            **result.model_dump(mode="json", exclude_none=True),
+                            "reason": "No schemas defined in this project",
+                        }
                     return _no_schemas_defined_guidance("schema_validate")
                 if output_format == "json":
                     return result.model_dump(mode="json", exclude_none=True)
@@ -344,7 +350,10 @@ async def schema_validate(
             effective_type = note_type or result.note_type or "unknown"
             if result.total_entities == 0:
                 if output_format == "json":
-                    return {"error": f"No notes found of type '{effective_type}'"}
+                    return {
+                        **result.model_dump(mode="json", exclude_none=True),
+                        "reason": f"No notes found of type '{effective_type}'",
+                    }
                 return _no_notes_guidance(effective_type, "schema_validate")
 
             # --- No schema guard ---
@@ -353,7 +362,10 @@ async def schema_validate(
             # Outcome: return guidance on how to create a schema
             if result.total_notes == 0:
                 if output_format == "json":
-                    return {"error": f"No schema found for type '{effective_type}'"}
+                    return {
+                        **result.model_dump(mode="json", exclude_none=True),
+                        "reason": f"No schema found for type '{effective_type}'",
+                    }
                 return _no_schema_guidance(effective_type, "schema_validate")
 
             if output_format == "json":
@@ -590,7 +602,12 @@ async def schema_diff(
             # Outcome: return guidance on how to create a schema
             if not result.schema_found:
                 if output_format == "json":
-                    return {"error": f"No schema found for type '{note_type}'"}
+                    # schema_found=false already carries the fact; "error" is
+                    # reserved for genuine failures (docs/OUTPUT_CONTRACT.md).
+                    return {
+                        **result.model_dump(mode="json", exclude_none=True),
+                        "reason": f"No schema found for type '{note_type}'",
+                    }
                 return _no_schema_guidance(note_type, "schema_diff")
 
             if output_format == "json":

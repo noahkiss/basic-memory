@@ -1350,6 +1350,12 @@ def schema_validate(
                 output_format="json",
             )
         )
+        # A genuine failure: error JSON stays on stdout (stream stays parseable),
+        # humans get stderr, exit says failure (docs/OUTPUT_CONTRACT.md).
+        if isinstance(result, dict) and result.get("error"):
+            typer.echo(f"Error: {result['error']}", err=True)
+            _print_json(result)
+            raise typer.Exit(1)
         _print_json(result)
     except ValueError as e:
         typer.echo(f"Error: {e}", err=True)
@@ -1406,6 +1412,12 @@ def schema_infer(
                 output_format="json",
             )
         )
+        # A genuine failure: error JSON stays on stdout (stream stays parseable),
+        # humans get stderr, exit says failure (docs/OUTPUT_CONTRACT.md).
+        if isinstance(result, dict) and result.get("error"):
+            typer.echo(f"Error: {result['error']}", err=True)
+            _print_json(result)
+            raise typer.Exit(1)
         _print_json(result)
     except ValueError as e:
         typer.echo(f"Error: {e}", err=True)
@@ -1457,6 +1469,12 @@ def schema_diff(
                 output_format="json",
             )
         )
+        # A genuine failure: error JSON stays on stdout (stream stays parseable),
+        # humans get stderr, exit says failure (docs/OUTPUT_CONTRACT.md).
+        if isinstance(result, dict) and result.get("error"):
+            typer.echo(f"Error: {result['error']}", err=True)
+            _print_json(result)
+            raise typer.Exit(1)
         _print_json(result)
     except ValueError as e:
         typer.echo(f"Error: {e}", err=True)

@@ -126,16 +126,47 @@ def test_validate_strict_exits_on_errors(mock_mcp, mock_config_cls):
 @patch(
     "basic_memory.mcp.tools.schema_validate",
     new_callable=AsyncMock,
-    return_value={"error": "No notes found of type 'person'"},
+    return_value={
+        "total_notes": 0,
+        "total_entities": 0,
+        "valid_count": 0,
+        "warning_count": 0,
+        "error_count": 0,
+        "results": [],
+        "reason": "No notes found of type 'person'",
+    },
 )
-def test_validate_error_response(mock_mcp, mock_config_cls):
-    """bm schema validate shows error message from MCP tool."""
+def test_validate_empty_is_a_result_not_an_error(mock_mcp, mock_config_cls):
+    """A legitimate empty renders as a message and exits 0 (docs/OUTPUT_CONTRACT.md)."""
     mock_config_cls.return_value = _mock_config_manager()
 
     result = runner.invoke(cli_app, ["schema", "validate", "person"])
 
     assert result.exit_code == 0
     assert "No notes found" in result.output
+
+    json_result = runner.invoke(cli_app, ["schema", "validate", "person", "--json"])
+
+    assert json_result.exit_code == 0
+    parsed = json.loads(json_result.stdout)
+    assert "error" not in parsed
+    assert parsed["reason"] == "No notes found of type 'person'"
+
+
+@patch("basic_memory.cli.commands.schema.ConfigManager")
+@patch(
+    "basic_memory.mcp.tools.schema_validate",
+    new_callable=AsyncMock,
+    return_value={"error": "Schema validation failed: database on fire"},
+)
+def test_validate_error_response(mock_mcp, mock_config_cls):
+    """A genuine failure goes to stderr and exits non-zero (docs/OUTPUT_CONTRACT.md)."""
+    mock_config_cls.return_value = _mock_config_manager()
+
+    result = runner.invoke(cli_app, ["schema", "validate", "person"])
+
+    assert result.exit_code == 1
+    assert "Schema validation failed" in result.stderr
 
 
 @patch("basic_memory.cli.commands.schema.ConfigManager")
@@ -307,13 +338,43 @@ def test_diff_no_drift(mock_mcp, mock_config_cls):
 @patch(
     "basic_memory.mcp.tools.schema_diff",
     new_callable=AsyncMock,
-    return_value={"error": "No schema found for type 'person'"},
+    return_value={
+        "note_type": "person",
+        "schema_found": False,
+        "new_fields": [],
+        "dropped_fields": [],
+        "cardinality_changes": [],
+        "reason": "No schema found for type 'person'",
+    },
 )
-def test_diff_error_response(mock_mcp, mock_config_cls):
-    """bm schema diff shows error message from MCP tool."""
+def test_diff_no_schema_is_a_result_not_an_error(mock_mcp, mock_config_cls):
+    """No schema to diff against is a result, exit 0 (docs/OUTPUT_CONTRACT.md)."""
     mock_config_cls.return_value = _mock_config_manager()
 
     result = runner.invoke(cli_app, ["schema", "diff", "person"])
 
     assert result.exit_code == 0
     assert "No schema found" in result.output
+
+    json_result = runner.invoke(cli_app, ["schema", "diff", "person", "--json"])
+
+    assert json_result.exit_code == 0
+    parsed = json.loads(json_result.stdout)
+    assert "error" not in parsed
+    assert parsed["schema_found"] is False
+
+
+@patch("basic_memory.cli.commands.schema.ConfigManager")
+@patch(
+    "basic_memory.mcp.tools.schema_diff",
+    new_callable=AsyncMock,
+    return_value={"error": "Schema diff failed: database on fire"},
+)
+def test_diff_error_response(mock_mcp, mock_config_cls):
+    """A genuine failure goes to stderr and exits non-zero (docs/OUTPUT_CONTRACT.md)."""
+    mock_config_cls.return_value = _mock_config_manager()
+
+    result = runner.invoke(cli_app, ["schema", "diff", "person"])
+
+    assert result.exit_code == 1
+    assert "Schema diff failed" in result.stderr

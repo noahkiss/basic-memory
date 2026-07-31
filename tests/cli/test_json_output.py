@@ -333,16 +333,16 @@ def test_schema_validate_json(mock_mcp, mock_config_cls):
 @patch(
     "basic_memory.mcp.tools.schema_validate",
     new_callable=AsyncMock,
-    return_value={"error": "No schema found for type 'person'"},
+    return_value={"error": "Schema validation failed: database on fire"},
 )
 def test_schema_validate_json_error(mock_mcp, mock_config_cls):
-    """bm schema validate --json with error dict outputs the error as JSON."""
+    """bm schema validate --json failure keeps error JSON on stdout, exits 1."""
     mock_config_cls.return_value = _mock_config_manager()
 
     result = runner.invoke(cli_app, ["schema", "validate", "person", "--json"])
 
-    assert result.exit_code == 0, f"CLI failed: {result.output}"
-    data = _parse_json_output(result.output)
+    assert result.exit_code == 1
+    data = _parse_json_output(result.stdout)
     assert "error" in data
 
 

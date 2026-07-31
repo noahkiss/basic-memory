@@ -1419,13 +1419,31 @@ files in is bespoke code either way.
 Found in: sweep-status-agents.md:61, sweep-handoffs.md:37, sweep-inv-plan.md:49,
 sweep-decisions.md:25, sweep-prior-art.md:31.
 
-### W7 — an agent-facing output contract
+### W7 — an agent-facing output contract — **CONTRACT WRITTEN + schema commands conformed 2026-07-31**
 B3 records that one `--json` command exits 1. The underlying gap is that no contract exists for it to
 violate: JSON to stdout only, diagnostics to stderr, no ANSI inside JSON, non-zero exit on failure,
 and a versioned schema published alongside. Coverage is the other half — any command without
 machine-readable output forces text scraping, and `tend` is a machine consumer of `bm` throughout.
 
 Found in: sweep-prior-art.md:49, sweep-beans.md:19.
+
+**The contract is `docs/OUTPUT_CONTRACT.md` (v1, 2026-07-31).** Decisions taken (per the user's
+"well-reasoned decision" delegation):
+
+- **Empties are results, exit 0.** The dividing line is *addressing vs. content*: a request that
+  cannot be scoped (unknown project, bad flags) fails; a well-scoped request whose answer is
+  "nothing there" succeeds. `schema validate`'s "No schemas defined" / "No notes found of type" /
+  "No schema found for type" and `schema diff`'s "No schema found" all became report-shaped
+  results with a `reason` field (mirroring infer's `92d1b6c9` fix); the `error` key is now
+  reserved for genuine failures, which exit 1 with stderr diagnostics (error JSON stays on
+  stdout in JSON modes so the stream stays parseable). `bm tool schema-{validate,infer,diff}`
+  gained the same error branch the other tool commands already had.
+- **Counts: `total: int | null`, null/absent = unknown, never a sentinel; `total_is_exact` is
+  deleted** (it existed solely to flag the sentinel — with an honest null it is redundant, and
+  there is no compat tax in this fork). Implementation lands as the next W7 commit.
+- **Judgment call — no per-payload `schema_version` field.** The contract document carries the
+  version; every consumer is in-repo and in-process, so a wire version field is speculative
+  flexibility. Revisit only if an external consumer appears.
 
 ### W8 — a bounded, pointer-shaped session primer
 Nothing puts prior state into an agent's context: the `SessionStart` hook was deliberately unwired and
@@ -2066,9 +2084,11 @@ first commit"):
   "no pattern" is a result. Genuine infer errors now exit 1 with stderr diagnostics (JSON error
   object stays on stdout in `--json` mode so the stream stays parseable). This also closes O5's
   error-shape defect.
-- **Left for W7 proper**: `schema validate`/`schema diff` still shape legitimate empties
-  ("No schemas defined", "No schema found for type") as `{"error": ...}` with exit 0 — deciding
-  which of those become results vs failures is the contract design, not a mechanical fix.
+- *Validate/diff empties SHIPPED 2026-07-31 with the W7 contract*: all four guard shapes
+  ("No schemas defined", "No notes found of type", "No schema found for type" × validate/diff)
+  are legitimate empties — now report-shaped results with `reason`, exit 0. `{"error"}` is
+  reserved for genuine failures → stderr + exit 1 (both `bm schema *` and `bm tool schema-*`).
+  Contract and rationale in `docs/OUTPUT_CONTRACT.md`; decision record in W7.
 - *Envelope miscount DIAGNOSED 2026-07-31 — by design, but the sentinel is a trap.* Reproduced:
   text query with semantic deps present → `{"total": 0, "total_is_exact": false}` beside 2 real
   results; queryless metadata mode → `{"total": 1, "total_is_exact": true}`. Cause: the v2
