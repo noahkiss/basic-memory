@@ -184,7 +184,7 @@ These are ranked first because each one returns a plausible wrong answer rather 
 system whose entire purpose is to be a trustworthy record, a silent wrong answer is the worst
 possible failure mode.
 
-### T1 — `--meta` returns 0 instead of erroring on list-valued frontmatter
+### T1 — `--meta` returns 0 instead of erroring on list-valued frontmatter — **RESOLVED 2026-07-31: fixed in-tree since `43d1a3a4` (2026-07-26); end-to-end verified**
 **Found:** 2026-07-26, schema §11 Q3 testing.
 
 ```
@@ -204,6 +204,29 @@ answer. We only caught it because a control query was run alongside.
 **Amended 2026-07-26:** the same family, documented by upstream itself — booleans normalise to the
 string `"True"` in metadata, so `--meta draft=true` and `{"draft": true}` both silently miss records
 whose frontmatter carried a YAML boolean. Found in: sweep-prior-art.md:1.
+
+**Resolved 2026-07-31, no new code.** Both halves were already fixed in this tree by `43d1a3a4`
+(2026-07-26, "fix(core): metadata filter handling for list values and multi-value filters"),
+which landed the same day the gap was recorded and was never reconciled against it: `eq`/`in`
+compile to scalar-equality OR'd with an exact `json_each` element match
+(`sqlite_search_repository.py`, comment cites this entry), and boolean queries expand to both
+stored spellings via `_boolean_match_values` (`metadata_filters.py`). Eight repository tests
+cover it (`tests/repository/test_metadata_filters_list_values.py`), including the substring
+decoy. End-to-end CLI verification 2026-07-31, isolated scratch project (list-valued
+`supersedes` + booleans, decoy note, `bm reindex`):
+
+```
+== --meta supersedes=tnd_aaaa1111 (T1 original repro; expect successor only)
+total: 1 ['successor']
+== --meta draft=true (boolean half; expect successor only)
+total: 1 ['successor']
+== --meta draft=false (expect decoy only)
+total: 1 ['decoy']
+== --meta supersedes=tnd_aaaa (substring decoy; expect zero)
+total: 0 []
+== positive control: --filter '{"supersedes":["tnd_aaaa1111"]}'
+total: 1 ['successor']
+```
 
 ### T2 — `bm status` reports files as observed that are not indexed
 **Found:** 2026-07-26, same session.
