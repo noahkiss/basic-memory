@@ -284,8 +284,11 @@ class ProjectService:
                         #      so a database default unknown to config cannot be repointed to.
                         # Outcome: config is repointed at a usable database default when one
                         #      exists; else the configured default is materialized (see
-                        #      below); only a default named by neither source promotes the
-                        #      added project.
+                        #      below). A default named by neither source cannot occur:
+                        #      BasicMemoryConfig.model_post_init repairs exactly that state
+                        #      on every config load, and the only bypass
+                        #      (skip_local_initialization) was stripped with the cloud
+                        #      surface.
                         db_default = await self.repository.get_default_project(session)
                         configured_default_name, configured_default_path = (
                             self.config_manager.get_project(config_default)
@@ -296,8 +299,8 @@ class ProjectService:
                         ):
                             self.config_manager.set_default_project(db_default.name)
                             logger.info(
-                                "Repointed config default from missing '%s' at existing "
-                                "database default '%s'",
+                                "Repointed config default from missing '{}' at existing "
+                                "database default '{}'",
                                 config_default,
                                 db_default.name,
                             )
@@ -325,18 +328,9 @@ class ProjectService:
                             )
                             await self.repository.set_as_default(session, repaired_default.id)
                             logger.info(
-                                "Materialized configured default project '%s' that had no "
+                                "Materialized configured default project '{}' that had no "
                                 "database row; default left unchanged",
                                 configured_default_name,
-                            )
-                        else:
-                            await self.repository.set_as_default(session, created_project.id)
-                            self.config_manager.set_default_project(name)
-                            logger.info(
-                                "Promoted project '%s' to default because configured default '%s' "
-                                "is missing from database",
-                                name,
-                                config_default,
                             )
 
         logger.info(f"Project '{name}' added at {resolved_path}")

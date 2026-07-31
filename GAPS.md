@@ -1655,7 +1655,7 @@ Found in: sweep-beans.md:7, sweep-transcript.md:55.
    plus reindex silently duplicates the note** (both `synced` afterwards). `bm gc` needs a dedupe
    check for exactly this shape, and W3's git history is the real safety net.
 
-### O7 — `add_project`'s default-repair logging is unformatted, and one of its branches is now dead
+### O7 — `add_project`'s default-repair logging is unformatted, and one of its branches is now dead — **SHIPPED 2026-07-31**
 **Found:** 2026-07-27, while repairing the W12 cloud strip.
 
 Two independent defects in `ProjectService.add_project`'s default-repair block
@@ -1674,6 +1674,14 @@ Two independent defects in `ProjectService.add_project`'s default-repair block
    to delete the branch or to keep it as a defensive invariant with a `# pragma: no cover`.
 
 Related: **T5** covers the user-facing half of the same area (the CLI has no `--set-default` flag).
+
+**Shipped 2026-07-31.** The three `'%s'` calls converted to loguru `{}` placeholders (interpolation
+verified with a positive control; `'%s'` confirmed inert in the same run). **Judgment call: the
+unreachable promote branch was deleted**, not kept under `# pragma: no cover` — house style forbids
+speculative fallback, `BasicMemoryConfig.model_post_init` owns the invariant, and the only test that
+ever exercised the branch was already replaced by the materialize test. The guarding `elif` stays, so
+the impossible state (configured default registered nowhere) now falls through as a no-op instead of
+mis-promoting. Comment block updated to say why the state cannot occur.
 
 ### O8 — CLI tool failures exit 0, and `--json` mode emits non-JSON or error-shaped prose
 **Found:** 2026-07-31, recurring across every phase-1 evidence run. Three instances, all captured
