@@ -121,20 +121,6 @@ class FakeCleanupEnqueuer:
         self.requests.append(request)
 
 
-class FakeSessionLock:
-    def __init__(self) -> None:
-        self.calls: list[tuple[AsyncSession, int, int]] = []
-
-    async def lock_note_materialization(
-        self,
-        session: AsyncSession,
-        *,
-        project_id: int,
-        entity_id: int,
-    ) -> None:
-        self.calls.append((session, project_id, entity_id))
-
-
 class FakeRepositorySession:
     def __init__(self, *, entity: Entity | None, note_content: NoteContent | None) -> None:
         self.entity = entity
@@ -445,7 +431,6 @@ async def test_repository_note_materialization_preflight_marks_current_note_writ
     entity = materialization_entity()
     note_content = materialization_note_content()
     session = FakeRepositorySession(entity=entity, note_content=note_content)
-    session_lock = FakeSessionLock()
     session_maker = cast(async_sessionmaker[AsyncSession], object())
     scoped_session = RecordingScopedSession(
         scoped_session=FakeScopedSession(session),
@@ -463,7 +448,6 @@ async def test_repository_note_materialization_preflight_marks_current_note_writ
         )
         result = await RepositoryNoteMaterializationPreflight(
             session_maker=session_maker,
-            session_lock=session_lock,
         ).prepare_note_materialization(request)
 
     assert result == NoteMaterializationPreflightResult.prepared(
@@ -475,7 +459,6 @@ async def test_repository_note_materialization_preflight_marks_current_note_writ
             attempted_at=attempted_at,
         )
     )
-    assert session_lock.calls == [(cast(AsyncSession, session), 7, 42)]
     assert note_content.file_write_status == "writing"
     assert note_content.last_materialization_attempt_at == attempted_at
     assert session.flush_count == 1
@@ -520,7 +503,6 @@ async def test_repository_note_materialization_publisher_updates_current_written
     semantic_updated_at = entity.updated_at
     note_content = materialization_note_content()
     session = FakeRepositorySession(entity=entity, note_content=note_content)
-    session_lock = FakeSessionLock()
     repository = RecordingNoteContentRepository()
     scoped_session = RecordingScopedSession(
         scoped_session=FakeScopedSession(session),
@@ -534,7 +516,6 @@ async def test_repository_note_materialization_publisher_updates_current_written
         )
         result = await RepositoryNoteMaterializationPublisher(
             session_maker=cast(async_sessionmaker[AsyncSession], object()),
-            session_lock=session_lock,
             note_content_store=lambda project_id: repository,
         ).publish_written_file_state(request, prepared, written)
 
@@ -545,7 +526,6 @@ async def test_repository_note_materialization_publisher_updates_current_written
         file_path="notes/a.md",
         file_checksum="new-file-sum",
     )
-    assert session_lock.calls == [(cast(AsyncSession, session), 7, 42)]
     assert repository.calls == [
         (
             cast(AsyncSession, session),
@@ -580,7 +560,6 @@ async def test_repository_note_materialization_publisher_records_stale_written_f
     # write and this publish.
     note_content = materialization_note_content(db_version=5, db_checksum="newer-db-checksum")
     session = FakeRepositorySession(entity=entity, note_content=note_content)
-    session_lock = FakeSessionLock()
     repository = RecordingNoteContentRepository()
     scoped_session = RecordingScopedSession(
         scoped_session=FakeScopedSession(session),
@@ -594,7 +573,6 @@ async def test_repository_note_materialization_publisher_records_stale_written_f
         )
         result = await RepositoryNoteMaterializationPublisher(
             session_maker=cast(async_sessionmaker[AsyncSession], object()),
-            session_lock=session_lock,
             note_content_store=lambda project_id: repository,
         ).publish_written_file_state(request, prepared, written)
 
@@ -632,7 +610,6 @@ async def test_repository_note_materialization_status_publisher_records_conflict
         entity=materialization_entity(),
         note_content=materialization_note_content(),
     )
-    session_lock = FakeSessionLock()
     repository = RecordingNoteContentRepository()
     scoped_session = RecordingScopedSession(
         scoped_session=FakeScopedSession(session),
@@ -646,7 +623,6 @@ async def test_repository_note_materialization_status_publisher_records_conflict
         )
         await RepositoryNoteMaterializationStatusPublisher(
             session_maker=cast(async_sessionmaker[AsyncSession], object()),
-            session_lock=session_lock,
             note_content_store=lambda project_id: repository,
         ).publish_note_materialization_status(
             request,
@@ -658,7 +634,6 @@ async def test_repository_note_materialization_status_publisher_records_conflict
             ),
         )
 
-    assert session_lock.calls == [(cast(AsyncSession, session), 7, 42)]
     assert repository.calls == [
         (
             cast(AsyncSession, session),

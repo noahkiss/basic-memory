@@ -1891,9 +1891,14 @@ interrupted-move duplication repro (kill after the CLI call completed) are dead 
 - **Routers still return 202.** The status code is now cosmetically wrong (the work is done, not
   accepted-for-later); folding it to 200 is wire-shape churn better taken with W7's error
   contract.
-- W12 residue found by the mapping (`indexing/accepted_note_enqueue_runner.py` — 216 lines, no
-  src caller, 9 tests; `RepositoryNoteMaterializationFailureMarker`; queue job payloads;
-  `NoteMaterializationSessionLock`) — deleted in a follow-up commit, not this one.
+- W12 residue found by the mapping — **deleted in the follow-up commit**:
+  `indexing/accepted_note_enqueue_runner.py` (no src caller; loaded only by its own 9 tests and
+  one justfile recipe line), `runtime/job_payloads.py` (whole queue-job serialization module, no
+  src consumer, 7 tests), `RepositoryNoteMaterializationFailureMarker` (served only the dead
+  enqueue protocol, 2 tests), and `NoteMaterializationSessionLock`/Noop (existed solely so cloud
+  could inject a PG advisory lock; the three repository adapters lose the field and the no-op
+  await). `runtime/note_object_metadata.py` stays — prepared writes still carry object metadata
+  through the writer signature; pulling it is accept-runner surgery for zero behaviour change.
 
 ### O7 — `add_project`'s default-repair logging is unformatted, and one of its branches is now dead — **SHIPPED 2026-07-31**
 **Found:** 2026-07-27, while repairing the W12 cloud strip.

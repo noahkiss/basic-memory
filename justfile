@@ -299,7 +299,6 @@ pr-1002-feedback-test:
 runtime-refactor-contract-test:
     BASIC_MEMORY_ENV=test uv run pytest -p pytest_mock -q --no-cov \
         tests/indexing/test_accepted_note_write_runner.py \
-        tests/indexing/test_accepted_note_enqueue_runner.py \
         tests/indexing/test_note_content_read_repair_runner.py \
         tests/runtime/test_accepted_note_response_planning.py \
         tests/runtime/test_deleted_note_response.py \

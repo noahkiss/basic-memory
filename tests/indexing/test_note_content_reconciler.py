@@ -20,13 +20,10 @@ from basic_memory.indexing.note_content_reconciliation import (
 )
 from basic_memory.indexing.note_content_reconciler import (
     NoteContentReconciler,
-    RepositoryNoteMaterializationFailureMarker,
     apply_note_content_update_plan,
-    note_content_repository_for_project,
     reconcile_note_content_for_entity,
 )
 from basic_memory.models import Entity
-from basic_memory.repository import NoteContentRepository
 
 
 class FakeSession:
@@ -380,56 +377,6 @@ async def test_apply_note_content_update_plan_marks_materialization_status() -> 
         last_materialization_error="write failed",
         last_materialization_attempt_at=attempted_at,
     )
-
-
-@pytest.mark.asyncio
-async def test_repository_failure_marker_records_materialization_enqueue_failure() -> None:
-    """The failure-marker protocol adapter should be usable by enqueue runners."""
-    session = FakeRepositorySession()
-    repository_calls: list[tuple[int, int, dict[str, object]]] = []
-
-    def session_maker() -> FakeRepositorySession:
-        return session
-
-    class FakeNoteContentRepository:
-        def __init__(self, project_id: int) -> None:
-            self.project_id = project_id
-
-        async def update_state_fields(
-            self,
-            session: Any,
-            entity_id: int,
-            **updates: object,
-        ) -> None:
-            assert session is not None
-            repository_calls.append((self.project_id, entity_id, updates))
-
-    marker = RepositoryNoteMaterializationFailureMarker(
-        session_maker=cast(Any, session_maker),
-        note_content_store=lambda project_id: cast(Any, FakeNoteContentRepository(project_id)),
-    )
-
-    await marker.mark_note_materialization_failed(
-        project_id=7,
-        entity_id=42,
-        error_message="pgq unavailable",
-    )
-
-    assert len(repository_calls) == 1
-    project_id, entity_id, updates = repository_calls[0]
-    assert project_id == 7
-    assert entity_id == 42
-    assert updates["file_write_status"] == "failed"
-    assert updates["last_materialization_error"] == "pgq unavailable"
-    assert isinstance(updates["last_materialization_attempt_at"], datetime)
-
-
-def test_failure_marker_defaults_to_core_note_content_repository() -> None:
-    """The default materialization contract should stay backed by core repositories."""
-    marker = RepositoryNoteMaterializationFailureMarker(session_maker=cast(Any, object()))
-
-    assert marker.note_content_store is note_content_repository_for_project
-    assert isinstance(note_content_repository_for_project(7), NoteContentRepository)
 
 
 @pytest.mark.asyncio

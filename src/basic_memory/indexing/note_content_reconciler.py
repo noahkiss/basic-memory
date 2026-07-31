@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import UTC, datetime
-from dataclasses import dataclass
 from typing import Protocol, assert_never
 
 from loguru import logger
@@ -128,32 +127,6 @@ def note_content_repository_for_project(project_id: ProjectId) -> NoteContentSto
 # Injected per-project store seam for materialization bookkeeping; the default
 # is note_content_repository_for_project above.
 type NoteContentStoreFactory = Callable[[ProjectId], NoteContentStateUpdateStore]
-
-
-@dataclass(frozen=True, slots=True)
-class RepositoryNoteMaterializationFailureMarker:
-    """Repository-backed failure marker for accepted-note materialization enqueue failures."""
-
-    session_maker: async_sessionmaker[AsyncSession]
-    note_content_store: NoteContentStoreFactory = note_content_repository_for_project
-
-    async def mark_note_materialization_failed(
-        self,
-        *,
-        project_id: ProjectId,
-        entity_id: RuntimeEntityId,
-        error_message: str,
-    ) -> None:
-        """Mark accepted note content as failed when queue submission cannot start."""
-        async with self.session_maker() as session:
-            async with session.begin():
-                await self.note_content_store(project_id).update_state_fields(
-                    session,
-                    entity_id,
-                    file_write_status="failed",
-                    last_materialization_error=error_message,
-                    last_materialization_attempt_at=datetime.now(tz=UTC),
-                )
 
 
 def note_content_write_status(value: str) -> NoteContentWriteStatus:
