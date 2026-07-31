@@ -1,6 +1,7 @@
 """Repository for managing Relation objects."""
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Sequence, List, Optional, Any, cast
 
 from sqlalchemy import and_, case, delete, select, update
@@ -12,6 +13,16 @@ from sqlalchemy.orm.interfaces import LoaderOption
 
 from basic_memory.models import Relation, Entity
 from basic_memory.repository.repository import Repository
+
+
+@dataclass(frozen=True, slots=True)
+class UnresolvedRelationReportRow:
+    """One dangling forward reference, with its source file and last-touch time."""
+
+    file_path: str
+    relation_type: str
+    to_name: str
+    source_updated_at: datetime
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,6 +128,38 @@ class RelationRepository(Repository[Relation]):
         query = self.select().filter(Relation.to_id.is_(None))
         result = await self.execute_query(session, query)
         return result.scalars().all()
+
+    async def find_unresolved_relation_report(
+        self, session: AsyncSession
+    ) -> List[UnresolvedRelationReportRow]:
+        """Report dangling forward references with their source file and an age proxy.
+
+        Relations carry no timestamp of their own, so the source entity's
+        ``updated_at`` stands in: a recently-touched source may simply not have
+        its target written yet, while an old one is likely a typo or a dead
+        reference. Oldest first, so the likely-dead edges surface at the top.
+        """
+        query = (
+            select(
+                Entity.file_path,
+                Relation.relation_type,
+                Relation.to_name,
+                Entity.updated_at,
+            )
+            .join(Entity, Relation.from_id == Entity.id)
+            .where(Relation.to_id.is_(None), Relation.project_id == self.project_id)
+            .order_by(Entity.updated_at.asc(), Entity.file_path.asc())
+        )
+        result = await session.execute(query)
+        return [
+            UnresolvedRelationReportRow(
+                file_path=file_path,
+                relation_type=relation_type,
+                to_name=to_name,
+                source_updated_at=updated_at,
+            )
+            for file_path, relation_type, to_name, updated_at in result.all()
+        ]
 
     async def find_unresolved_relations_for_entity(
         self, session: AsyncSession, entity_id: int

@@ -293,7 +293,7 @@ not installed now says so explicitly rather than reporting a stale number.
 > without rewriting published history — this note is the correction. Anyone auditing "was T3 fixed?"
 > from the log alone lands on the wrong commit either way.
 
-### T4 — dangling wikilink relations are stored silently
+### T4 — dangling wikilink relations are stored silently — **SHIPPED 2026-07-31: `bm doctor --project` reports them, oldest source first**
 **Found:** 2026-07-26, schema §11 Q3 testing.
 
 ```
@@ -314,6 +314,18 @@ ideally with age, so "not written yet" and "typo, will never resolve" can be tol
 detects observations and relations by their syntax patterns anywhere in the document." Ordinary prose
 (a `- [note] ...` bullet, an incidental `[[...]]`) becomes graph data with no opt-out, which is the
 mechanism that manufactures these edges in the first place. Found in: sweep-prior-art.md:19.
+
+**Shipped 2026-07-31** as the first corpus check inside `bm doctor` (per the settled "doctor
+absorbs the integrity checks, no `bm check`" decision — W5's later rules land in the same frame).
+`bm doctor --project NAME` reports every relation with `to_id IS NULL`:
+`date  source_file  -type-> [[target]]`, oldest source first. Relations carry no timestamp, so
+the source entity's `updated_at` is the age proxy the entry asked for — recent = target may not
+be written yet, old = likely typo/dead. Exit 0 (dangling forward references are legitimate;
+this is a report, not a failure); unknown project exits 1 rather than reading as a clean corpus.
+Runs on the T18 native path (`direct_unresolved_relation_report` in `cli/direct.py`), not the
+ASGI client. Tests: 2 repository (ordering + decoy, cross-project scoping with positive
+control), 3 CLI (rows + exit 0, clean corpus, unknown project). Live-verified on a scratch
+corpus with a seeded `[[Z Does Not Exist]]` forward reference.
 
 ### T5 — `bm project add` silently makes the new project the default — **RESOLVED 2026-07-31: fixed in-tree since `1baceca5` (2026-07-26); verified live**
 **Found:** 2026-07-26.

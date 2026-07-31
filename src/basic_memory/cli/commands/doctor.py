@@ -194,13 +194,47 @@ async def run_doctor() -> None:
     console.print("[green]Doctor checks passed.[/green]")
 
 
+async def run_unresolved_relation_report(project_name: str) -> None:
+    """Print the project's dangling forward references, oldest source first."""
+    from basic_memory.cli.direct import direct_unresolved_relation_report
+
+    rows = await direct_unresolved_relation_report(project_name)
+    if not rows:
+        console.print(f"[green]OK[/green] {project_name}: no unresolved relations")
+        return
+
+    console.print(
+        f"[yellow]{len(rows)} unresolved relation(s) in '{project_name}'[/yellow] — "
+        "a recently-touched source may await its target; an old one is likely a typo "
+        "or a dead reference. Oldest first:"
+    )
+    for row in rows:
+        touched = row.source_updated_at.date().isoformat()
+        # markup=False: [[target]] is literal wikilink syntax, not rich markup.
+        console.print(
+            f"  {touched}  {row.file_path}  -{row.relation_type}-> [[{row.to_name}]]",
+            markup=False,
+            highlight=False,
+        )
+
+
 @app.command()
-def doctor() -> None:
+def doctor(
+    project: str | None = typer.Option(
+        None,
+        "--project",
+        help="Report corpus integrity for this project (unresolved relations) "
+        "instead of running the file/database self-test.",
+    ),
+) -> None:
     """Run local consistency checks to verify file/database indexing."""
     # Deferred: ToolError lives in the mcp SDK, which must not load at CLI startup (#886).
     from mcp.server.fastmcp.exceptions import ToolError
 
     try:
+        if project is not None:
+            run_with_cleanup(run_unresolved_relation_report(project))
+            return
         run_with_cleanup(run_doctor())
     except (ToolError, ValueError) as e:
         # str() of a message-less exception (e.g. httpx.ReadTimeout) is empty;

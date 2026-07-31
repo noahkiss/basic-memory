@@ -799,3 +799,102 @@ async def test_apply_resolved_targets_batches_updates_and_duplicate_cleanup(
         (target_entity.id, target_entity.title)
     ]
     assert redundant is None
+
+
+@pytest.mark.asyncio
+async def test_find_unresolved_relation_report_lists_dangling_edges_oldest_first(
+    session_maker, source_entity, target_entity, test_project: Project
+):
+    """Dangling edges are reported with their source file, oldest source first;
+    resolved edges stay out of the report."""
+    older = datetime(2026, 1, 1)  # naive: matches the column round-trip
+    async with db.scoped_session(session_maker) as session:
+        source = await session.get(Entity, source_entity.id)
+        assert source is not None
+        source.updated_at = older
+        session.add_all(
+            [
+                # resolved decoy — must not appear
+                Relation(
+                    project_id=test_project.id,
+                    from_id=source_entity.id,
+                    to_id=target_entity.id,
+                    to_name=target_entity.title,
+                    relation_type="connects_to",
+                ),
+                Relation(
+                    project_id=test_project.id,
+                    from_id=source_entity.id,
+                    to_id=None,
+                    to_name="Ghost Note",
+                    relation_type="supersedes",
+                ),
+                Relation(
+                    project_id=test_project.id,
+                    from_id=target_entity.id,
+                    to_id=None,
+                    to_name="Another Ghost",
+                    relation_type="relates_to",
+                ),
+            ]
+        )
+        await session.flush()
+
+    repository = RelationRepository(project_id=test_project.id)
+    async with db.scoped_session(session_maker) as session:
+        rows = await repository.find_unresolved_relation_report(session)
+
+    assert [(r.file_path, r.relation_type, r.to_name) for r in rows] == [
+        ("source/test_source.md", "supersedes", "Ghost Note"),
+        ("target/test_target.md", "relates_to", "Another Ghost"),
+    ]
+    assert rows[0].source_updated_at == older
+
+
+@pytest.mark.asyncio
+async def test_find_unresolved_relation_report_scopes_to_project(
+    session_maker, source_entity, test_project: Project
+):
+    """A dangling edge in another project never leaks into the report."""
+    async with db.scoped_session(session_maker) as session:
+        other_project = Project(name="other-project", path="/tmp/other", permalink="other-project")
+        session.add(other_project)
+        await session.flush()
+        other_entity = Entity(
+            project_id=other_project.id,
+            title="other_source",
+            note_type="test",
+            permalink="other/other-source",
+            file_path="other/other_source.md",
+            content_type="text/markdown",
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+        session.add(other_entity)
+        await session.flush()
+        session.add_all(
+            [
+                Relation(
+                    project_id=other_project.id,
+                    from_id=other_entity.id,
+                    to_id=None,
+                    to_name="Foreign Ghost",
+                    relation_type="supersedes",
+                ),
+                # positive control in the queried project
+                Relation(
+                    project_id=test_project.id,
+                    from_id=source_entity.id,
+                    to_id=None,
+                    to_name="Local Ghost",
+                    relation_type="supersedes",
+                ),
+            ]
+        )
+        await session.flush()
+
+    repository = RelationRepository(project_id=test_project.id)
+    async with db.scoped_session(session_maker) as session:
+        rows = await repository.find_unresolved_relation_report(session)
+
+    assert [r.to_name for r in rows] == ["Local Ghost"]
