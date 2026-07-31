@@ -1200,6 +1200,10 @@ Found in: sweep-localhist.md:1, :7, :13, :19, :31, :37, sweep-handoffs.md:13, sw
 Humans extend the vocabulary; agents may only select from it. Upstream's frontmatter vocabulary is
 fully open, so enforcement is ours and cannot live in a wrapper.
 
+**Decided 2026-07-31:** W4 does not build on `picoschema/`; that subsystem is stripped as the first
+commit of this build (see O-picoschema for grounds). The vocabulary source is `.bm.yml`, validated
+by a bespoke checker that W5 wires into `bm doctor`.
+
 ### W5 — `bm tend check`: schema and integrity lint
 Covers T4 (unresolved relations), T6 (doubled frontmatter blocks), set-once field violations, and
 `supersedes` appearing on a type other than `finding`.
@@ -1468,7 +1472,7 @@ counted); `just doctor` green.
 
 ## OPEN — observed, not diagnosed
 
-### O-picoschema — `picoschema/` is un-stripped upstream surface, now with no design doc
+### O-picoschema — `picoschema/` is un-stripped upstream surface, now with no design doc — **DECIDED 2026-07-31: W4 does not build on it; strip lands with W4**
 **Found 2026-07-28** in pass 5, while checking the handoff's precondition for deleting
 `docs/specs/SPEC-SCHEMA*.md`. That precondition was "check `.forked/schema.md` supersedes them" —
 **it does not.** `.forked/schema.md` is this fork's *record-vocabulary* proposal (the closed
@@ -1488,6 +1492,32 @@ picoschema stays. It is a plausible strip candidate on the same grounds as W12/W
 Decide before building W3: strip picoschema, or build W3 on top of it. If it is stripped, the
 deleted specs need no replacement. If it is kept, recover them from git — they are in history at
 `dd302010~1`.
+
+**Decided 2026-07-31 (delegated call, per standing decision 2): the closed vocabulary does not
+build on picoschema, and `picoschema/` + `schema_router` + the `bm schema` CLI are scheduled for
+strip as the first commit of the W4 build.** Grounds, each checked against the code this session:
+
+1. **Wrong authority model.** Picoschema resolves schemas from the *corpus* — inline
+   `frontmatter['schema']`, a referenced schema note, or implicit by type against schema notes
+   (`picoschema/resolver.py:1-12`). Schema notes are agent-writable, so the vocabulary is open by
+   construction — the exact property W4 exists to remove. The closed vocabulary is declared in
+   `.bm.yml`, human-edited, enforced in the write path. Building W4 on picoschema would leave two
+   competing sources of truth for the same concern.
+2. **Missing semantics.** The syntax expresses required/optional, enum, array, object
+   (`parser.py`). It cannot express set-once fields, conditional requirements (`date-ref` mandatory
+   on `transcript`/`git`, *forbidden* on the other rungs), the one-date-per-type rule, or a
+   vocabulary sourced from a file outside the corpus. Every rule W5 lists needs machinery picoschema
+   does not have; the bespoke validator over `.bm.yml` is smaller than the bridge would be.
+3. **The mining half cannot see the fields it would govern.** O5's retest showed `schema infer` is
+   frontmatter-blind: 32 notes with identical `status`/`decided-on`/`owner` frontmatter produced a
+   frequency table containing only the body observation.
+4. Per this entry's own consequence: the deleted SPEC-SCHEMA docs need no recovery.
+
+Not stripped tonight: a deletion pass has its own rules (grep the test tree, entry points, W15-class
+escape checks) and belongs with the W4 work, where W5's `bm doctor` checks replace `schema
+validate`/`diff` in the same program — no window with zero drift detection. Until then the subsystem
+is frozen: no fixes land in it (O5's error-shape defect is recorded under O8 as class evidence and
+dies with the strip).
 
 
 *(O1 was diagnosed and closed on 2026-07-26 — it was a measurement artifact, not a defect. See
