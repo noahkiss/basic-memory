@@ -320,6 +320,13 @@ and nothing tests is one rebase away from regressing without a failure anyone no
 
 Found in: sweep-handoffs.md:1, sweep-spike.md:13, sweep-status-agents.md:19.
 
+**Re-tested 2026-07-31 — the entry is inverted on this tree.** Omitting the query entirely now
+works with `--filter` and with `--meta` (both returned the fixture note in a scratch project), and
+the `**` idiom now *hard-errors*: `sqlite3.OperationalError: unknown special query: *`, with the
+full SQL dumped to stdout and **exit 0**. So the metadata-only path exists and is the supported
+spelling; what remains of T7 is (a) no test guards the queryless path, and (b) the `**` error is
+reported as prose on stdout with a success exit — see O8.
+
 ### T8 — `semantic_search_enabled` does not gate the embedding cost it advertises
 **Found:** BM spike, 2026-07-26.
 
@@ -510,7 +517,7 @@ Basic Memory; reinstall the newer build or run `bm reset --reindex`".
 crash *shape* is still a claim. To capture it: migrate on `main`, `git checkout` a commit before the
 newest migration, reinstall, run any command, and paste the traceback here.
 
-### T12 — `bm reset` claims your markdown is safe while unflushed writes live only in the DB
+### T12 — `bm reset` claims your markdown is safe while unflushed writes live only in the DB — **CONFIRMED 2026-07-31, observed loss**
 **Found:** 2026-07-27, in `.forked/release-design.md` §2. Both sites re-verified before recording.
 
 `NoteContent` (`src/basic_memory/models/knowledge.py:159-224`) materializes `markdown_content` in
@@ -541,8 +548,26 @@ which was cleared specifically on the grounds that `bm reset` only drops the ind
 to reset while any row is `pending`/`writing`/`failed`, with `--force` to override; or at minimum
 correct the message so it stops asserting something that can be false.
 
-**Repro not yet captured** — needs a note held in `pending`/`failed` at reset time. Until then this
-is a documented contradiction between two code sites, not an observed loss.
+**Repro captured 2026-07-31** in an isolated scratch config. `write_note` was invoked and the
+process exited between DB-accept and file materialization (the write path is DB-first: the v2
+mutation service "accepts" into `note_content` and defers the file write to a materialization
+runner — see O6 for the same architecture caught mid-move). State before reset:
+
+```
+$ sqlite3 $CONFIG/memory.db "SELECT e.file_path, n.file_write_status FROM note_content n JOIN entity e ON e.id=n.entity_id WHERE e.file_path LIKE '%unflushed%';"
+probes/T12 unflushed.md|pending          # no such file exists on disk
+$ echo y | bm reset
+Note: This only deletes the index database. Your markdown note files will not be
+affected.
+Use bm reset --reindex to automatically rebuild the index afterward.
+Reset the database index? [y/N]: Database reset complete
+$ grep -r "IRREPLACEABLE" $PROJ $HOME $CONFIG; echo "exit=$?"
+exit=1                                   # the note body is nowhere, including the recreated DB
+```
+
+No warning about the pending row, and the content is unrecoverable. The pending state was produced
+by killing the process inside the accept→flush window; that window is real in the live server (the
+runner is asynchronous by design), so this is the advertised-safe data loss, observed.
 
 ### T13 — a dependency reference naming `basic-memory` silently resolves to UPSTREAM — **SHIPPED `cece1087` + `e11cc1d7`**
 **Done 2026-07-27.** All six benchmark sites repointed at `noahkiss/basic-memory`, plus two the
@@ -1001,13 +1026,27 @@ only paths, so a project cannot be identified by the name you would pass to `--p
 matters:** R8's design has one BM project per tracked repo, keyed by an opaque id, with the human
 label carried separately. That is unworkable while the registry is ambiguous and unnamed in output.
 
-### B3 — `bm tool list-projects --json` fails
-**Found:** 2026-07-26. Exits 1 and emits nothing parseable as JSON, despite `--json` being the
-documented machine-readable path. This is the API `tend` would use to enumerate projects.
+### B3 — `bm tool list-projects --json` fails — **REFUTED 2026-07-31**
+**Found:** 2026-07-26. Claimed to exit 1 and emit nothing parseable as JSON. No output was ever
+captured, and it stayed in BLOCKERS only because W7 is built on it.
 
-**No output was captured.** By this file's own rule that is a claim, not a gap. It stays in BLOCKERS
-only because W7 is built on it; capture `bm tool list-projects --json; echo "exit=$?"` verbatim, or
-demote it to OPEN.
+**Re-run 2026-07-31** in an isolated scratch config, 165 commits past the fork point:
+
+```
+$ bm tool list-projects --json
+{
+  "projects": [
+    { "name": "main", "external_id": "b9b135b0-…", "path": "…", "is_default": true },
+    { "name": "scratch", "external_id": "43c1f547-…", "path": "…", "is_default": false }
+  ],
+  "default_project": "main",
+  "constrained_project": null
+}
+exit=0
+```
+
+Valid JSON, exit 0. Either the original observation was wrong or the intervening strip fixed it;
+either way there is nothing to build. W7 can rely on this surface.
 
 ### B4 — no fast path: anything touching `mcp.tools` / `api.app` costs ~4 s
 **Found:** fork-point baseline (see `AGENTS.md`). `bm tool search-notes` is 4.3–4.8 s; a native
@@ -1455,7 +1494,7 @@ deleted specs need no replacement. If it is kept, recover them from git — they
 **R-O1** under RESOLVED, and the four requirements it produced under **W1**. The id is retired
 rather than reused, so O2–O6 keep their numbers.)*
 
-### O2 — `bm orphans` reports both endpoints of a frontmatter-encoded edge as orphans
+### O2 — `bm orphans` reports both endpoints of a frontmatter-encoded edge as orphans — **DIAGNOSED 2026-07-31: orphans is right, frontmatter edges don't exist**
 **Found:** 2026-07-26, recorded in the schema §12 comparison as a tested outcome on a 9-note corpus.
 No command output was captured, so this is a claim until reproduced.
 
@@ -1468,7 +1507,22 @@ reindex, and run `bm orphans --project <p>` — capture the output verbatim.
 
 Found in: sweep-schema.md:7, sweep-inv-plan.md:7, sweep-status-agents.md:7.
 
-### O3 — frontmatter values appear not to reach full-text search
+**Diagnosed 2026-07-31 — `bm orphans` is truthful; the frontmatter edge never exists.** Fixture:
+`o2-alpha.md` with `depends_on: "[[O2 Beta]]"` in frontmatter, plus a control pair linked by a body
+relation (`- relates_to [[O2 Delta]]`). After reindex:
+
+```
+$ bm orphans --project scratch        # Alpha and Beta both listed; Gamma and Delta absent
+$ sqlite3 $CONFIG/memory.db "SELECT from_id, to_id, relation_type FROM relation;"
+5|6|relates_to                        # the body-link control is the ONLY relation row
+```
+
+The frontmatter wikilink produced **no relation row at all**, so both endpoints genuinely have no
+relations and `orphans` reports them correctly. The defect is not in `orphans`; it is that
+frontmatter-encoded edges are invisible to the graph — the same class as O3. Consequence for the
+schema: **edges must be body relations** (`- relation_type [[Target]]`), never frontmatter fields.
+
+### O3 — frontmatter values appear not to reach full-text search — **CONFIRMED 2026-07-31**
 **Found:** 2026-07-26, same §12 comparison — "Full-text search for the id → 0 hits" against relations,
 which are indexed as first-class rows. Recorded as a table outcome, not captured output.
 
@@ -1481,7 +1535,24 @@ against a reindexed note, with a control query on a body string from the same no
 
 Found in: sweep-schema.md:1, sweep-inv-plan.md:13, sweep-status-agents.md:1.
 
-### O4 — no demonstrated filter or sort over `updated_at`
+**Confirmed 2026-07-31.** Fixture note with `record_id: zq7-frontmatter-only-93kx` in frontmatter
+only and the phrase `xylophone-body-control-77` in the body, reindexed in a scratch project:
+
+```
+$ bm tool search-notes "xylophone-body-control-77" --project scratch --json   # control
+  → 1 result, score 1.237
+$ bm tool search-notes "zq7-frontmatter-only-93kx" --project scratch --json
+  → {"results": [], …}
+```
+
+Positive control passed; the frontmatter-only value is unreachable by FTS. Frontmatter *is* stored
+(`entity_metadata` — a queryless `--filter` on `review-by` matched this same note, see O4) and is
+exact-match filterable via `--meta`/`--filter`, but it never enters the FTS index. Together with O2
+(frontmatter edges are not relations) and O5 (schema inference never counts frontmatter fields):
+**anything that must be searchable, graph-visible, or inferable has to live in the body**
+(observations/relations); frontmatter is only for exact-match filter keys.
+
+### O4 — no demonstrated filter or sort over `updated_at` — **CONFIRMED 2026-07-31, with two footholds**
 **Found:** 2026-07-26. Only the `review-by` *frontmatter* filter was actually proven. `updated_at` is
 DB metadata rather than frontmatter, and no working `--filter` form for it has been shown.
 
@@ -1494,7 +1565,28 @@ and separately whether any sort/order argument exists on that path.
 
 Found in: sweep-schema.md:37.
 
-### O5 — `schema-infer` returns an error object where an empty result belongs
+**Confirmed 2026-07-31.** Three facts, established in a scratch project:
+
+1. **`--filter` on `updated_at` targets the wrong store.** It compiles to
+   `json_extract(entity.entity_metadata, '$."updated_at"') < ?` — frontmatter, not the DB column —
+   so it matches nothing unless a note carries a literal `updated_at:` frontmatter key. A queryless
+   `--filter '{"updated_at":{"$lt":"2026-08-15"}}'` returned 0 rows over a corpus that should match.
+2. **`--after_date` is the only DB-column date predicate, and it points the wrong way.** It compiles
+   to `datetime(search_index.updated_at) > datetime(:after_date)` (controls behaved: past date → 1
+   hit, future date → 0). Strictly `>` — usable for recency, useless for staleness (`$lt`).
+3. **No sort argument exists anywhere on the path** (CLI, schema, repository). But passing
+   `after_date` appends `, search_index.updated_at DESC` after `ORDER BY score ASC`, and in
+   queryless mode every score is `-0.0`, so the tiebreak becomes the effective order. Demonstrated:
+   two notes came back newest-first with equal scores.
+
+**Consequences:** W9's headline ("most recently updated `state` record") is buildable today via
+queryless `--meta` + `--after_date <epoch> --page-size 1` — fragile (rides an undocumented tiebreak)
+but real. W2's staleness sweep (`updated_at < cutoff`) has **no query form at all**; it needs either
+a `$lt` predicate over the DB column or set subtraction (all minus `--after_date` survivors). The
+fast verbs talk to the repository layer directly (T18/B4), so the right fix is a repository-level
+predicate + explicit sort, not a patch to the MCP filter grammar.
+
+### O5 — `schema-infer` returns an error object where an empty result belongs — **RETESTED 2026-07-31: works on a fair corpus; the error-shape defect stands**
 **Found:** BM spike, 2026-07-26.
 
 ```
@@ -1513,7 +1605,20 @@ with a consistent `decision` shape.
 
 Found in: sweep-spike.md:31, sweep-status-agents.md:55.
 
-### O6 — two unaudited write-path behaviours: non-unique replace, and move-vs-rewrite
+**Retested 2026-07-31** against 32 `decision` notes sharing identical frontmatter (`status`,
+`decided-on`, `owner`) and one `[context]` observation each (`bm schema infer decision`):
+
+- **Inference is not inert.** It analyzed all 32 notes and suggested `{"context": "string"}` from
+  the observation at 100%. The spike's failure was its 4-note corpus, as suspected.
+- **The error-shape defect stands.** A type with notes but no pattern still yields
+  `{"error": "No schema pattern found for 'note' (threshold: 25%)"}` in `--json` mode, exit 0 — a
+  legitimate empty result reported as an error, threshold still not exposed or tunable. See O8.
+- **New: frontmatter fields are invisible to inference.** `status`/`decided-on`/`owner` were present
+  in 100% of the 32 notes and never appeared in the frequency table — only the observation did.
+  Third member of the frontmatter-blindness class (O2, O3): W4/W5's closed vocabulary cannot lean
+  on `schema infer` for frontmatter keys.
+
+### O6 — two unaudited write-path behaviours: non-unique replace, and move-vs-rewrite — **RESOLVED (replace) / CONFIRMED-WORSE (move) 2026-07-31**
 **Found:** 2026-07-26. Both are claims about our code prompted by observing the failure elsewhere;
 neither has been checked against this tree.
 
@@ -1528,6 +1633,27 @@ neither has been checked against this tree.
 `src/basic_memory/mcp/tools/`, then test each against a scratch project.
 
 Found in: sweep-beans.md:7, sweep-transcript.md:55.
+
+**Tested live 2026-07-31**, scratch project:
+
+1. **Non-unique replace: safe.** `edit-note --operation find_replace` on a target occurring twice
+   with the default `--expected-replacements 1` refused —
+   `Error: Expected 1 occurrences of 'duplicate-needle', but found 2` — and left the file untouched.
+   (The error still exits 0; see O8.) No corruption class here.
+2. **Move: not `rename(2)` on the live path, despite the source pre-read.** `FileService.move_file`
+   *is* an atomic rename, but the only v2 API move endpoint (`knowledge_router.py:772`) calls
+   `note_content_mutation_service.move_note` → `run_accepted_note_move`, whose docstring says it
+   plainly: *"Accept a note move into DB state without materializing its file."* The rename-based
+   `entity_service` path (`entity_service.py:1074`) is not on it. Materialization later *writes* the
+   content to the new path — fresh inode, fresh mtime. Observed: after flush the moved file had a
+   new inode and a materialization-time mtime. **mtime is not truthful across moves**; W2's
+   staleness logic must read `updated_at` from the index, never `stat()`.
+3. **Worse, the deferred window corrupts.** With the process stopped between DB-accept and flush
+   (same window as T12): DB said `moved/o6-dup.md` + `file_write_status=pending` while the file sat
+   untouched at the old path — and the recovery command (`bm reindex`) then materialized the new
+   path from the DB *and* re-indexed the leftover old file as a second entity. **An interrupted move
+   plus reindex silently duplicates the note** (both `synced` afterwards). `bm gc` needs a dedupe
+   check for exactly this shape, and W3's git history is the real safety net.
 
 ### O7 — `add_project`'s default-repair logging is unformatted, and one of its branches is now dead
 **Found:** 2026-07-27, while repairing the W12 cloud strip.
@@ -1548,6 +1674,27 @@ Two independent defects in `ProjectService.add_project`'s default-repair block
    to delete the branch or to keep it as a defensive invariant with a `# pragma: no cover`.
 
 Related: **T5** covers the user-facing half of the same area (the CLI has no `--set-default` flag).
+
+### O8 — CLI tool failures exit 0, and `--json` mode emits non-JSON or error-shaped prose
+**Found:** 2026-07-31, recurring across every phase-1 evidence run. Three instances, all captured
+in the entries that hit them:
+
+1. A hard search failure (`sqlite3.OperationalError` from the `**` query, T7) printed a markdown
+   error with the full SQL to stdout and **exited 0** — in `--json` mode, so the "machine-readable"
+   stream contained prose.
+2. `edit-note` refusing a non-unique find/replace (O6) printed `Error: Expected 1 occurrences…` and
+   **exited 0**.
+3. `schema infer --json` reports a legitimate no-pattern result as `{"error": …}`, exit 0 (O5) —
+   the inverse defect: a non-error shaped as one.
+
+Also in the same class: `search-notes --json` returned a result set whose envelope said
+`"total": 0, "total_is_exact": false` alongside one actual result (query mode; queryless mode
+reported `"total": 1` correctly).
+
+**Why it matters:** W7 (the agent-facing output contract) is unbuildable on a surface where exit
+codes never signal failure and the JSON stream is not reliably JSON. Every scripted caller must
+currently parse prose to distinguish success from failure. Fold the fix into W7's contract work:
+non-zero exit on failure, errors to stderr, `--json` output always parseable JSON.
 
 ---
 
