@@ -2068,8 +2068,16 @@ first commit"):
   error-shape defect.
 - **Left for W7 proper**: `schema validate`/`schema diff` still shape legitimate empties
   ("No schemas defined", "No schema found for type") as `{"error": ...}` with exit 0 — deciding
-  which of those become results vs failures is the contract design, not a mechanical fix. The
-  `search-notes` envelope miscount (`total: 0` beside one result) also remains unverified.
+  which of those become results vs failures is the contract design, not a mechanical fix.
+- *Envelope miscount DIAGNOSED 2026-07-31 — by design, but the sentinel is a trap.* Reproduced:
+  text query with semantic deps present → `{"total": 0, "total_is_exact": false}` beside 2 real
+  results; queryless metadata mode → `{"total": 1, "total_is_exact": true}`. Cause: the v2
+  search router only counts under FTS retrieval (`search_router.py` — plain text queries default
+  to HYBRID when semantic is enabled); semantic modes skip the count to avoid a second retrieval
+  and leave `total` at the sentinel `0`, honestly flagged by `total_is_exact: false` (the CLI
+  renderer already checks the flag, `tool.py:118`). Not a counting bug — but `0` as
+  "unknown" reads as a miscount to any caller that misses the flag. W7's envelope should carry
+  `total: null` (or omit it) when the count is unknown; fold into the contract decision.
 
 ---
 
