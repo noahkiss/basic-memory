@@ -300,7 +300,7 @@ The number is retained as a tombstone so existing cross-references do not silent
 against both the fork build and `2b19f1ff`: no corruption in either, and the write path is unchanged
 across the whole fix cluster. Nothing was reverted because nothing was ever written for it.
 
-### T7 — `search-notes` rejects an empty or `*` query; metadata-only queries need a `**` idiom
+### T7 — `search-notes` rejects an empty or `*` query; metadata-only queries need a `**` idiom — **RESOLVED 2026-07-31, guard SHIPPED**
 **Found:** BM spike, re-confirmed 2026-07-26.
 
 ```
@@ -326,6 +326,14 @@ the `**` idiom now *hard-errors*: `sqlite3.OperationalError: unknown special que
 full SQL dumped to stdout and **exit 0**. So the metadata-only path exists and is the supported
 spelling; what remains of T7 is (a) no test guards the queryless path, and (b) the `**` error is
 reported as prose on stdout with a success exit — see O8.
+
+**Guard shipped 2026-07-31.** `test_queryless_metadata_search_end_to_end` in
+`tests/mcp/test_tool_search.py` runs the gardener's exact query shape — `search_notes` with
+`metadata_filters` and no text — through the full client → API → service → repository stack:
+matching note returned, non-matching decoy excluded, plus a text-query positive control over the
+same corpus (the pre-existing payload-level test could not catch a server-side rejection
+reappearing). The `**`-error-as-prose-with-exit-0 half lives on in **O8/W7**; nothing else of T7
+remains.
 
 ### T8 — `semantic_search_enabled` does not gate the embedding cost it advertises
 **Found:** BM spike, 2026-07-26.

@@ -2173,3 +2173,50 @@ def test_search_notes_parse_str_list_rejects_non_string_list_elements_in_place()
     # All-string lists still work correctly.
     assert parse_str_list(["note", "task"]) == ["note", "task"]
     assert parse_str_list(["note,task"]) == ["note", "task"]
+
+
+# --- T7: the queryless metadata-only path, end to end -------------------------
+
+
+@pytest.mark.asyncio
+async def test_queryless_metadata_search_end_to_end(client, test_project):
+    """A filter-only search (no text query) must work through the full stack.
+
+    This is the single query the gardener runs every cycle (T7). It used to
+    need an undocumented `**` idiom; the supported spelling is now simply
+    omitting the query — and only a payload-level test guarded it, which
+    would not catch a server-side rejection reappearing.
+    """
+    await write_note(
+        project=test_project.name,
+        title="Queryless Target",
+        directory="t7",
+        content="---\nstatus: in-progress\n---\n# Queryless Target\n\ngardener sweep target",
+    )
+    # A second note that must NOT match the filter.
+    await write_note(
+        project=test_project.name,
+        title="Queryless Decoy",
+        directory="t7",
+        content="---\nstatus: done\n---\n# Queryless Decoy\n\ngardener sweep decoy",
+    )
+
+    response = await search_notes(
+        project=test_project.name,
+        metadata_filters={"status": "in-progress"},
+        output_format="json",
+    )
+
+    assert isinstance(response, dict), f"queryless search failed: {response}"
+    permalinks = [r["permalink"] for r in response["results"]]
+    assert any(p.endswith("t7/queryless-target") for p in permalinks)
+    assert not any(p.endswith("t7/queryless-decoy") for p in permalinks)
+
+    # Positive control: the same corpus is reachable by a text query, so an
+    # empty queryless result could not be blamed on the fixture.
+    control = await search_notes(
+        project=test_project.name,
+        query="gardener sweep",
+        output_format="json",
+    )
+    assert isinstance(control, dict) and len(control["results"]) >= 2
