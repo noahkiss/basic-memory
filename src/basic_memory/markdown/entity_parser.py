@@ -8,7 +8,6 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any, Optional
 
-import dateparser
 import frontmatter
 import yaml
 from loguru import logger
@@ -206,6 +205,10 @@ class EntityParser:
         if isinstance(value, datetime):
             return value
         if isinstance(value, str):
+            # dateparser costs ~0.14 s of import time, so it loads on first
+            # parse instead of on every CLI start (see AGENTS.md baseline).
+            import dateparser
+
             parsed = dateparser.parse(value)
             if parsed:
                 return parsed

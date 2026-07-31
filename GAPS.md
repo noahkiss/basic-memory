@@ -876,7 +876,7 @@ as sufficient. It is not. Every remaining strip pass should run `test-int` befor
 called green, and this entry stays open until there is a known-good `test-int` baseline to measure
 against.
 
-### T18 — `AGENTS.md`'s performance baseline is stale by 9x, and the "fast native command" it names is not fast
+### T18 — `AGENTS.md`'s performance baseline is stale by 9x, and the "fast native command" it names is not fast — **SHIPPED 2026-07-31**
 **Found 2026-07-28** while deciding the fate of that table in pass 4. Measured on this tree
 (`da4f8a59`), Linux/x86-64, Python 3.13, warm, three runs each.
 
@@ -931,6 +931,38 @@ whole harness.
 A cheap regression guard (assert `project list` completes under ~1 s, or assert
 `basic_memory.api.app not in sys.modules` after a native command) would make the boundary
 structural instead of aspirational — the same reasoning as shipping the flag-only gardener first.
+
+**SHIPPED 2026-07-31.** The chain was exactly the one B4 names: the command body called
+`get_client()` → `mcp.async_client._asgi_client` → `from basic_memory.api.app import app`, i.e.
+every "native" command was an API command served in-process over ASGI. Two smaller riders came in
+through the service layer itself: `search_service` imported `fastapi` for an annotation-only
+`BackgroundTasks`, and `markdown.entity_parser` imported `dateparser` (0.14 s) at module level for
+one method body.
+
+What shipped:
+- `basic_memory.cli.direct` — builds `ProjectService` straight from config → `get_or_create_db`
+  → repository, no FastAPI/MCP anywhere on the path. `project list` and `project ls` now run on
+  it via `fetch_project_list()` in `cli/commands/project.py` (same merge logic, same output —
+  verified byte-identical `--json` on the scratch harness).
+- The two leaf deferrals: `BackgroundTasks` behind `TYPE_CHECKING` + quoted annotations;
+  `dateparser` imported inside `parse_date` / a `_parse_date` helper.
+- The structural guard: `tests/cli/test_native_command_import_guard.py` runs `project list` in a
+  **subprocess** (sys.modules is process-global, so in-process assertions lie under pytest) and
+  fails if `basic_memory.api.app`, `basic_memory.mcp.tools`, `fastapi`, or `dateparser` loaded.
+  A positive-control test forces `fastapi` in and asserts the probe reports it.
+
+Measured (same host/method as the 2026-07-28 numbers; host lightly loaded, user CPU + RSS):
+
+```
+before  project list: user=3.57–3.70 s  rss=214 MB
+after   project list: user=1.12–1.16 s  rss=115 MB
+floor   --version:    user=0.15 s       rss=40 MB
+```
+
+The remaining 1.1 s is SQLAlchemy + pydantic + alembic — the irreducible cost of a DB command, and
+the budget any fast verb starts from. The other project subcommands (`add`/`remove`/`default`/
+`move`/`info`) still route through ASGI deliberately: mutations and one-shots, correctness over
+latency. `AGENTS.md`'s baseline table updated.
 
 ---
 
@@ -1076,6 +1108,14 @@ whether the 0.33 s floor itself can come down, since that bounds every fast path
 measured **3.38 s** as `mcp.tools` 1.05 s + `api.app` 0.66 s + **`dateparser` 0.37 s** — process-start
 cost, not query cost, and not embeddings. A fast-path fix scoped to the two modules B4 names leaves
 ~11% of the cost on the path. Found in: sweep-handoffs.md:7.
+
+**Amended 2026-07-31 — the fast path now exists (T18).** `basic_memory.cli.direct` gives native
+commands a repository/service route with none of `api.app`/`mcp.tools`/`fastapi`/`dateparser` on
+it, guarded by `tests/cli/test_native_command_import_guard.py`; `project list` runs 1.1 s user /
+115 MB. B4 stays open for what remains: `bm tool *` one-shots still pay the full MCP import graph
+by design, and the ~1.1 s direct floor (SQLAlchemy + pydantic + alembic) plus the 0.15 s
+interpreter floor bound every fast verb. Close B4 when the verbs land on the direct path and the
+floor is either accepted or reduced.
 
 ### B5 — no cwd → project resolution: no walk-up, no marker-file detection
 **Found:** BM spike, 2026-07-26.

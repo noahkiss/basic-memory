@@ -80,18 +80,21 @@ second checking command would immediately be the one nobody runs.
 
 ## Measured baseline
 
-Linux/x86-64, Python 3.13. Measured 2026-07-28 on this tree, **not** at the fork point — the
-original table's numbers were unreproducible and one of them was wrong by an order of magnitude
-(see `GAPS.md` T18). Re-measure if the tree moves substantially.
+Linux/x86-64, Python 3.13. Measured 2026-07-31 on this tree, after the T18 fast path landed —
+the original fork-point table's numbers were unreproducible and one of them was wrong by an order
+of magnitude (see `GAPS.md` T18). Re-measure if the tree moves substantially.
 
 | Path | User CPU time | Resident memory |
 |---|---|---|
-| CLI native cmd (`project list`) | 4.7–5.7 s | 231 MB |
-| CLI `--version` floor | 0.43–0.48 s | 65 MB |
+| CLI direct-path cmd (`project list`) | 1.1–1.3 s | 115 MB |
+| CLI `--version` floor | 0.15 s | 40 MB |
 
-Figures are **user CPU time**, not wall clock: the host was under load when measured, and wall
-clock varied 2x across identical runs while CPU time and RSS held steady. Treat them as a lower
-bound on wall time.
+Before the T18 fix, `project list` measured 3.6–3.7 s / 214 MB on the same host and method — the
+difference is the ASGI/FastAPI/MCP import graph the direct path no longer touches. What remains of
+the 1.1 s is SQLAlchemy + pydantic + alembic, the real cost of a DB-backed command.
+
+Figures are **user CPU time**, not wall clock — CPU time and RSS hold steady under host load while
+wall clock varies 2x. Treat them as a lower bound on wall time.
 
 The rows the fork-point table carried for the MCP server, `bm tool search-notes`, and a full
 reindex have been **retired rather than restated**. They were tied to a specific 67-file / 888 KB
@@ -102,10 +105,13 @@ The structural rule still holds, and is the part that actually governs design: *
 subcommand must talk to the repository/service layer directly and must not reach through the MCP
 tool layer.** `basic_memory.mcp.tools` and `basic_memory.api.app` are each seconds of import time.
 
-**But do not copy the existing native commands — they already violate this.** `project list` imports
-both, lazily, inside the command body, which is why the module-level import graph looks clean and
-why it costs ~5 CPU-seconds instead of the ~0.55 s the old table claimed. See `GAPS.md` T18 before
-using any current command as a model for a fast one.
+The boundary is structural now, not aspirational: `basic_memory.cli.direct` is the supported way
+for a native command to reach the service layer, `project list` / `project ls` run on it, and
+`tests/cli/test_native_command_import_guard.py` runs `project list` in a subprocess and fails if
+`api.app`, `mcp.tools`, `fastapi`, or `dateparser` ever enter `sys.modules`. Model new fast verbs
+on `fetch_project_list` in `cli/commands/project.py`. The *other* project subcommands (`add`,
+`remove`, `default`, `move`, `info`) still route through the in-process ASGI app and cost ~3.5 s —
+they are mutations or one-shots where correctness, not latency, is the constraint.
 
 Embedding model `qdrant/bge-small-en-v1.5-onnx-q` (64 MB) caches to the shared
 `$XDG_CACHE_HOME/fastembed` in this fork, not inside `BASIC_MEMORY_CONFIG_DIR` as upstream had it —

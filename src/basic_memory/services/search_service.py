@@ -6,10 +6,13 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, List, Optional, Set, Dict
+from typing import TYPE_CHECKING, Any, List, Optional, Set, Dict
 
-from dateparser import parse
-from fastapi import BackgroundTasks
+if TYPE_CHECKING:
+    # FastAPI is annotation-only here; importing it at module level puts it on
+    # every native CLI command's startup path (see AGENTS.md measured baseline).
+    from fastapi import BackgroundTasks
+
 from loguru import logger
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -29,6 +32,17 @@ from basic_memory.services import FileService
 # Maximum size for content_stems field to stay under Postgres's 8KB index row limit.
 # We use 6000 characters to leave headroom for other indexed columns and overhead.
 MAX_CONTENT_STEMS_SIZE = 6000
+
+
+def _parse_date(value: str) -> Optional[datetime]:
+    """Parse a human-friendly date string (e.g. "yesterday", "2 days ago").
+
+    dateparser costs ~0.14 s of import time, so it loads on first use instead
+    of on every CLI start (see AGENTS.md measured baseline).
+    """
+    import dateparser
+
+    return dateparser.parse(value)
 
 
 @dataclass(frozen=True)
@@ -82,7 +96,7 @@ class SearchService:
         """Create FTS5 virtual table if it doesn't exist."""
         await self.repository.init_search_index()
 
-    async def reindex_all(self, background_tasks: Optional[BackgroundTasks] = None) -> None:
+    async def reindex_all(self, background_tasks: Optional["BackgroundTasks"] = None) -> None:
         """Reindex all content from database."""
         from basic_memory.repository.sqlite_search_repository import SQLiteSearchRepository
 
@@ -131,7 +145,7 @@ class SearchService:
             (
                 query.after_date
                 if isinstance(query.after_date, datetime)
-                else parse(query.after_date)
+                else _parse_date(query.after_date)
             )
             if query.after_date
             else None
@@ -366,7 +380,7 @@ class SearchService:
     async def index_entity(
         self,
         entity: Entity,
-        background_tasks: Optional[BackgroundTasks] = None,
+        background_tasks: Optional["BackgroundTasks"] = None,
         content: str | None = None,
     ) -> None:
         if background_tasks:

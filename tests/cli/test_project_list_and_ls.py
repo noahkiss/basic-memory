@@ -1,14 +1,12 @@
 """Tests for project list display and project ls behavior."""
 
 import json
-from contextlib import asynccontextmanager
 from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
 
 from basic_memory.cli.app import app
-from basic_memory.mcp.clients.project import ProjectClient
 from basic_memory.schemas.project_info import ProjectList
 
 # Importing registers project subcommands on the shared app instance.
@@ -41,20 +39,7 @@ def write_config(tmp_path, monkeypatch):
     return _write
 
 
-@pytest.fixture
-def mock_client(monkeypatch):
-    """Mock get_client with a no-op async context manager."""
-
-    @asynccontextmanager
-    async def fake_get_client():
-        yield object()
-
-    monkeypatch.setattr(project_cmd, "get_client", fake_get_client)
-
-
-def test_project_list_shows_indexed_project(
-    runner: CliRunner, write_config, mock_client, tmp_path, monkeypatch
-):
+def test_project_list_shows_indexed_project(runner: CliRunner, write_config, tmp_path, monkeypatch):
     """The table and the JSON rows both describe the indexed project."""
     alpha_path = (tmp_path / "alpha-local").as_posix()
 
@@ -66,7 +51,7 @@ def test_project_list_shows_indexed_project(
         }
     )
 
-    async def fake_list_projects(self):
+    async def fake_fetch_project_list():
         return ProjectList.model_validate(
             {
                 "projects": [
@@ -82,7 +67,7 @@ def test_project_list_shows_indexed_project(
             }
         )
 
-    monkeypatch.setattr(ProjectClient, "list_projects", fake_list_projects)
+    monkeypatch.setattr(project_cmd, "fetch_project_list", fake_fetch_project_list)
 
     result = runner.invoke(app, ["project", "list"], env={"COLUMNS": "240"})
 
@@ -110,7 +95,7 @@ def test_project_list_shows_indexed_project(
 
 
 def test_project_list_falls_back_to_configured_project(
-    runner: CliRunner, write_config, mock_client, tmp_path, monkeypatch
+    runner: CliRunner, write_config, tmp_path, monkeypatch
 ):
     """A project in config that the index does not return must still render (#1003).
 
@@ -129,10 +114,10 @@ def test_project_list_falls_back_to_configured_project(
     )
 
     # The local index does not know about this project, so the query returns empty.
-    async def fake_list_projects(self):
+    async def fake_fetch_project_list():
         return ProjectList.model_validate({"projects": [], "default_project": "main"})
 
-    monkeypatch.setattr(ProjectClient, "list_projects", fake_list_projects)
+    monkeypatch.setattr(project_cmd, "fetch_project_list", fake_fetch_project_list)
 
     result = runner.invoke(app, ["project", "list", "--json"], env={"COLUMNS": "240"})
 
@@ -150,7 +135,7 @@ def test_project_list_falls_back_to_configured_project(
 
 
 def test_project_list_shows_name_in_narrow_terminal(
-    runner: CliRunner, write_config, mock_client, tmp_path, monkeypatch
+    runner: CliRunner, write_config, tmp_path, monkeypatch
 ):
     """The Name column must survive a default-width terminal (B2).
 
@@ -169,7 +154,7 @@ def test_project_list_shows_name_in_narrow_terminal(
         }
     )
 
-    async def fake_list_projects(self):
+    async def fake_fetch_project_list():
         return ProjectList.model_validate(
             {
                 "projects": [
@@ -185,7 +170,7 @@ def test_project_list_shows_name_in_narrow_terminal(
             }
         )
 
-    monkeypatch.setattr(ProjectClient, "list_projects", fake_list_projects)
+    monkeypatch.setattr(project_cmd, "fetch_project_list", fake_fetch_project_list)
 
     result = runner.invoke(app, ["project", "list"], env={"COLUMNS": "80"})
 
@@ -195,7 +180,7 @@ def test_project_list_shows_name_in_narrow_terminal(
 
 
 def test_project_list_warns_when_config_project_missing_from_index(
-    runner: CliRunner, write_config, mock_client, tmp_path, monkeypatch
+    runner: CliRunner, write_config, tmp_path, monkeypatch
 ):
     """A project in config that the index does not know about must be called out (B2).
 
@@ -216,10 +201,10 @@ def test_project_list_warns_when_config_project_missing_from_index(
 
     # The local index has no row for alpha — the fresh-config state, where
     # config.json is written before anything materializes the project table.
-    async def fake_list_projects(self):
+    async def fake_fetch_project_list():
         return ProjectList.model_validate({"projects": [], "default_project": "alpha"})
 
-    monkeypatch.setattr(ProjectClient, "list_projects", fake_list_projects)
+    monkeypatch.setattr(project_cmd, "fetch_project_list", fake_fetch_project_list)
 
     result = runner.invoke(app, ["project", "list"], env={"COLUMNS": "240"})
 
@@ -228,9 +213,7 @@ def test_project_list_warns_when_config_project_missing_from_index(
     assert "not indexed" in result.stdout
 
 
-def test_project_ls_lists_local_files(
-    runner: CliRunner, write_config, mock_client, tmp_path, monkeypatch
-):
+def test_project_ls_lists_local_files(runner: CliRunner, write_config, tmp_path, monkeypatch):
     """project ls walks the project directory on disk."""
     project_dir = tmp_path / "alpha-files"
     (project_dir / "docs").mkdir(parents=True, exist_ok=True)
@@ -245,7 +228,7 @@ def test_project_ls_lists_local_files(
         }
     )
 
-    async def fake_list_projects(self):
+    async def fake_fetch_project_list():
         return ProjectList.model_validate(
             {
                 "projects": [
@@ -261,7 +244,7 @@ def test_project_ls_lists_local_files(
             }
         )
 
-    monkeypatch.setattr(ProjectClient, "list_projects", fake_list_projects)
+    monkeypatch.setattr(project_cmd, "fetch_project_list", fake_fetch_project_list)
 
     result = runner.invoke(app, ["project", "ls", "--name", "alpha"], env={"COLUMNS": "200"})
 
@@ -271,9 +254,7 @@ def test_project_ls_lists_local_files(
     assert "docs/spec.md" in result.stdout
 
 
-def test_project_ls_scopes_to_a_subpath(
-    runner: CliRunner, write_config, mock_client, tmp_path, monkeypatch
-):
+def test_project_ls_scopes_to_a_subpath(runner: CliRunner, write_config, tmp_path, monkeypatch):
     """The optional positional path narrows the listing to one subtree."""
     project_dir = tmp_path / "alpha-files"
     (project_dir / "docs").mkdir(parents=True, exist_ok=True)
@@ -288,7 +269,7 @@ def test_project_ls_scopes_to_a_subpath(
         }
     )
 
-    async def fake_list_projects(self):
+    async def fake_fetch_project_list():
         return ProjectList.model_validate(
             {
                 "projects": [
@@ -304,7 +285,7 @@ def test_project_ls_scopes_to_a_subpath(
             }
         )
 
-    monkeypatch.setattr(ProjectClient, "list_projects", fake_list_projects)
+    monkeypatch.setattr(project_cmd, "fetch_project_list", fake_fetch_project_list)
 
     result = runner.invoke(
         app, ["project", "ls", "--name", "alpha", "docs"], env={"COLUMNS": "200"}

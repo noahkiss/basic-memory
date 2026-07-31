@@ -13,6 +13,7 @@ from rich.text import Text
 
 from basic_memory.cli.app import app
 from basic_memory.cli.commands.command_utils import get_project_info, run_with_cleanup
+from basic_memory.cli.direct import direct_project_service
 from basic_memory.config import ConfigManager
 from basic_memory.mcp.async_client import get_client
 from basic_memory.mcp.clients import ProjectClient
@@ -45,19 +46,40 @@ def make_bar(value: int, max_value: int, width: int = 40) -> Text:
     return bar
 
 
+async def fetch_project_list() -> ProjectList:
+    """Fetch the project registry via the direct service path.
+
+    Native read commands talk to the service layer directly instead of routing
+    through the in-process FastAPI app — the ASGI path costs ~2.5 CPU-seconds
+    and ~100 MB per invocation just in imports (GAPS.md T18).
+    """
+    service = await direct_project_service()
+    projects = await service.list_projects()
+    default_project = await service.get_default_project_name()
+    return ProjectList(
+        projects=[
+            ProjectItem(
+                id=project.id,
+                external_id=project.external_id,
+                name=project.name,
+                path=project.path,
+                is_default=project.is_default or False,
+            )
+            for project in projects
+        ],
+        default_project=default_project,
+    )
+
+
 @project_app.command("list")
 def list_projects(
     json_output: bool = typer.Option(False, "--json", help="Output in JSON format"),
 ) -> None:
     """List Basic Memory projects."""
 
-    async def _list_projects() -> ProjectList:
-        async with get_client() as client:
-            return await ProjectClient(client).list_projects()
-
     try:
         config = ConfigManager().config
-        result = run_with_cleanup(_list_projects())
+        result = run_with_cleanup(fetch_project_list())
 
         indexed_by_permalink: dict[str, ProjectItem] = {
             generate_permalink(project.name): project for project in result.projects
@@ -330,12 +352,11 @@ def ls_project_command(
     try:
         # Get project info
         async def _get_project():
-            async with get_client() as client:
-                projects_list = await ProjectClient(client).list_projects()
-                for proj in projects_list.projects:
-                    if generate_permalink(proj.name) == generate_permalink(name):
-                        return proj
-                return None
+            projects_list = await fetch_project_list()
+            for proj in projects_list.projects:
+                if generate_permalink(proj.name) == generate_permalink(name):
+                    return proj
+            return None
 
         project_data = run_with_cleanup(_get_project())
         if not project_data:

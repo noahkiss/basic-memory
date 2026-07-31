@@ -438,18 +438,7 @@ def write_config(tmp_path, monkeypatch):
     return _write
 
 
-@pytest.fixture
-def mock_client(monkeypatch):
-    """Mock get_client with a no-op async context manager."""
-
-    @asynccontextmanager
-    async def fake_get_client():
-        yield object()
-
-    monkeypatch.setattr(project_cmd, "get_client", fake_get_client)
-
-
-def test_project_list_json_outputs_projects(write_config, mock_client, tmp_path, monkeypatch):
+def test_project_list_json_outputs_projects(write_config, tmp_path, monkeypatch):
     """project list --json outputs structured JSON with project data."""
     alpha_local = (tmp_path / "alpha-local").as_posix()
 
@@ -476,10 +465,10 @@ def test_project_list_json_outputs_projects(write_config, mock_client, tmp_path,
         "default_project": "alpha",
     }
 
-    async def fake_list_projects(self):
+    async def fake_fetch_project_list():
         return ProjectList.model_validate(local_payload)
 
-    monkeypatch.setattr(ProjectClient, "list_projects", fake_list_projects)
+    monkeypatch.setattr(project_cmd, "fetch_project_list", fake_fetch_project_list)
 
     result = runner.invoke(cli_app, ["project", "list", "--json"])
 

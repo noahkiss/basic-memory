@@ -58,7 +58,11 @@ import pytest_asyncio
 from pathlib import Path
 from sqlalchemy import text
 
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 from httpx import AsyncClient, ASGITransport
+
+import basic_memory
 
 from basic_memory.config import (
     BasicMemoryConfig,
@@ -131,7 +135,12 @@ async def engine_factory(
     from basic_memory.models.search import CREATE_SEARCH_INDEX
     from basic_memory import db
 
-    db_path = tmp_path / "test.db"
+    # The fixture DB must live where config says the app DB lives: native CLI
+    # commands on the direct path (cli/direct.py, T18) resolve the engine from
+    # config.database_path rather than the app's dependency_overrides, and a
+    # fixture DB at a private path would make the two halves of one test read
+    # different databases.
+    db_path = app_config.database_path
     db_type = DatabaseType.FILESYSTEM
 
     async with engine_session_factory(db_path, db_type) as (engine, session_maker):
@@ -143,6 +152,24 @@ async def engine_factory(
         async with db.scoped_session(session_maker) as session:
             await session.execute(text("DROP TABLE IF EXISTS search_index"))
             await session.execute(CREATE_SEARCH_INDEX)
+            # Stamp the ORM-created schema at alembic head. A direct-path CLI
+            # command (cli/direct.py) that recreates the module engine runs
+            # get_or_create_db's automatic migrations; without the stamp,
+            # alembic replays every revision against tables that already exist.
+            alembic_cfg = Config()
+            alembic_cfg.set_main_option(
+                "script_location", str(Path(basic_memory.__file__).parent / "alembic")
+            )
+            head = ScriptDirectory.from_config(alembic_cfg).get_current_head()
+            await session.execute(
+                text(
+                    "CREATE TABLE IF NOT EXISTS alembic_version (version_num VARCHAR(32) NOT NULL)"
+                )
+            )
+            await session.execute(
+                text("INSERT INTO alembic_version (version_num) VALUES (:head)"),
+                {"head": head},
+            )
             await session.commit()
 
         yield engine, session_maker
