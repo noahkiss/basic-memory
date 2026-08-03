@@ -1,6 +1,10 @@
 # Basic Memory - Modern Command Runner
 
 PYTEST_FLAGS := env_var_or_default("BASIC_MEMORY_PYTEST_FLAGS", "--import-mode=importlib")
+# --dist loadfile, not loadscope/load: tests/mcp mutates the module-level FastAPI app
+# singleton (tests/mcp/conftest.py), so a file's tests must stay on one worker.
+# Measured 2026-08-03: unit 308s -> 82s, int 201s -> 56s, identical pass counts.
+XDIST_FLAGS := env_var_or_default("BASIC_MEMORY_XDIST_FLAGS", "-n auto --dist loadfile")
 TESTMON_SELECT_FLAGS := env_var_or_default("BASIC_MEMORY_TESTMON_SELECT_FLAGS", "--import-mode=importlib --testmon --testmon-forceselect")
 TESTMON_REFRESH_FLAGS := env_var_or_default("BASIC_MEMORY_TESTMON_REFRESH_FLAGS", "--import-mode=importlib --testmon-noselect")
 
@@ -32,12 +36,12 @@ test-sqlite: test-unit-sqlite test-int-sqlite
 
 # Run unit tests against SQLite
 test-unit-sqlite:
-    BASIC_MEMORY_ENV=test uv run pytest -p pytest_mock -v --no-cov {{PYTEST_FLAGS}} tests
+    BASIC_MEMORY_ENV=test uv run pytest -p pytest_mock -v --no-cov {{PYTEST_FLAGS}} {{XDIST_FLAGS}} tests
 
 # Run integration tests against SQLite (excludes semantic tests and on-demand benchmarks —
 # use just test-semantic / run benchmark files explicitly)
 test-int-sqlite:
-    BASIC_MEMORY_ENV=test uv run pytest -p pytest_mock -v --no-cov {{PYTEST_FLAGS}} -m "not semantic and not benchmark" test-int
+    BASIC_MEMORY_ENV=test uv run pytest -p pytest_mock -v --no-cov {{PYTEST_FLAGS}} {{XDIST_FLAGS}} -m "not semantic and not benchmark" test-int
 
 # Fast test selection for local iteration; run targeted tests explicitly when possible.
 fast-test *args: testmon-seed
@@ -56,7 +60,8 @@ testmon-seed:
 testmon-refresh:
     #!/usr/bin/env bash
     set -euo pipefail
-    BASIC_MEMORY_PYTEST_FLAGS="{{TESTMON_REFRESH_FLAGS}}" just test
+    # pytest-testmon cannot run under pytest-xdist, so the refresh pass runs serial.
+    BASIC_MEMORY_PYTEST_FLAGS="{{TESTMON_REFRESH_FLAGS}}" BASIC_MEMORY_XDIST_FLAGS="" just test
     uv run python scripts/testmon_cache.py refresh
 
 # Show local and shared pytest-testmon cache locations.
