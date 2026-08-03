@@ -154,6 +154,11 @@ judgment call taken. No Claude co-author line, no generated-with footer.
   the state of `origin`.
 - **Agent self-reports are leads, not records.** The diff and the captured command output are the
   record.
+- **Brief agents to report immediately after their last edit — no waiting, no monitors.** One
+  implementation agent finished its work, then sat ~35 minutes watching a monitor on its own
+  superseded test log for a "completion notification" that could never fire (2026-08-03, B2).
+  The no-`pytest` rule already makes waiting pointless: there is nothing for an editing agent
+  to wait on.
 
 ### Evidence rules
 
