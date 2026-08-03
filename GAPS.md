@@ -1512,13 +1512,37 @@ fresh — the precise silent failure the flat file was kept for.
 Found in: sweep-decisions.md:13, sweep-inv-plan.md:31, sweep-handoffs.md:19, sweep-handoffs.md:49,
 sweep-prior-art.md:13.
 
-### W10 — an exclusion mechanism on the indexing path
-BM indexes markdown under the project root with no ignore file and no redaction. Two consequences we
-have already committed to needing around: the losslessness guarantee copies each migrated file
-verbatim into the store (`_import/STATUS.local.md.2026-07-26`, no frontmatter, not intended as a
-record), which without an exclude becomes ~1,600 lines of phantom search hits polluting every read
-path; and records living inside project directories mean the indexer will eventually ingest tokens or
-`.env`-adjacent prose into both a SQLite index and an embedding store, with nothing to stop it.
+### W10 — an exclusion mechanism on the indexing path — **SHIPPED**
+**Done 2026-08-03.** The entry's premise ("no ignore file") was stale: upstream shipped an ignore
+mechanism before the fork point (`ignore_utils.py`, from `e0d8aeb1`) — a global
+`<data dir>/.bmignore` plus the project's `.gitignore`, honored by the full scan
+(`scan_local_project_index_files`), the watcher, the single-file index endpoint, and zip import.
+Reproduction confirmed `.gitignore` exclusion works end-to-end on the scan path (positive control).
+
+The real gap was narrower: the store design commits `_import/` copies verbatim (losslessness), so
+those files **cannot** be gitignored — and the global `.bmignore` is instance-wide, not
+per-project. Nothing could say "committed in git, excluded from the index" for one project.
+
+**Shipped:** `load_gitignore_patterns()` now also reads a project-root `.bmignore`
+(union of global `.bmignore` + project `.bmignore` + project `.gitignore`). Because every
+indexing consumer already loads patterns through that function, the scan, watcher, and
+single-file endpoint all pick it up with no further wiring. The never-used `use_gitignore`
+parameter was deleted. Reproduction after the fix: a project `.bmignore` containing `_import/`
+excludes `_import/old.md` from the scan; regression tests at both the pattern-loading and
+scan level (`test_load_patterns_with_project_bmignore`, `test_scan_honors_project_root_bmignore`).
+
+**Scope call:** this closes the *path exclusion* half. Content redaction (tokens inside indexed
+prose) was never buildable as an ignore rule and stays out — the defense for secrets is exclusion
+patterns (`.env` and hidden files are in the defaults) plus the gardener's flag-only pass, not a
+redaction rewrite on the indexing path.
+
+*Original entry:* BM indexes markdown under the project root with no ignore file and no redaction.
+Two consequences we have already committed to needing around: the losslessness guarantee copies
+each migrated file verbatim into the store (`_import/STATUS.local.md.2026-07-26`, no frontmatter,
+not intended as a record), which without an exclude becomes ~1,600 lines of phantom search hits
+polluting every read path; and records living inside project directories mean the indexer will
+eventually ingest tokens or `.env`-adjacent prose into both a SQLite index and an embedding store,
+with nothing to stop it.
 
 Found in: sweep-schema.md:31, sweep-prior-art.md:55.
 

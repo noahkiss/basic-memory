@@ -80,6 +80,27 @@ temp_*
         assert "# Custom" not in patterns
 
 
+def test_load_patterns_with_project_bmignore():
+    """A project-root .bmignore adds index exclusions without touching .gitignore.
+
+    This is the W10 store case: files committed in git (lossless `_import/` copies)
+    that must stay out of the index — .gitignore cannot express that.
+    """
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_path = Path(temp_dir)
+        (temp_path / ".bmignore").write_text(
+            "# migrated verbatim, committed, not indexed\n_import/\n"
+        )
+        (temp_path / ".gitignore").write_text("*.log\n")
+
+        patterns = load_gitignore_patterns(temp_path)
+
+        assert DEFAULT_IGNORE_PATTERNS.issubset(patterns)
+        assert "_import/" in patterns
+        assert "*.log" in patterns
+        assert "# migrated verbatim, committed, not indexed" not in patterns
+
+
 def test_load_patterns_empty_gitignore():
     """Test loading patterns with empty .gitignore file."""
     with tempfile.TemporaryDirectory() as temp_dir:

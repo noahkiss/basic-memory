@@ -12,7 +12,7 @@ from basic_memory.config import resolve_data_dir
 # matches on it, so "exists but ignored" stays distinguishable from generic rejections
 # without duplicating message text across layers.
 IGNORED_PATH_REJECTION_DETAIL = (
-    "matches Basic Memory ignore rules (.bmignore or project .gitignore)"
+    "matches Basic Memory ignore rules (global .bmignore, project .bmignore, or project .gitignore)"
 )
 
 
@@ -185,38 +185,36 @@ def load_bmignore_patterns() -> Set[str]:
     return patterns
 
 
-def load_gitignore_patterns(base_path: Path, use_gitignore: bool = True) -> Set[str]:
-    """Load gitignore patterns from .gitignore file and .bmignore.
+def read_ignore_pattern_file(path: Path) -> Set[str]:
+    """Read gitignore-style patterns from one file; missing or unreadable means none."""
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            return {
+                stripped
+                for line in f
+                if (stripped := line.strip()) and not stripped.startswith("#")
+            }
+    except OSError:
+        return set()
+
+
+def load_gitignore_patterns(base_path: Path) -> Set[str]:
+    """Load the ignore patterns that apply to files under base_path.
 
     Combines patterns from:
     1. <basic-memory data dir>/.bmignore (user's global ignore patterns, honors
        BASIC_MEMORY_CONFIG_DIR)
-    2. {base_path}/.gitignore (project-specific patterns, if use_gitignore=True)
-
-    Args:
-        base_path: The base directory to search for .gitignore file
-        use_gitignore: If False, only load patterns from .bmignore (default: True)
+    2. {base_path}/.bmignore (project-specific index exclusions — for files that
+       stay committed in git but must not be indexed, e.g. verbatim `_import/`
+       copies in a store repo, which .gitignore cannot express)
+    3. {base_path}/.gitignore (project-specific patterns)
 
     Returns:
         Set of patterns to ignore
     """
-    # Start with patterns from .bmignore
     patterns = load_bmignore_patterns()
-
-    if use_gitignore:
-        gitignore_file = base_path / ".gitignore"
-        if gitignore_file.exists():
-            try:
-                with gitignore_file.open("r", encoding="utf-8") as f:
-                    for line in f:
-                        line = line.strip()
-                        # Skip empty lines and comments
-                        if line and not line.startswith("#"):
-                            patterns.add(line)
-            except Exception:
-                # If we can't read .gitignore, just use default patterns
-                pass
-
+    patterns |= read_ignore_pattern_file(base_path / ".bmignore")
+    patterns |= read_ignore_pattern_file(base_path / ".gitignore")
     return patterns
 
 

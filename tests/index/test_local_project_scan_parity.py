@@ -87,6 +87,26 @@ def test_local_project_index_file_paths_prunes_ignored_directories(
     assert not any(".hidden" in path for path in visited)
 
 
+def test_scan_honors_project_root_bmignore(monkeypatch, tmp_path: Path) -> None:
+    """W10: a project-root .bmignore excludes paths from the default scan.
+
+    The store repo commits `_import/` copies verbatim (losslessness) but must not
+    index them; .gitignore cannot exclude committed files, so .bmignore does.
+    """
+    monkeypatch.setenv("BASIC_MEMORY_CONFIG_DIR", str(tmp_path / "config"))
+    project_root = tmp_path / "project"
+    (project_root / "notes").mkdir(parents=True)
+    (project_root / "notes" / "a.md").write_text("# a\n", encoding="utf-8")
+    imports = project_root / "_import"
+    imports.mkdir()
+    (imports / "old.md").write_text("# migrated verbatim\n", encoding="utf-8")
+    (project_root / ".bmignore").write_text("_import/\n", encoding="utf-8")
+
+    scan = scan_local_project_index_files(project_root)
+
+    assert scan.file_paths == ("notes/a.md",)
+
+
 def test_scan_local_project_index_files_records_unreadable_subdirectory(
     monkeypatch,
     tmp_path: Path,
