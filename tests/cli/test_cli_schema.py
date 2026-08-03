@@ -4,7 +4,7 @@ Tests mock the MCP tool functions and verify Rich-formatted output.
 """
 
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 from typer.testing import CliRunner
 
@@ -74,19 +74,10 @@ DIFF_REPORT_NO_DRIFT = {
 }
 
 
-def _mock_config_manager():
-    """Create a mock ConfigManager that avoids reading real config."""
-    mock_cm = MagicMock()
-    mock_cm.config = MagicMock()
-    mock_cm.default_project = "test-project"
-    mock_cm.get_project.return_value = ("test-project", "/tmp/test")
-    return mock_cm
-
-
 # --- validate ---
 
 
-@patch("basic_memory.cli.commands.schema.ConfigManager")
+@patch("basic_memory.cli.commands.schema.resolve_cli_project", return_value="test-project")
 @patch(
     "basic_memory.mcp.tools.schema_validate",
     new_callable=AsyncMock,
@@ -94,8 +85,6 @@ def _mock_config_manager():
 )
 def test_validate_renders_table(mock_mcp, mock_config_cls):
     """bm schema validate renders a Rich table with results."""
-    mock_config_cls.return_value = _mock_config_manager()
-
     result = runner.invoke(cli_app, ["schema", "validate", "person"])
 
     assert result.exit_code == 0, f"CLI failed: {result.output}"
@@ -107,7 +96,7 @@ def test_validate_renders_table(mock_mcp, mock_config_cls):
     assert mock_mcp.call_args.kwargs["output_format"] == "json"
 
 
-@patch("basic_memory.cli.commands.schema.ConfigManager")
+@patch("basic_memory.cli.commands.schema.resolve_cli_project", return_value="test-project")
 @patch(
     "basic_memory.mcp.tools.schema_validate",
     new_callable=AsyncMock,
@@ -115,14 +104,12 @@ def test_validate_renders_table(mock_mcp, mock_config_cls):
 )
 def test_validate_strict_exits_on_errors(mock_mcp, mock_config_cls):
     """bm schema validate --strict exits with code 1 when errors exist."""
-    mock_config_cls.return_value = _mock_config_manager()
-
     result = runner.invoke(cli_app, ["schema", "validate", "person", "--strict"])
 
     assert result.exit_code == 1
 
 
-@patch("basic_memory.cli.commands.schema.ConfigManager")
+@patch("basic_memory.cli.commands.schema.resolve_cli_project", return_value="test-project")
 @patch(
     "basic_memory.mcp.tools.schema_validate",
     new_callable=AsyncMock,
@@ -138,8 +125,6 @@ def test_validate_strict_exits_on_errors(mock_mcp, mock_config_cls):
 )
 def test_validate_empty_is_a_result_not_an_error(mock_mcp, mock_config_cls):
     """A legitimate empty renders as a message and exits 0 (docs/OUTPUT_CONTRACT.md)."""
-    mock_config_cls.return_value = _mock_config_manager()
-
     result = runner.invoke(cli_app, ["schema", "validate", "person"])
 
     assert result.exit_code == 0
@@ -153,7 +138,7 @@ def test_validate_empty_is_a_result_not_an_error(mock_mcp, mock_config_cls):
     assert parsed["reason"] == "No notes found of type 'person'"
 
 
-@patch("basic_memory.cli.commands.schema.ConfigManager")
+@patch("basic_memory.cli.commands.schema.resolve_cli_project", return_value="test-project")
 @patch(
     "basic_memory.mcp.tools.schema_validate",
     new_callable=AsyncMock,
@@ -161,15 +146,13 @@ def test_validate_empty_is_a_result_not_an_error(mock_mcp, mock_config_cls):
 )
 def test_validate_error_response(mock_mcp, mock_config_cls):
     """A genuine failure goes to stderr and exits non-zero (docs/OUTPUT_CONTRACT.md)."""
-    mock_config_cls.return_value = _mock_config_manager()
-
     result = runner.invoke(cli_app, ["schema", "validate", "person"])
 
     assert result.exit_code == 1
     assert "Schema validation failed" in result.stderr
 
 
-@patch("basic_memory.cli.commands.schema.ConfigManager")
+@patch("basic_memory.cli.commands.schema.resolve_cli_project", return_value="test-project")
 @patch(
     "basic_memory.mcp.tools.schema_validate",
     new_callable=AsyncMock,
@@ -177,8 +160,6 @@ def test_validate_error_response(mock_mcp, mock_config_cls):
 )
 def test_validate_identifier_heuristic(mock_mcp, mock_config_cls):
     """bm schema validate treats target with / as identifier."""
-    mock_config_cls.return_value = _mock_config_manager()
-
     result = runner.invoke(cli_app, ["schema", "validate", "people/alice.md"])
 
     assert result.exit_code == 0, f"CLI failed: {result.output}"
@@ -189,7 +170,7 @@ def test_validate_identifier_heuristic(mock_mcp, mock_config_cls):
 # --- infer ---
 
 
-@patch("basic_memory.cli.commands.schema.ConfigManager")
+@patch("basic_memory.cli.commands.schema.resolve_cli_project", return_value="test-project")
 @patch(
     "basic_memory.mcp.tools.schema_infer",
     new_callable=AsyncMock,
@@ -197,8 +178,6 @@ def test_validate_identifier_heuristic(mock_mcp, mock_config_cls):
 )
 def test_infer_renders_table(mock_mcp, mock_config_cls):
     """bm schema infer renders frequency table and suggested schema."""
-    mock_config_cls.return_value = _mock_config_manager()
-
     result = runner.invoke(cli_app, ["schema", "infer", "person"])
 
     assert result.exit_code == 0, f"CLI failed: {result.output}"
@@ -209,7 +188,7 @@ def test_infer_renders_table(mock_mcp, mock_config_cls):
     assert mock_mcp.call_args.kwargs["output_format"] == "json"
 
 
-@patch("basic_memory.cli.commands.schema.ConfigManager")
+@patch("basic_memory.cli.commands.schema.resolve_cli_project", return_value="test-project")
 @patch(
     "basic_memory.mcp.tools.schema_infer",
     new_callable=AsyncMock,
@@ -217,15 +196,13 @@ def test_infer_renders_table(mock_mcp, mock_config_cls):
 )
 def test_infer_threshold_passthrough(mock_mcp, mock_config_cls):
     """bm schema infer passes --threshold through to MCP tool."""
-    mock_config_cls.return_value = _mock_config_manager()
-
     result = runner.invoke(cli_app, ["schema", "infer", "person", "--threshold", "0.5"])
 
     assert result.exit_code == 0, f"CLI failed: {result.output}"
     assert mock_mcp.call_args.kwargs["threshold"] == 0.5
 
 
-@patch("basic_memory.cli.commands.schema.ConfigManager")
+@patch("basic_memory.cli.commands.schema.resolve_cli_project", return_value="test-project")
 @patch(
     "basic_memory.mcp.tools.schema_infer",
     new_callable=AsyncMock,
@@ -233,15 +210,13 @@ def test_infer_threshold_passthrough(mock_mcp, mock_config_cls):
 )
 def test_infer_error_response(mock_mcp, mock_config_cls):
     """A genuine failure goes to stderr and exits non-zero (GAPS O8)."""
-    mock_config_cls.return_value = _mock_config_manager()
-
     result = runner.invoke(cli_app, ["schema", "infer", "person"])
 
     assert result.exit_code == 1
     assert "Schema inference failed" in result.stderr
 
 
-@patch("basic_memory.cli.commands.schema.ConfigManager")
+@patch("basic_memory.cli.commands.schema.resolve_cli_project", return_value="test-project")
 @patch(
     "basic_memory.mcp.tools.schema_infer",
     new_callable=AsyncMock,
@@ -255,8 +230,6 @@ def test_infer_error_response(mock_mcp, mock_config_cls):
 )
 def test_infer_no_pattern_is_a_result_not_an_error(mock_mcp, mock_config_cls):
     """A legitimate no-pattern answer renders as a message and exits 0 (GAPS O5)."""
-    mock_config_cls.return_value = _mock_config_manager()
-
     result = runner.invoke(cli_app, ["schema", "infer", "person"])
 
     assert result.exit_code == 0
@@ -270,7 +243,7 @@ def test_infer_no_pattern_is_a_result_not_an_error(mock_mcp, mock_config_cls):
     assert parsed["suggested_schema"] is None
 
 
-@patch("basic_memory.cli.commands.schema.ConfigManager")
+@patch("basic_memory.cli.commands.schema.resolve_cli_project", return_value="test-project")
 @patch(
     "basic_memory.mcp.tools.schema_infer",
     new_callable=AsyncMock,
@@ -286,8 +259,6 @@ def test_infer_no_pattern_is_a_result_not_an_error(mock_mcp, mock_config_cls):
 )
 def test_infer_zero_notes(mock_mcp, mock_config_cls):
     """bm schema infer shows message when zero notes found."""
-    mock_config_cls.return_value = _mock_config_manager()
-
     result = runner.invoke(cli_app, ["schema", "infer", "person"])
 
     assert result.exit_code == 0
@@ -297,7 +268,7 @@ def test_infer_zero_notes(mock_mcp, mock_config_cls):
 # --- diff ---
 
 
-@patch("basic_memory.cli.commands.schema.ConfigManager")
+@patch("basic_memory.cli.commands.schema.resolve_cli_project", return_value="test-project")
 @patch(
     "basic_memory.mcp.tools.schema_diff",
     new_callable=AsyncMock,
@@ -305,8 +276,6 @@ def test_infer_zero_notes(mock_mcp, mock_config_cls):
 )
 def test_diff_renders_drift(mock_mcp, mock_config_cls):
     """bm schema diff shows new/dropped fields and cardinality changes."""
-    mock_config_cls.return_value = _mock_config_manager()
-
     result = runner.invoke(cli_app, ["schema", "diff", "person"])
 
     assert result.exit_code == 0, f"CLI failed: {result.output}"
@@ -318,7 +287,7 @@ def test_diff_renders_drift(mock_mcp, mock_config_cls):
     assert mock_mcp.call_args.kwargs["output_format"] == "json"
 
 
-@patch("basic_memory.cli.commands.schema.ConfigManager")
+@patch("basic_memory.cli.commands.schema.resolve_cli_project", return_value="test-project")
 @patch(
     "basic_memory.mcp.tools.schema_diff",
     new_callable=AsyncMock,
@@ -326,15 +295,13 @@ def test_diff_renders_drift(mock_mcp, mock_config_cls):
 )
 def test_diff_no_drift(mock_mcp, mock_config_cls):
     """bm schema diff shows success message when no drift found."""
-    mock_config_cls.return_value = _mock_config_manager()
-
     result = runner.invoke(cli_app, ["schema", "diff", "person"])
 
     assert result.exit_code == 0, f"CLI failed: {result.output}"
     assert "No drift detected" in result.output
 
 
-@patch("basic_memory.cli.commands.schema.ConfigManager")
+@patch("basic_memory.cli.commands.schema.resolve_cli_project", return_value="test-project")
 @patch(
     "basic_memory.mcp.tools.schema_diff",
     new_callable=AsyncMock,
@@ -349,8 +316,6 @@ def test_diff_no_drift(mock_mcp, mock_config_cls):
 )
 def test_diff_no_schema_is_a_result_not_an_error(mock_mcp, mock_config_cls):
     """No schema to diff against is a result, exit 0 (docs/OUTPUT_CONTRACT.md)."""
-    mock_config_cls.return_value = _mock_config_manager()
-
     result = runner.invoke(cli_app, ["schema", "diff", "person"])
 
     assert result.exit_code == 0
@@ -364,7 +329,7 @@ def test_diff_no_schema_is_a_result_not_an_error(mock_mcp, mock_config_cls):
     assert parsed["schema_found"] is False
 
 
-@patch("basic_memory.cli.commands.schema.ConfigManager")
+@patch("basic_memory.cli.commands.schema.resolve_cli_project", return_value="test-project")
 @patch(
     "basic_memory.mcp.tools.schema_diff",
     new_callable=AsyncMock,
@@ -372,8 +337,6 @@ def test_diff_no_schema_is_a_result_not_an_error(mock_mcp, mock_config_cls):
 )
 def test_diff_error_response(mock_mcp, mock_config_cls):
     """A genuine failure goes to stderr and exits non-zero (docs/OUTPUT_CONTRACT.md)."""
-    mock_config_cls.return_value = _mock_config_manager()
-
     result = runner.invoke(cli_app, ["schema", "diff", "person"])
 
     assert result.exit_code == 1

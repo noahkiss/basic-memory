@@ -32,8 +32,7 @@ def test_get_app_config_falls_back_to_composition_root(app_config, config_manage
     resolved = get_app_config(_request_for(app))
 
     # resolve_container() reads the config the config_manager fixture wrote to disk.
-    assert resolved.default_project == app_config.default_project
-    assert resolved.projects == app_config.projects
+    assert resolved == app_config
 
 
 def test_resolve_container_prefers_installed_container(app_config, monkeypatch):

@@ -44,46 +44,44 @@ RETIRED_TOP_LEVEL_KEYS = frozenset(
     }
 )
 
-RETIRED_PROJECT_KEYS = frozenset(
-    {
-        "mode",
-        "workspace_id",
-        "local_sync_path",
-        "cloud_sync_path",
-        "bisync_initialized",
-        "last_sync",
-    }
-)
 
-
-def migrate_legacy_projects(data: Any) -> Any:
-    """Convert legacy project dictionaries into unified project entries."""
+def drop_retired_config_keys(data: Any) -> Any:
+    """Remove retired top-level keys before the config model validates."""
     if not isinstance(data, dict):
         return data
-
-    legacy_cloud_projects = data.get("cloud_projects", {})
     for key in RETIRED_TOP_LEVEL_KEYS:
         data.pop(key, None)
-
-    projects = data.get("projects", {})
-    if not projects:
-        return data
-
-    first_value = next(iter(projects.values()), None)
-    if isinstance(first_value, str):
-        data["projects"] = {name: {"path": path} for name, path in projects.items()}
-
-    projects = data["projects"]
-    for name, entry in projects.items():
-        if not isinstance(entry, dict):
-            continue
-        # A remote-only project recorded a slug in ``path`` and the real
-        # directory in the cloud entry's ``local_path``. Only that local
-        # directory is meaningful now.
-        legacy_entry = legacy_cloud_projects.get(name)
-        if isinstance(legacy_entry, dict) and not os.path.isabs(entry.get("path", "")):
-            entry["path"] = legacy_entry.get("local_path") or entry.get("path", "")
-        for key in RETIRED_PROJECT_KEYS:
-            entry.pop(key, None)
-
     return data
+
+
+def normalize_legacy_projects(raw_config: dict[str, Any]) -> dict[str, str]:
+    """Read a legacy ``config.json`` project registry as a name → path mapping.
+
+    Older releases wrote the registry into config.json in two shapes: a bare
+    ``{"name": "/path"}`` map, and a ``{"name": {"path": "/path", ...}}`` map.
+    Both are read here so a one-time import into the database registry can
+    accept either (GAPS B2). Nothing writes these keys any more.
+    """
+    projects = raw_config.get("projects")
+    if not isinstance(projects, dict):
+        return {}
+
+    legacy_cloud_projects = raw_config.get("cloud_projects", {})
+    normalized: dict[str, str] = {}
+    for name, entry in projects.items():
+        if isinstance(entry, str):
+            path = entry
+        elif isinstance(entry, dict):
+            path = entry.get("path", "")
+            # A remote-only project recorded a slug in ``path`` and the real
+            # directory in the cloud entry's ``local_path``. Only that local
+            # directory is meaningful now.
+            legacy_entry = legacy_cloud_projects.get(name)
+            if isinstance(legacy_entry, dict) and not os.path.isabs(path):
+                path = legacy_entry.get("local_path") or path
+        else:
+            continue
+
+        if path:
+            normalized[name] = path
+    return normalized

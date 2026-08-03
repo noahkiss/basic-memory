@@ -58,7 +58,7 @@ async def test_get_client_preinitializes_local_asgi_database(config_manager, mon
     async def fake_registry_sync(app_config):
         return None
 
-    monkeypatch.setattr(init_mod, "reconcile_projects_if_registry_empty", fake_registry_sync)
+    monkeypatch.setattr(init_mod, "ensure_project_registry", fake_registry_sync)
 
     try:
         async with get_client() as client:
@@ -227,7 +227,7 @@ async def test_get_client_keeps_local_asgi_database_during_overlapping_contexts(
     async def fake_registry_sync(app_config):
         return None
 
-    monkeypatch.setattr(init_mod, "reconcile_projects_if_registry_empty", fake_registry_sync)
+    monkeypatch.setattr(init_mod, "ensure_project_registry", fake_registry_sync)
 
     first_context = get_client()
     second_context = get_client()

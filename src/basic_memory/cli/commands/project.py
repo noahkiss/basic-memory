@@ -14,7 +14,6 @@ from rich.text import Text
 from basic_memory.cli.app import app
 from basic_memory.cli.commands.command_utils import get_project_info, run_with_cleanup
 from basic_memory.cli.direct import direct_project_service
-from basic_memory.config import ConfigManager
 from basic_memory.mcp.async_client import get_client
 from basic_memory.mcp.clients import ProjectClient
 from basic_memory.schemas.project_info import ProjectItem, ProjectList
@@ -78,55 +77,17 @@ def list_projects(
     """List Basic Memory projects."""
 
     try:
-        config = ConfigManager().config
         result = run_with_cleanup(fetch_project_list())
 
-        indexed_by_permalink: dict[str, ProjectItem] = {
-            generate_permalink(project.name): project for project in result.projects
-        }
-        configured_names_by_permalink = {
-            generate_permalink(project_name): project_name for project_name in config.projects
-        }
-
-        # Trigger: a project in config.projects was not returned by the project index.
-        # Why: without a fallback such a project is invisible in `bm project list`,
-        #   yet `bm project add` reads the DB and reports it already exists (#1003).
-        #   The two commands must agree on whether a configured project exists.
-        # Outcome: seed a row from the config entry so the project still renders.
-        row_names_by_permalink = {
-            permalink: project.name for permalink, project in indexed_by_permalink.items()
-        }
-        for permalink, project_name in configured_names_by_permalink.items():
-            row_names_by_permalink.setdefault(permalink, project_name)
-
-        default_permalink = (
-            generate_permalink(config.default_project) if config.default_project else None
-        )
-
-        project_rows: list[dict] = []
-        for permalink in sorted(
-            row_names_by_permalink, key=lambda key: row_names_by_permalink[key]
-        ):
-            project_name = row_names_by_permalink[permalink]
-            indexed_project = indexed_by_permalink.get(permalink)
-            configured_name = configured_names_by_permalink.get(permalink)
-            entry = config.projects.get(configured_name) if configured_name else None
-
-            if indexed_project is not None:
-                path = format_path(indexed_project.path)
-            elif entry and entry.path:
-                path = format_path(entry.path)
-            else:
-                path = ""
-
-            project_rows.append(
-                {
-                    "name": project_name,
-                    "permalink": permalink,
-                    "path": path,
-                    "is_default": permalink == default_permalink,
-                }
-            )
+        project_rows: list[dict] = [
+            {
+                "name": project.name,
+                "permalink": generate_permalink(project.name),
+                "path": format_path(project.path),
+                "is_default": project.is_default,
+            }
+            for project in sorted(result.projects, key=lambda project: project.name)
+        ]
 
         # --- JSON output ---
         if json_output:
@@ -152,27 +113,6 @@ def list_projects(
             )
 
         console.print(table)
-
-        # Trigger: config.json registers a project that the project index did not return.
-        # Why: config.json is this registry's source of truth — synchronize_projects
-        #   creates index rows from it and deletes rows absent from it — so a project
-        #   missing from the index is drift in the derived index, not a missing
-        #   project. The row seeded above for #1003 renders such a project exactly
-        #   like a healthy one, which hid the drift entirely: the project resolves
-        #   for routing but has no indexed content behind it.
-        # Outcome: name the drifting projects rather than letting the two registries
-        #   disagree silently, and point at the command that reconciles them.
-        unindexed = [
-            project_name
-            for permalink, project_name in sorted(configured_names_by_permalink.items())
-            if permalink not in indexed_by_permalink
-        ]
-        if unindexed:
-            console.print(f"[yellow]Configured but not indexed: {', '.join(unindexed)}[/yellow]")
-            console.print(
-                "[dim]These projects are in config.json with no row in the project "
-                "index. Run 'bm reindex' to reconcile.[/dim]"
-            )
     except typer.Exit:
         raise
     except Exception as e:
@@ -203,9 +143,8 @@ def add_project(
         result = run_with_cleanup(_add_project())
         console.print(f"[green]{result.message}[/green]")
 
-        # Trigger: the service made the new project the default without being asked —
-        #     it is the first project, or it repaired a default named by neither
-        #     config.json nor the database.
+        # Trigger: the service made the new project the default without being
+        #     asked — it is the first project in an empty registry.
         # Why: the default is what every unqualified command targets, and a silent
         #     move means the next `bm` invocation writes somewhere the user did not
         #     choose. `bm project remove` then refuses, citing a default nobody set.

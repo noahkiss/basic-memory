@@ -27,7 +27,7 @@ from httpx._types import (
 )
 from loguru import logger
 
-from basic_memory.config import BasicMemoryConfig, ConfigManager
+from basic_memory.config import ConfigManager
 from basic_memory.project_resolver import ProjectResolver
 from basic_memory.schemas.project_info import ProjectItem, ProjectList
 from basic_memory.schemas.v2 import ProjectResolveResponse
@@ -108,7 +108,8 @@ async def invalidate_project_caches(context: Optional[Context] = None) -> None:
 async def _resolve_default_project_from_api() -> Optional[str]:
     """Query the projects API for the default project.
 
-    Used as a fallback when the config file records no default project.
+    The database owns the default flag (GAPS B2), and the projects API is how
+    the MCP layer reads it.
     """
     from basic_memory.mcp.async_client import get_client
 
@@ -143,20 +144,19 @@ async def resolve_project_parameter(
     Resolution order:
     1. ENV_CONSTRAINT: BASIC_MEMORY_MCP_PROJECT env var (highest priority)
     2. EXPLICIT: project parameter passed directly
-    3. DEFAULT: default_project from config (if set)
+    3. DEFAULT: the project flagged is_default in the registry (if any)
     4. Fallback: discovery (if allowed) → NONE
 
     Args:
         project: Optional explicit project parameter
         allow_discovery: If True, allows returning None for discovery mode
             (used by tools like recent_activity that can operate across all projects)
-        default_project: Optional explicit default project. If not provided, reads from ConfigManager.
+        default_project: Optional explicit default project. If not provided, the
+            registry's default is read through the projects API.
 
     Returns:
         Resolved project name or None if no resolution possible
     """
-    config = ConfigManager().config
-
     # Trigger: project already resolved earlier in the same MCP request
     # Why: the active project is request-constant, so re-discovering the
     #   default project via /v2/projects/ just repeats work
@@ -171,12 +171,7 @@ async def resolve_project_parameter(
     #   for explicit requests adds an avoidable /v2/projects/ round-trip
     # Outcome: skip default lookup when the active project is already known
     if default_project is None and project is None:
-        # Load config for any values not explicitly provided. When config
-        # records no default, fall back to the projects API is_default flag.
-        default_project = config.default_project
-
-        if default_project is None:
-            default_project = await _get_cached_default_project(context)
+        default_project = await _get_cached_default_project(context)
 
         if default_project is None:
             default_project = await _resolve_default_project_from_api()
@@ -188,7 +183,7 @@ async def resolve_project_parameter(
         default_project=default_project,
     )
     result = resolver.resolve(project=project, allow_discovery=allow_discovery)
-    return _canonicalize_project_name(result.project, config)
+    return _canonicalize_project_name(result.project)
 
 
 async def get_project_names(client: AsyncClient, headers: HeaderTypes | None = None) -> List[str]:
@@ -395,23 +390,21 @@ async def resolve_project_and_path(
 
 async def detect_project_from_memory_url_prefix(
     identifier: str,
-    config: BasicMemoryConfig,
     context: Optional[Context] = None,
 ) -> Optional[str]:
     """Resolve a project from a memory URL prefix."""
     if not identifier.strip().startswith("memory://"):
         return None
 
-    return detect_project_from_url_prefix(identifier, config)
+    return detect_project_from_url_prefix(identifier)
 
 
 async def detect_project_from_identifier_prefix(
     identifier: str,
-    config: BasicMemoryConfig,
     context: Optional[Context] = None,
 ) -> Optional[str]:
     """Resolve a project from a plain permalink or memory URL route prefix."""
-    return detect_project_from_url_prefix(identifier, config)
+    return detect_project_from_url_prefix(identifier)
 
 
 @asynccontextmanager

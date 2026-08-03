@@ -173,23 +173,6 @@ async def add_project(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.post("/config/sync", response_model=ProjectStatusResponse)
-async def synchronize_projects(
-    project_service: ProjectServiceDep,
-) -> ProjectStatusResponse:
-    """Synchronize projects between configuration file and database."""
-    try:  # pragma: no cover
-        await project_service.synchronize_projects()
-
-        return ProjectStatusResponse(  # pyright: ignore [reportCallIssue]
-            message="Projects synchronized successfully between configuration and database",
-            status="success",
-            default=False,
-        )
-    except ValueError as e:  # pragma: no cover
-        raise HTTPException(status_code=400, detail=str(e))
-
-
 @router.post("/{project_id}/index", response_model=ProjectIndexResponse)
 async def index_project(
     project_index_command: ProjectIndexCommandDep,

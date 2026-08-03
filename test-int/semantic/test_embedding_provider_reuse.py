@@ -23,7 +23,7 @@ from typing import cast
 
 import pytest
 
-from basic_memory.config import BasicMemoryConfig, ProjectEntry
+from basic_memory.config import BasicMemoryConfig
 from basic_memory.deps.repositories import get_search_repository_v2_external
 from basic_memory.repository.embedding_provider_factory import (
     create_embedding_provider,
@@ -34,12 +34,10 @@ from basic_memory.repository.search_repository import create_search_repository
 from basic_memory.repository.sqlite_search_repository import SQLiteSearchRepository
 
 
-def _semantic_config(project_path) -> BasicMemoryConfig:
-    """Build a semantic-enabled FastEmbed config rooted at the test path."""
+def _semantic_config() -> BasicMemoryConfig:
+    """Build a semantic-enabled FastEmbed config."""
     return BasicMemoryConfig(
         env="test",
-        projects={"test-project": ProjectEntry(path=str(project_path))},
-        default_project="test-project",
         semantic_search_enabled=True,
         semantic_embedding_provider="fastembed",
     )
@@ -53,12 +51,10 @@ def _reset_provider_cache():
 
 
 @pytest.mark.asyncio
-async def test_factory_resolves_single_provider_across_repositories(
-    tmp_path, sqlite_engine_factory
-):
+async def test_factory_resolves_single_provider_across_repositories(sqlite_engine_factory):
     """The factory must inject one cached provider into every search repository."""
     _engine, session_maker = sqlite_engine_factory
-    config = _semantic_config(tmp_path)
+    config = _semantic_config()
 
     expected_provider = create_embedding_provider(config)
     assert isinstance(expected_provider, FastEmbedEmbeddingProvider)
@@ -79,10 +75,10 @@ async def test_factory_resolves_single_provider_across_repositories(
 
 
 @pytest.mark.asyncio
-async def test_deps_path_reuses_cached_provider(tmp_path, sqlite_engine_factory):
+async def test_deps_path_reuses_cached_provider(sqlite_engine_factory):
     """The real FastAPI deps function must reuse the cached provider, not rebuild it."""
     _engine, session_maker = sqlite_engine_factory
-    config = _semantic_config(tmp_path)
+    config = _semantic_config()
 
     expected_provider = create_embedding_provider(config)
 
@@ -99,13 +95,11 @@ async def test_deps_path_reuses_cached_provider(tmp_path, sqlite_engine_factory)
 
 
 @pytest.mark.asyncio
-async def test_factory_skips_provider_when_semantic_disabled(tmp_path, sqlite_engine_factory):
+async def test_factory_skips_provider_when_semantic_disabled(sqlite_engine_factory):
     """With semantic search off, no provider is created and none is injected."""
     _engine, session_maker = sqlite_engine_factory
     config = BasicMemoryConfig(
         env="test",
-        projects={"test-project": ProjectEntry(path=str(tmp_path))},
-        default_project="test-project",
         semantic_search_enabled=False,
     )
 

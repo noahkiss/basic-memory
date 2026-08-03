@@ -8,7 +8,7 @@ from typing import cast
 
 import pytest
 
-from basic_memory.config import BasicMemoryConfig, ConfigManager, ProjectEntry
+from basic_memory.config import BasicMemoryConfig
 from basic_memory.index.watch_service import WatchService
 from basic_memory.models import Project
 
@@ -51,36 +51,26 @@ async def test_handle_changes_isolated_contains_one_project_failure(
 
 
 @pytest.mark.asyncio
-async def test_project_is_configured_rereads_current_config(
+async def test_project_is_registered_rereads_current_registry(
     app_config: BasicMemoryConfig,
     project_repository,
     session_maker,
     test_project: Project,
-    config_home,
-    config_manager,
 ) -> None:
-    """A project deleted from config after startup must not be treated as configured."""
+    """A project deleted from the registry after startup must not be treated as registered."""
+    from basic_memory import db
+
     watch_service = WatchService(
         app_config=app_config,
         project_repository=project_repository,
         session_maker=session_maker,
     )
 
-    # Startup snapshot still lists the project, and it is currently on disk.
-    assert test_project.name in watch_service.app_config.projects
-    assert watch_service._project_is_configured(test_project) is True
+    assert await watch_service._project_is_registered(test_project) is True
 
-    # Simulate `bm project remove` rewriting config without the watched project
-    # after the watcher started (its app_config snapshot is now stale).
-    remaining_config = app_config.model_copy(
-        update={
-            "projects": {"other-project": ProjectEntry(path=str(config_home))},
-            "default_project": "other-project",
-        }
-    )
-    config_manager.save_config(remaining_config)
+    # Simulate `bm project remove` deleting the row after the watcher started.
+    async with db.scoped_session(session_maker) as session:
+        await project_repository.delete(session, test_project.id)
 
-    # Snapshot is stale, but the guard re-reads current config and drops the project.
-    assert test_project.name in watch_service.app_config.projects
-    assert ConfigManager().config.projects.keys() == {"other-project"}
-    assert watch_service._project_is_configured(test_project) is False
+    # The guard re-queries the registry rather than a startup snapshot.
+    assert await watch_service._project_is_registered(test_project) is False

@@ -8,7 +8,6 @@ forgiving wrapper is tested separately in tests/cli/test_brief.py.
 
 import pytest
 
-from basic_memory.config import ProjectEntry
 from basic_memory.project_marker import (
     MarkerError,
     find_marker,
@@ -86,33 +85,34 @@ def test_read_marker_bad_project_value_raises(tmp_path, content):
 # --- resolve_cli_project chain ---
 
 
-def _register(config_manager, name, path):
-    cfg = config_manager.load_config()
-    cfg.projects[name] = ProjectEntry(path=str(path))
-    config_manager.save_config(cfg)
-
-
 def test_resolve_explicit_wins(tmp_path):
     (tmp_path / ".bm.yml").write_text("project: from-marker\n")
     assert resolve_cli_project("explicit", tmp_path) == "explicit"
 
 
-def test_resolve_marker_beats_default(tmp_path, config_manager):
-    _register(config_manager, "marker-project", tmp_path)
+def test_resolve_marker_beats_default(tmp_path, write_registry_file):
+    write_registry_file(
+        {"marker-project": str(tmp_path), "other-default": "/tmp/other"},
+        default="other-default",
+    )
     (tmp_path / ".bm.yml").write_text("project: marker-project\n")
     assert resolve_cli_project(None, tmp_path) == "marker-project"
 
 
-def test_resolve_unregistered_marker_raises(tmp_path, config_manager):
+def test_resolve_unregistered_marker_raises(tmp_path, write_registry_file):
+    write_registry_file({"other": "/tmp/other"}, default="other")
     (tmp_path / ".bm.yml").write_text("project: nope\n")
-    with pytest.raises(MarkerError, match=r"names 'nope'"):
+    with pytest.raises(MarkerError, match=r"names 'nope'") as exc_info:
         resolve_cli_project(None, tmp_path)
+    assert str(tmp_path / ".bm.yml") in str(exc_info.value)
 
 
-def test_resolve_no_marker_falls_back_to_default(tmp_path, config_manager):
-    assert resolve_cli_project(None, tmp_path) == config_manager.default_project
+def test_resolve_no_marker_falls_back_to_default(tmp_path, write_registry_file):
+    write_registry_file({"main": str(tmp_path)}, default="main")
+    assert resolve_cli_project(None, tmp_path) == "main"
 
 
-def test_resolve_marker_without_project_key_falls_back(tmp_path, config_manager):
+def test_resolve_marker_without_project_key_falls_back(tmp_path, write_registry_file):
+    write_registry_file({"main": str(tmp_path)}, default="main")
     (tmp_path / ".bm.yml").write_text("id: abc123\n")
-    assert resolve_cli_project(None, tmp_path) == config_manager.default_project
+    assert resolve_cli_project(None, tmp_path) == "main"

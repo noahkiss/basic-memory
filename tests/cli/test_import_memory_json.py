@@ -13,6 +13,10 @@ from basic_memory.services.file_service import FileService
 # Set up CLI runner
 runner = CliRunner()
 
+# The importers resolve their target through get_project_config(), which reads the
+# database registry (GAPS B2); these tests need a real bootstrapped one.
+pytestmark = pytest.mark.usefixtures("bootstrapped_registry")
+
 
 @pytest.fixture
 def sample_entities():

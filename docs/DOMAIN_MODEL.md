@@ -133,9 +133,10 @@ Markdown, and materialization produces the portable file representation.
 
 ### Project Registry Authority
 
-Project discovery reconciles configured projects with the local database. Resolve that authority at
-the composition root or project service. Do not make repositories or leaf helpers guess which
-registry wins.
+The database `project` table is the sole owner of the registry: which projects exist, where they
+live, and which one is default. `config.json` holds operational settings only and never carries a
+project list. Resolve project identity at the composition root or project service. Do not make
+repositories or leaf helpers guess which registry wins — there is only one.
 
 ## Write And Reconciliation Flows
 

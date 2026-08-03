@@ -15,11 +15,13 @@ from loguru import logger
 from sqlalchemy import func, select
 
 from basic_memory import db
-from basic_memory.config import BasicMemoryConfig
+from basic_memory.config import BasicMemoryConfig, bootstrap_project_home, legacy_config_registry
+from basic_memory.config_models import is_locally_syncable
 from basic_memory.models import Project
 from basic_memory.repository import (
     ProjectRepository,
 )
+from basic_memory.utils import generate_permalink
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -109,55 +111,62 @@ async def initialize_database(app_config: BasicMemoryConfig) -> None:
         raise
 
 
-async def reconcile_projects_with_config(app_config: BasicMemoryConfig):
-    """Ensure all projects in config.json exist in the projects table and vice versa.
+async def ensure_project_registry(app_config: BasicMemoryConfig) -> None:
+    """Populate the database project registry when it is empty (GAPS B2).
 
-    This uses the ProjectService's synchronize_projects method to ensure bidirectional
-    synchronization between the configuration file and the database.
+    The database is the sole owner of the registry, so this runs only against an
+    empty one — a populated registry is never touched by anything here. Two
+    states need filling:
 
-    Args:
-        app_config: The Basic Memory application configuration
-    """
-    logger.info("Reconciling projects from config with database...")
+      * A pre-B2 install whose projects still live in ``config.json``. Those are
+        imported once, from the raw legacy keys, and never written back.
+      * A genuinely fresh install with neither config nor database. One
+        bootstrap project is created so unqualified commands have a default to
+        resolve to, which is what the old config-model default did.
 
-    # Get database session (engine already created by initialize_database)
-    _, session_maker = await db.get_or_create_db(
-        db_path=app_config.database_path,
-        db_type=db.DatabaseType.FILESYSTEM,
-    )
-    project_repository = ProjectRepository()
-
-    # Import ProjectService here to avoid circular imports
-    from basic_memory.services.project_service import ProjectService
-
-    # Create project service and synchronize projects
-    project_service = ProjectService(repository=project_repository, session_maker=session_maker)
-    try:
-        await project_service.synchronize_projects()
-        logger.info("Projects successfully reconciled between config and database")
-    except Exception as e:
-        logger.error(f"Error during project synchronization: {e}")
-        logger.info("Continuing with initialization despite synchronization error")
-
-
-async def reconcile_projects_if_registry_empty(app_config: BasicMemoryConfig) -> None:
-    """Sync config-declared projects into an empty database registry (GAPS B2).
-
-    A fresh config auto-declares a default project, but most CLI commands skip
-    ``ensure_initialization`` for startup latency — so on a brand-new machine
-    every project-scoped command failed with "no projects are set up" until
-    something ran the full init. The empty-registry state is unambiguous (there
-    is nothing to drift against), so syncing it on first touch is safe; any
-    other config/DB disagreement is left to the explicit init paths.
+    Most CLI commands skip ``ensure_initialization`` for startup latency, so
+    this runs at first database touch (``cli.direct``, the prepared-ASGI seam)
+    rather than only in the explicit init path.
     """
     _, session_maker = await db.get_or_create_db(app_config.database_path)
     async with db.scoped_session(session_maker) as session:
         registry_has_projects = (
             await session.execute(select(func.count()).select_from(Project))
         ).scalar()
-    if registry_has_projects or not app_config.projects:
+    if registry_has_projects:
         return
-    await reconcile_projects_with_config(app_config)
+
+    legacy_projects, legacy_default = legacy_config_registry()
+    if legacy_projects:
+        logger.info(f"Importing {len(legacy_projects)} project(s) from legacy config.json")
+        projects = legacy_projects
+        default_name = legacy_default if legacy_default in legacy_projects else None
+    else:
+        bootstrap_home = bootstrap_project_home()
+        logger.info(f"Bootstrapping default project 'main' at {bootstrap_home}")
+        projects = {"main": str(bootstrap_home)}
+        default_name = "main"
+
+    if default_name is None:
+        default_name = next(iter(projects))
+
+    repository = ProjectRepository()
+    async with db.scoped_session(session_maker) as session:
+        for name, path in projects.items():
+            project_path = Path(path)
+            if project_path.is_absolute():
+                project_path.mkdir(parents=True, exist_ok=True)
+            created = await repository.create(
+                session,
+                {
+                    "name": name,
+                    "path": path,
+                    "permalink": generate_permalink(name),
+                    "is_active": True,
+                },
+            )
+            if name == default_name:
+                await repository.set_as_default(session, created.id)
 
 
 # Strong references for fire-and-forget startup index tasks; the event loop
@@ -228,11 +237,10 @@ async def initialize_file_indexing(
         active_projects = [p for p in active_projects if p.name == constrained_project]
         logger.info(f"Background indexing constrained to project: {constrained_project}")
 
-    # Only index projects that are in config (source of truth) and have an
-    # absolute local path; see BasicMemoryConfig.is_locally_syncable. This keeps
-    # background indexing from adopting the process cwd as a project root and
-    # mutating unrelated files (issue #949).
-    skip = [p.name for p in active_projects if not app_config.is_locally_syncable(p.name, p.path)]
+    # Only index projects with an absolute local path; see is_locally_syncable.
+    # This keeps background indexing from adopting the process cwd as a project
+    # root and mutating unrelated files (issue #949).
+    skip = [p.name for p in active_projects if not is_locally_syncable(p.path)]
     if skip:
         active_projects = [p for p in active_projects if p.name not in skip]
         logger.info(f"Skipping projects that are not locally indexable: {skip}")
@@ -287,9 +295,8 @@ async def initialize_app(
 
     This function handles all initialization steps:
     - Running database migrations
-    - Reconciling projects from config.json with projects table
+    - Bootstrapping the database project registry when it is empty
     - Setting up file indexing
-    - Starting background migration for legacy project data
 
     Args:
         app_config: The Basic Memory project configuration
@@ -308,8 +315,8 @@ async def initialize_app(
     # Initialize database first
     await initialize_database(app_config)
 
-    # Reconcile projects from config.json with projects table
-    await reconcile_projects_with_config(app_config)
+    # Bootstrap the project registry if this install has none yet
+    await ensure_project_registry(app_config)
 
     logger.info("App initialization completed")
 

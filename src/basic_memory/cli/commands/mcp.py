@@ -7,7 +7,8 @@ import typer
 from loguru import logger
 
 from basic_memory.cli.app import app
-from basic_memory.config import ConfigManager, init_mcp_logging
+from basic_memory.config import init_mcp_logging
+from basic_memory.project_registry import lookup_project
 
 
 class _DeferredMcpServer:
@@ -51,8 +52,7 @@ def mcp(
 
     # Validate and set project constraint if specified
     if project:
-        config_manager = ConfigManager()
-        project_name, _ = config_manager.get_project(project)
+        project_name, _ = lookup_project(project)
         if not project_name:
             typer.echo(f"No project found named: {project}", err=True)
             raise typer.Exit(1)

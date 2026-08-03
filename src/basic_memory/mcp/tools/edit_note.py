@@ -11,7 +11,6 @@ from pydantic import AliasChoices, BeforeValidator, Field
 if TYPE_CHECKING:  # pragma: no cover
     from basic_memory.mcp.clients import KnowledgeClient
 
-from basic_memory.config import ConfigManager
 from basic_memory.ignore_utils import IGNORED_PATH_REJECTION_DETAIL
 from basic_memory.mcp.project_context import (
     UnresolvedProjectRouteError,
@@ -455,7 +454,6 @@ async def edit_note(
     if project is None and project_id is None and identifier.strip().startswith("memory://"):
         detected = await detect_project_from_memory_url_prefix(
             identifier,
-            ConfigManager().config,
             context=context,
         )
         if detected:

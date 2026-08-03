@@ -18,7 +18,6 @@ from sqlalchemy.ext.asyncio import (
 from basic_memory import db
 from basic_memory.config import (
     ProjectConfig,
-    ProjectEntry,
     BasicMemoryConfig,
     ConfigManager,
 )
@@ -101,15 +100,63 @@ def config_home(tmp_path, monkeypatch) -> Path:
     return tmp_path
 
 
+def write_project_registry(projects: dict[str, str], default: str | None = None) -> Path:
+    """Write the on-disk project registry the synchronous reader sees.
+
+    The database owns the project registry (GAPS B2), and CLI-boundary code
+    reads it synchronously through ``basic_memory.project_registry``, which
+    opens the SQLite file directly. Unit tests run against an in-memory
+    database, so tests that exercise that reader materialize a real file here.
+
+    The destination is resolved when this is *called*, not when a fixture is
+    set up, so it always lands in whatever data dir the test's patched
+    environment currently names.
+    """
+    import sqlite3
+
+    from basic_memory.config_models import DATABASE_NAME, resolve_data_dir
+    from basic_memory.utils import generate_permalink
+
+    data_dir = resolve_data_dir()
+    data_dir.mkdir(parents=True, exist_ok=True)
+    database_path = data_dir / DATABASE_NAME
+
+    connection = sqlite3.connect(database_path)
+    try:
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS project ("
+            "id INTEGER PRIMARY KEY, name TEXT, permalink TEXT, path TEXT, "
+            "is_active INTEGER, is_default INTEGER)"
+        )
+        connection.execute("DELETE FROM project")
+        for name, path in projects.items():
+            connection.execute(
+                "INSERT INTO project (name, permalink, path, is_active, is_default) "
+                "VALUES (?, ?, ?, 1, ?)",
+                (name, generate_permalink(name), path, 1 if name == default else None),
+            )
+        connection.commit()
+    finally:
+        connection.close()
+    return database_path
+
+
+@pytest.fixture
+def write_registry_file(config_home):
+    """Fixture wrapper around :func:`write_project_registry`.
+
+    Depends on ``config_home`` so HOME is already redirected at the tmp dir
+    before anything can be written — the writer resolves its destination from
+    the environment, and an unpatched HOME would target the real data dir.
+    """
+    return write_project_registry
+
+
 @pytest.fixture(scope="function")
 def app_config(config_home, monkeypatch) -> BasicMemoryConfig:
     """Create test app configuration."""
-    projects = {"test-project": ProjectEntry(path=str(config_home))}
-
     app_config = BasicMemoryConfig(
         env="test",
-        projects=projects,
-        default_project="test-project",
         update_permalinks_on_move=True,
         # Trigger: semantic_search_enabled defaults to True whenever fastembed/sqlite-vec
         #          are importable, which they are in dev and CI environments.

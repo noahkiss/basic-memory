@@ -73,12 +73,16 @@ def read_marker_project(marker: Path) -> Optional[str]:
 
 
 def resolve_cli_project(explicit: Optional[str], cwd: Optional[Path] = None) -> Optional[str]:
-    """CLI project chain: explicit flag > `.bm.yml` marker > configured default.
+    """CLI project chain: explicit flag > `.bm.yml` marker > registry default.
 
     A marker-supplied name is validated against the registered projects so a
     stale marker fails with its own path in the message instead of a bare
     "project not found" from three layers down.
     """
+    # Deferred: the registry reader is only needed once a command actually
+    # resolves a project, and it opens the SQLite file to do it.
+    from basic_memory.project_registry import default_project_name, lookup_project
+
     if explicit:
         return explicit
 
@@ -86,9 +90,7 @@ def resolve_cli_project(explicit: Optional[str], cwd: Optional[Path] = None) -> 
     if marker is not None:
         name = read_marker_project(marker)
         if name:
-            from basic_memory.config import ConfigManager
-
-            registered, _ = ConfigManager().get_project(name)
+            registered, _ = lookup_project(name)
             if not registered:
                 raise MarkerError(
                     f"Project marker {marker} names '{name}', which is not a "
@@ -96,6 +98,4 @@ def resolve_cli_project(explicit: Optional[str], cwd: Optional[Path] = None) -> 
                 )
             return registered
 
-    from basic_memory.config import ConfigManager
-
-    return ConfigManager().default_project
+    return default_project_name()

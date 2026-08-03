@@ -5,9 +5,21 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
+from basic_memory.cli.commands.command_utils import run_with_cleanup
+from basic_memory.cli.commands.project import fetch_project_list
 from basic_memory.cli.main import app as cli_app
 
 WIDE_TERMINAL_ENV = {"COLUMNS": "240", "LINES": "60"}
+
+
+def _project_names() -> set[str]:
+    """Read the current registered project names via the direct service path.
+
+    The database owns the project registry (GAPS B2); config.json no longer
+    tracks it, so tests read the registry the same way `bm project list` does.
+    """
+    result = run_with_cleanup(fetch_project_list())
+    return {project.name for project in result.projects}
 
 
 def test_project_list(app, app_config, test_project, config_manager):
@@ -140,13 +152,13 @@ def test_remove_main_project(app, app_config, config_manager):
         # Trigger: this test must work on Windows runners where output may contain "runneradmin".
         # Why: substring checks against command output can mistake path text for project names.
         # Outcome: use config state for setup decisions, then validate behavior via CLI invocation.
-        if "main" not in config_manager.config.projects:
+        if "main" not in _project_names():
             result = runner.invoke(cli_app, ["project", "add", "main", str(main_path)])
             print(result.stdout)
             assert result.exit_code == 0
 
         # Confirm main is present
-        assert "main" in config_manager.config.projects
+        assert "main" in _project_names()
 
         # Add a second project
         result = runner.invoke(cli_app, ["project", "add", "new_default", str(new_default_path)])
@@ -166,6 +178,6 @@ def test_remove_main_project(app, app_config, config_manager):
         # Confirm only new_default exists and main does not
         result = runner.invoke(cli_app, ["project", "list"], env=WIDE_TERMINAL_ENV)
         assert result.exit_code == 0
-        config_after_list = config_manager.load_config()
-        assert "main" not in config_after_list.projects
-        assert "new_default" in config_after_list.projects
+        names_after = _project_names()
+        assert "main" not in names_after
+        assert "new_default" in names_after

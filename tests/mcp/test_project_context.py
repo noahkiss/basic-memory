@@ -36,10 +36,6 @@ def _project(
 async def test_returns_none_when_no_default_and_no_project(config_manager, monkeypatch):
     from basic_memory.mcp.project_context import resolve_project_parameter
 
-    cfg = config_manager.load_config()
-    cfg.default_project = None
-    config_manager.save_config(cfg)
-
     monkeypatch.delenv("BASIC_MEMORY_MCP_PROJECT", raising=False)
 
     # Prevent API fallback from returning a project via stale dependency overrides
@@ -56,10 +52,6 @@ async def test_returns_none_when_no_default_and_no_project(config_manager, monke
 @pytest.mark.asyncio
 async def test_allows_discovery_when_enabled(config_manager, monkeypatch):
     from basic_memory.mcp.project_context import resolve_project_parameter
-
-    cfg = config_manager.load_config()
-    cfg.default_project = None
-    config_manager.save_config(cfg)
 
     # Prevent API fallback from returning a project via stale dependency overrides
     async def _no_api_fallback():
@@ -106,17 +98,14 @@ async def test_uses_explicit_project_when_no_env(config_manager, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_canonicalizes_case_insensitive_project_reference(
-    config_manager, config_home, monkeypatch
+    write_registry_file, config_home, monkeypatch
 ):
-    from basic_memory.config import ProjectEntry
     from basic_memory.mcp.project_context import resolve_project_parameter
 
-    cfg = config_manager.load_config()
     project_name = "Personal-Project"
     project_path = config_home / "personal-project"
     project_path.mkdir(parents=True, exist_ok=True)
-    cfg.projects[project_name] = ProjectEntry(path=str(project_path))
-    config_manager.save_config(cfg)
+    write_registry_file({project_name: str(project_path)})
 
     monkeypatch.delenv("BASIC_MEMORY_MCP_PROJECT", raising=False)
 
@@ -125,15 +114,16 @@ async def test_canonicalizes_case_insensitive_project_reference(
 
 
 @pytest.mark.asyncio
-async def test_uses_default_project(config_manager, config_home, monkeypatch):
+async def test_uses_default_project(config_manager, monkeypatch):
     from basic_memory.mcp.project_context import resolve_project_parameter
-    from basic_memory.config import ProjectEntry
 
-    cfg = config_manager.load_config()
-    (config_home / "default-project").mkdir(parents=True, exist_ok=True)
-    cfg.projects["default-project"] = ProjectEntry(path=str(config_home / "default-project"))
-    cfg.default_project = "default-project"
-    config_manager.save_config(cfg)
+    async def fake_default_lookup():
+        return "default-project"
+
+    monkeypatch.setattr(
+        "basic_memory.mcp.project_context._resolve_default_project_from_api",
+        fake_default_lookup,
+    )
 
     monkeypatch.delenv("BASIC_MEMORY_MCP_PROJECT", raising=False)
     assert await resolve_project_parameter(project=None) == "default-project"
@@ -142,10 +132,6 @@ async def test_uses_default_project(config_manager, config_home, monkeypatch):
 @pytest.mark.asyncio
 async def test_returns_none_when_no_default(config_manager, monkeypatch):
     from basic_memory.mcp.project_context import resolve_project_parameter
-
-    cfg = config_manager.load_config()
-    cfg.default_project = None
-    config_manager.save_config(cfg)
 
     monkeypatch.delenv("BASIC_MEMORY_MCP_PROJECT", raising=False)
 
@@ -161,31 +147,31 @@ async def test_returns_none_when_no_default(config_manager, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_env_constraint_overrides_default(config_manager, config_home, monkeypatch):
+async def test_env_constraint_overrides_default(config_manager, monkeypatch):
     from basic_memory.mcp.project_context import resolve_project_parameter
-    from basic_memory.config import ProjectEntry
 
-    cfg = config_manager.load_config()
-    (config_home / "default-project").mkdir(parents=True, exist_ok=True)
-    cfg.projects["default-project"] = ProjectEntry(path=str(config_home / "default-project"))
-    cfg.default_project = "default-project"
-    config_manager.save_config(cfg)
+    async def fake_default_lookup():
+        return "default-project"
+
+    monkeypatch.setattr(
+        "basic_memory.mcp.project_context._resolve_default_project_from_api",
+        fake_default_lookup,
+    )
 
     monkeypatch.setenv("BASIC_MEMORY_MCP_PROJECT", "env-project")
     assert await resolve_project_parameter(project=None) == "env-project"
 
 
 @pytest.mark.asyncio
-async def test_detect_project_from_identifier_prefix_resolves_local_project():
+async def test_detect_project_from_identifier_prefix_resolves_local_project(write_registry_file):
     """A leading segment naming a configured project resolves for both URL forms."""
-    from basic_memory.config import BasicMemoryConfig, ProjectEntry
     from basic_memory.mcp.project_context import detect_project_from_identifier_prefix
 
-    config = BasicMemoryConfig(projects={"main": ProjectEntry(path="/tmp/main")})
+    write_registry_file({"main": "/tmp/main"})
 
-    assert await detect_project_from_identifier_prefix("memory://main/notes/foo", config) == "main"
-    assert await detect_project_from_identifier_prefix("main/notes/foo", config) == "main"
-    assert await detect_project_from_identifier_prefix("notes/foo", config) is None
+    assert await detect_project_from_identifier_prefix("memory://main/notes/foo") == "main"
+    assert await detect_project_from_identifier_prefix("main/notes/foo") == "main"
+    assert await detect_project_from_identifier_prefix("notes/foo") is None
 
 
 @pytest.mark.asyncio
@@ -219,20 +205,17 @@ async def test_get_project_client_with_project_id_validates_the_external_id(
 
 @pytest.mark.asyncio
 async def test_get_project_client_with_project_id_respects_env_constraint(
-    config_manager, monkeypatch
+    write_registry_file, config_home, monkeypatch
 ):
     """BASIC_MEMORY_MCP_PROJECT must remain authoritative when project_id is supplied."""
     import basic_memory.mcp.project_context as project_context
-    from basic_memory.config import ProjectEntry
 
-    config = config_manager.load_config()
-    config.projects["env-project"] = ProjectEntry(
-        path=str(config_manager.config_dir.parent / "env-project")
+    write_registry_file(
+        {
+            "env-project": str(config_home / "env-project"),
+            "other-project": str(config_home / "other-project"),
+        }
     )
-    config.projects["other-project"] = ProjectEntry(
-        path=str(config_manager.config_dir.parent / "other-project")
-    )
-    config_manager.save_config(config)
 
     monkeypatch.setenv("BASIC_MEMORY_MCP_PROJECT", "env-project")
 
@@ -287,14 +270,10 @@ async def test_get_project_client_prefers_project_id_over_project_name(monkeypat
 
 @pytest.mark.asyncio
 async def test_resolve_project_parameter_uses_cached_active_project_before_api_default_lookup(
-    config_manager, monkeypatch
+    monkeypatch,
 ):
     from basic_memory.mcp.project_context import resolve_project_parameter
     from basic_memory.schemas.project_info import ProjectItem
-
-    config = config_manager.load_config()
-    config.default_project = None
-    config_manager.save_config(config)
 
     context = ContextState()
     cached_project = ProjectItem(
@@ -319,14 +298,8 @@ async def test_resolve_project_parameter_uses_cached_active_project_before_api_d
 
 
 @pytest.mark.asyncio
-async def test_resolve_project_parameter_caches_api_default_project_name(
-    config_manager, monkeypatch
-):
+async def test_resolve_project_parameter_caches_api_default_project_name(monkeypatch):
     from basic_memory.mcp.project_context import resolve_project_parameter
-
-    config = config_manager.load_config()
-    config.default_project = None
-    config_manager.save_config(config)
 
     context = ContextState()
     api_calls = {"count": 0}
@@ -538,67 +511,57 @@ async def test_resolve_project_and_path_uses_resolved_project_prefix(
 class TestDetectProjectFromUrlPrefix:
     """Test detect_project_from_url_prefix for URL-based project detection."""
 
-    def test_detects_project_from_memory_url(self, config_manager):
+    def test_detects_project_from_memory_url(self, write_registry_file, config_home):
         from basic_memory.mcp.project_context import detect_project_from_url_prefix
 
-        config = config_manager.load_config()
-        # The config has "test-project" from the conftest fixture
-        result = detect_project_from_url_prefix("memory://test-project/some-note", config)
+        write_registry_file({"test-project": str(config_home / "test-project")})
+        result = detect_project_from_url_prefix("memory://test-project/some-note")
         assert result == "test-project"
 
-    def test_detects_project_from_plain_path(self, config_manager):
+    def test_detects_project_from_plain_path(self, write_registry_file, config_home):
         from basic_memory.mcp.project_context import detect_project_from_url_prefix
 
-        config = config_manager.load_config()
-        result = detect_project_from_url_prefix("test-project/some-note", config)
+        write_registry_file({"test-project": str(config_home / "test-project")})
+        result = detect_project_from_url_prefix("test-project/some-note")
         assert result == "test-project"
 
-    def test_returns_none_for_unknown_prefix(self, config_manager):
+    def test_returns_none_for_unknown_prefix(self, write_registry_file, config_home):
         from basic_memory.mcp.project_context import detect_project_from_url_prefix
 
-        config = config_manager.load_config()
-        result = detect_project_from_url_prefix("memory://unknown-project/note", config)
+        write_registry_file({"test-project": str(config_home / "test-project")})
+        result = detect_project_from_url_prefix("memory://unknown-project/note")
         assert result is None
 
-    def test_returns_none_for_no_slash(self, config_manager):
+    def test_returns_none_for_no_slash(self, write_registry_file, config_home):
         from basic_memory.mcp.project_context import detect_project_from_url_prefix
 
-        config = config_manager.load_config()
-        result = detect_project_from_url_prefix("memory://single-segment", config)
+        write_registry_file({"test-project": str(config_home / "test-project")})
+        result = detect_project_from_url_prefix("memory://single-segment")
         assert result is None
 
-    def test_returns_none_for_wildcard_prefix(self, config_manager):
+    def test_returns_none_for_wildcard_prefix(self, write_registry_file, config_home):
         from basic_memory.mcp.project_context import detect_project_from_url_prefix
 
-        config = config_manager.load_config()
-        result = detect_project_from_url_prefix("memory://*/notes", config)
+        write_registry_file({"test-project": str(config_home / "test-project")})
+        result = detect_project_from_url_prefix("memory://*/notes")
         assert result is None
 
-    def test_matches_case_insensitive_via_permalink(self, config_manager):
+    def test_matches_case_insensitive_via_permalink(self, write_registry_file, config_home):
         from basic_memory.mcp.project_context import detect_project_from_url_prefix
-        from basic_memory.config import ProjectEntry
 
-        config = config_manager.load_config()
-        (config_manager.config_dir.parent / "My Research").mkdir(parents=True, exist_ok=True)
-        config.projects["My Research"] = ProjectEntry(
-            path=str(config_manager.config_dir.parent / "My Research")
-        )
-        config_manager.save_config(config)
+        (config_home / "My Research").mkdir(parents=True, exist_ok=True)
+        write_registry_file({"My Research": str(config_home / "My Research")})
 
-        result = detect_project_from_url_prefix("memory://my-research/notes", config)
+        result = detect_project_from_url_prefix("memory://my-research/notes")
         assert result == "My Research"
 
 
 @pytest.mark.asyncio
 async def test_detect_project_from_memory_url_prefix_ignores_plain_paths():
     """Only memory:// identifiers are treated as project-routed URLs."""
-    from basic_memory.config import BasicMemoryConfig, ProjectEntry
     from basic_memory.mcp.project_context import detect_project_from_memory_url_prefix
 
-    resolved = await detect_project_from_memory_url_prefix(
-        "main/notes/foo",
-        BasicMemoryConfig(projects={"main": ProjectEntry(path="/tmp/main")}),
-    )
+    resolved = await detect_project_from_memory_url_prefix("main/notes/foo")
 
     assert resolved is None
 

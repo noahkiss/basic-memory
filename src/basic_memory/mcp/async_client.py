@@ -189,15 +189,15 @@ async def _prepared_local_asgi_database(app: "FastAPI") -> AsyncIterator[None]:
                 await database_context.__aexit__(None, None, None)
                 raise
             # Most CLI commands skip ensure_initialization for startup latency,
-            # so a fresh config's projects never reach the DB registry and every
-            # project-scoped command fails (GAPS B2). Empty-registry sync only —
-            # anything else is the explicit init paths' business.
+            # so on a fresh install the DB registry is never populated and every
+            # project-scoped command fails (GAPS B2). Bootstraps an empty
+            # registry only; a populated one is never touched.
             from basic_memory.config import ConfigManager
             from basic_memory.services.initialization import (
-                reconcile_projects_if_registry_empty,
+                ensure_project_registry,
             )
 
-            await reconcile_projects_if_registry_empty(ConfigManager().config)
+            await ensure_project_registry(ConfigManager().config)
 
     try:
         yield

@@ -94,46 +94,6 @@ def test_project_list_shows_indexed_project(runner: CliRunner, write_config, tmp
     }
 
 
-def test_project_list_falls_back_to_configured_project(
-    runner: CliRunner, write_config, tmp_path, monkeypatch
-):
-    """A project in config that the index does not return must still render (#1003).
-
-    Regression: ``bm project list`` seeded rows only from live query results, so the
-    table came up empty while ``bm project add`` reported the same project already
-    existed. The two commands must agree that the project exists.
-    """
-    main_path = (tmp_path / "main").as_posix()
-
-    write_config(
-        {
-            "env": "dev",
-            "projects": {"main": {"path": main_path}},
-            "default_project": "main",
-        }
-    )
-
-    # The local index does not know about this project, so the query returns empty.
-    async def fake_fetch_project_list():
-        return ProjectList.model_validate({"projects": [], "default_project": "main"})
-
-    monkeypatch.setattr(project_cmd, "fetch_project_list", fake_fetch_project_list)
-
-    result = runner.invoke(app, ["project", "list", "--json"], env={"COLUMNS": "240"})
-
-    assert result.exit_code == 0, f"Exit code: {result.exit_code}, output: {result.stdout}"
-    assert json.loads(result.stdout) == {
-        "projects": [
-            {
-                "name": "main",
-                "permalink": "main",
-                "path": project_cmd.format_path(main_path),
-                "is_default": True,
-            }
-        ]
-    }
-
-
 def test_project_list_shows_name_in_narrow_terminal(
     runner: CliRunner, write_config, tmp_path, monkeypatch
 ):
@@ -177,40 +137,6 @@ def test_project_list_shows_name_in_narrow_terminal(
     assert result.exit_code == 0, f"Exit code: {result.exit_code}, output: {result.stdout}"
     assert "Name" in result.stdout
     assert "alpha" in result.stdout
-
-
-def test_project_list_warns_when_config_project_missing_from_index(
-    runner: CliRunner, write_config, tmp_path, monkeypatch
-):
-    """A project in config that the index does not know about must be called out (B2).
-
-    config.json and the project table are two registries that can disagree, and the
-    row seeded from config to fix #1003 made the disagreement invisible — the table
-    looked identical whether or not the project was indexed. A project in this state
-    resolves for routing but returns nothing from search.
-    """
-    alpha_path = (tmp_path / "alpha").as_posix()
-
-    write_config(
-        {
-            "env": "dev",
-            "projects": {"alpha": {"path": alpha_path}},
-            "default_project": "alpha",
-        }
-    )
-
-    # The local index has no row for alpha — the fresh-config state, where
-    # config.json is written before anything materializes the project table.
-    async def fake_fetch_project_list():
-        return ProjectList.model_validate({"projects": [], "default_project": "alpha"})
-
-    monkeypatch.setattr(project_cmd, "fetch_project_list", fake_fetch_project_list)
-
-    result = runner.invoke(app, ["project", "list"], env={"COLUMNS": "240"})
-
-    assert result.exit_code == 0, f"Exit code: {result.exit_code}, output: {result.stdout}"
-    assert "alpha" in result.stdout
-    assert "not indexed" in result.stdout
 
 
 def test_project_ls_lists_local_files(runner: CliRunner, write_config, tmp_path, monkeypatch):

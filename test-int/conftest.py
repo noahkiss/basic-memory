@@ -67,7 +67,6 @@ import basic_memory
 from basic_memory.config import (
     BasicMemoryConfig,
     ProjectConfig,
-    ProjectEntry,
     ConfigManager,
 )
 from basic_memory.db import engine_session_factory, DatabaseType
@@ -115,11 +114,9 @@ def isolate_data_dir_env(monkeypatch) -> None:
 
     Why: GitHub Actions Ubuntu runners set ``XDG_CONFIG_HOME=/home/runner/.config``,
     and ``resolve_data_dir()`` honors it ahead of ``Path.home() / ".basic-memory"``.
-    Without clearing it, the MCP tool process reads config.json from the host XDG
-    path instead of the tmp dir the ``config_manager`` fixture wrote to — so
-    ``test-project`` is missing from ``config.projects``, ``get_project_mode``
-    falls through to its CLOUD default (#837), and every tool call fails with
-    "Cloud routing requested but no credentials found."
+    Without clearing it, the MCP tool process reads config.json and the registry
+    database from the host XDG path instead of the tmp dir the fixtures wrote to,
+    so ``test-project`` does not exist as far as the tool call is concerned.
     """
     monkeypatch.delenv("BASIC_MEMORY_CONFIG_DIR", raising=False)
     monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
@@ -219,13 +216,8 @@ def app_config(
     # Disable cloud mode for CLI tests
     monkeypatch.setenv("BASIC_MEMORY_CLOUD_MODE", "false")
 
-    # Create a basic config with test-project like unit tests do
-    projects = {"test-project": ProjectEntry(path=str(config_home))}
-
     app_config = BasicMemoryConfig(
         env="test",
-        projects=projects,
-        default_project="test-project",
         update_permalinks_on_move=True,
         index_changes=False,  # Disable file indexing in tests - prevents lifespan from starting blocking task
         # Trigger: semantic_search_enabled defaults to True whenever fastembed/sqlite-vec

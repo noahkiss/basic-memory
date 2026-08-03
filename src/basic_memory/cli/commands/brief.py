@@ -86,7 +86,7 @@ def project_from_marker(marker: Path) -> Optional[str]:
 
 
 def resolve_project(explicit: Optional[str], cwd: Path) -> Optional[str]:
-    """Explicit flag > `.bm.yml` marker > configured default project."""
+    """Explicit flag > `.bm.yml` marker > registry default project."""
     if explicit:
         return explicit
 
@@ -96,9 +96,9 @@ def resolve_project(explicit: Optional[str], cwd: Path) -> Optional[str]:
         if from_marker:
             return from_marker
 
-    from basic_memory.config import ConfigManager
+    from basic_memory.project_registry import default_project_name
 
-    return ConfigManager().default_project
+    return default_project_name()
 
 
 # --- Query ---

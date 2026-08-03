@@ -47,29 +47,3 @@ async def test_get_project_from_database(project_service: ProjectService):
                 project = await project_service.repository.get_by_name(session, test_project_name)
                 if project:
                     await project_service.repository.delete(session, project.id)
-
-
-@pytest.mark.asyncio
-async def test_add_project_to_config(project_service: ProjectService, config_manager):
-    """Test adding a project to the config manager."""
-    # Generate unique project name for testing
-    test_project_name = f"config-project-{os.urandom(4).hex()}"
-    with tempfile.TemporaryDirectory() as temp_dir:
-        test_root = Path(temp_dir)
-        test_path = test_root / "config-project"
-
-        # Make sure directory exists
-        test_path.mkdir(parents=True, exist_ok=True)
-
-        try:
-            # Add a project to config only (using ConfigManager directly)
-            config_manager.add_project(test_project_name, str(test_path))
-
-            # Verify it's in the config
-            assert test_project_name in project_service.projects
-            assert Path(project_service.projects[test_project_name]) == test_path
-
-        finally:
-            # Clean up
-            if test_project_name in project_service.projects:
-                config_manager.remove_project(test_project_name)

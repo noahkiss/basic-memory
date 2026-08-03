@@ -140,20 +140,14 @@ async def test_remove_project_with_related_entities(project_service: ProjectServ
 
         finally:
             # Clean up - remove project if it still exists
-            if test_project_name in project_service.projects:
+            project = await project_service.get_project(test_project_name)
+            if project is not None:
                 try:
                     await project_service.remove_project(test_project_name)
                 except Exception:
                     # Manual cleanup if remove_project fails
-                    try:
-                        project_service.config_manager.remove_project(test_project_name)
-                    except Exception:
-                        pass
-
-                    project = await project_service.get_project(test_project_name)
-                    if project:
-                        async with db.scoped_session(project_service.session_maker) as session:
-                            await project_service.repository.delete(session, project.id)
+                    async with db.scoped_session(project_service.session_maker) as session:
+                        await project_service.repository.delete(session, project.id)
 
 
 async def _table_exists(session_maker, table: str) -> bool:

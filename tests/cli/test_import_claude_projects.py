@@ -12,6 +12,10 @@ from basic_memory.config import get_project_config
 # Set up CLI runner
 runner = CliRunner()
 
+# The importers resolve their target through get_project_config(), which reads the
+# database registry (GAPS B2); these tests need a real bootstrapped one.
+pytestmark = pytest.mark.usefixtures("bootstrapped_registry")
+
 
 @pytest.fixture
 def sample_project():

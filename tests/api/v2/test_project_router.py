@@ -81,19 +81,18 @@ async def test_get_project_by_id_not_found(client: AsyncClient, v2_projects_url)
 
 
 @pytest.mark.asyncio
-async def test_add_project_materializes_configured_default(
+async def test_add_project_to_empty_registry_becomes_default(
     client: AsyncClient,
     v2_projects_url,
     config_home,
     project_repository,
     session_maker,
 ):
-    """Regression #974/#985: adding a project must not steal the configured default.
+    """The first project added to an empty registry takes the default flag.
 
-    A fresh config names 'main' as default but has no database row for it until the
-    first reconciliation, so the add path has to repair that drift. It materializes
-    the configured default rather than promoting the project being added (see the
-    `elif` in ProjectService.add_project).
+    The database owns the default (GAPS B2), so there is no configured default
+    to preserve. A registry with rows but no default is unusable — every
+    unqualified command resolves through it — so the add path must set it.
     """
     qa_path = config_home / "qa-notes"
     qa_path.mkdir(parents=True, exist_ok=True)
@@ -109,14 +108,10 @@ async def test_add_project_materializes_configured_default(
     assert response.status_code == 201
     status_response = ProjectStatusResponse.model_validate(response.json())
     assert status_response.status == "success"
-    assert status_response.default is False
-    new_project = _project_item(status_response.new_project)
-    assert new_project.name == "qa"
-    assert new_project.is_default is False
 
     default_project = await _get_default_project(project_repository, session_maker)
     assert default_project is not None
-    assert default_project.name != "qa"
+    assert default_project.name == "qa"
 
 
 @pytest.mark.asyncio

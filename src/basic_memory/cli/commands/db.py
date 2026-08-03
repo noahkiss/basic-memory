@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
+from typing import Optional
 
 import psutil
 import typer
@@ -211,14 +212,14 @@ async def _reindex_projects(app_config):
     # reindex actually runs, not on every CLI start (#886).
     from basic_memory import db
     from basic_memory.repository import ProjectRepository
-    from basic_memory.services.initialization import reconcile_projects_with_config
+    from basic_memory.services.initialization import ensure_project_registry
     from basic_memory.index.local_project import (
         LocalProjectIndexRuntimeFactory,
         run_local_project_index_for_project,
     )
 
     try:
-        await reconcile_projects_with_config(app_config)
+        await ensure_project_registry(app_config)
 
         # Get database session (migrations already run if needed)
         _, session_maker = await db.get_or_create_db(
@@ -247,6 +248,59 @@ async def _reindex_projects(app_config):
             )
     finally:
         # Clean up database connections before event loop closes
+        await db.shutdown_db()
+
+
+async def _snapshot_registry(app_config) -> tuple[list[dict], Optional[str]]:
+    """Read the project registry out of the database before it is deleted.
+
+    The database owns the registry (GAPS B2), so dropping the file drops the
+    project list with it. Reset is an index rebuild, not a de-registration, so
+    the rows are captured here and rewritten after migrations.
+    """
+    from basic_memory import db
+    from basic_memory.repository import ProjectRepository
+
+    try:
+        _, session_maker = await db.get_or_create_db(
+            db_path=app_config.database_path,
+            db_type=db.DatabaseType.FILESYSTEM,
+        )
+        async with db.scoped_session(session_maker) as session:
+            projects = await ProjectRepository().get_active_projects(session)
+        rows = [
+            {
+                "name": project.name,
+                "path": project.path,
+                "permalink": project.permalink,
+                "external_id": project.external_id,
+                "is_active": True,
+            }
+            for project in projects
+        ]
+        default_name = next((p.name for p in projects if p.is_default), None)
+        return rows, default_name
+    finally:
+        await db.shutdown_db()
+
+
+async def _restore_registry(app_config, rows: list[dict], default_name: Optional[str]) -> None:
+    """Rewrite the captured registry rows into the freshly migrated database."""
+    from basic_memory import db
+    from basic_memory.repository import ProjectRepository
+
+    repository = ProjectRepository()
+    try:
+        _, session_maker = await db.get_or_create_db(
+            db_path=app_config.database_path,
+            db_type=db.DatabaseType.FILESYSTEM,
+        )
+        async with db.scoped_session(session_maker) as session:
+            for row in rows:
+                created = await repository.create(session, row)
+                if row["name"] == default_name:
+                    await repository.set_as_default(session, created.id)
+    finally:
         await db.shutdown_db()
 
 
@@ -298,6 +352,9 @@ def reset(
         unflushed = run_with_cleanup(_flush_unflushed_note_content(app_config))
         _abort_or_warn_unflushed(unflushed, force)
 
+        # The registry lives in the database being deleted; capture it first.
+        registry_rows, registry_default = run_with_cleanup(_snapshot_registry(app_config))
+
         # Get database path
         db_path = app_config.app_database_path
 
@@ -316,7 +373,7 @@ def reset(
                     )
                     raise typer.Exit(1)
 
-        # Create a new empty database (preserves project configuration)
+        # Create a new empty database, then rewrite the captured registry
         try:
             run_with_cleanup(db.run_migrations(app_config))
         except OperationalError as e:
@@ -328,18 +385,18 @@ def reset(
                 )
                 raise typer.Exit(1)
             raise
+
+        run_with_cleanup(_restore_registry(app_config, registry_rows, registry_default))
         console.print("[green]Database reset complete[/green]")
 
         if reindex:
-            projects = list(app_config.projects)
-            if not projects:
-                console.print("[yellow]No projects configured. Skipping reindex.[/yellow]")
-            else:
-                console.print(f"Rebuilding search index for {len(projects)} project(s)...")
-                # Note: _reindex_projects has its own cleanup, but run_with_cleanup
-                # ensures db.shutdown_db() is called even if _reindex_projects changes
-                run_with_cleanup(_reindex_projects(app_config))
-                console.print("[green]Reindex complete[/green]")
+            # No empty-registry branch: _reindex_projects bootstraps the registry
+            # first, so even a reset on a fresh install has a project to index.
+            console.print("Rebuilding search index...")
+            # Note: _reindex_projects has its own cleanup, but run_with_cleanup
+            # ensures db.shutdown_db() is called even if _reindex_projects changes
+            run_with_cleanup(_reindex_projects(app_config))
+            console.print("[green]Reindex complete[/green]")
 
 
 @app.command()
@@ -413,7 +470,7 @@ async def _reindex(
     from basic_memory.repository import EntityRepository, ProjectRepository
     from basic_memory.repository.search_repository import create_search_repository
     from basic_memory.services.initialization import (
-        reconcile_projects_with_config,
+        ensure_project_registry,
         recover_project_materializations,
     )
     from basic_memory.services.search_service import SearchService
@@ -422,7 +479,7 @@ async def _reindex(
     from basic_memory.markdown.entity_parser import EntityParser
 
     try:
-        await reconcile_projects_with_config(app_config)
+        await ensure_project_registry(app_config)
 
         _, session_maker = await db.get_or_create_db(
             db_path=app_config.database_path,

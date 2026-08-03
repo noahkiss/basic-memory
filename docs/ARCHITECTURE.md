@@ -319,7 +319,7 @@ class ProjectResolver:
     ) -> ResolvedProject:
         """Resolve project using three-tier hierarchy:
         1. Explicit project parameter
-        2. Default project from config
+        2. The project flagged is_default in the database registry
         3. Single available project
         """
 ```
@@ -329,7 +329,7 @@ class ProjectResolver:
 ```python
 class ResolutionMode(Enum):
     EXPLICIT = "explicit"           # User specified project
-    DEFAULT = "default"             # Using configured default
+    DEFAULT = "default"             # Using the registry's default project
     SINGLE_PROJECT = "single"       # Only one project exists
     FALLBACK = "fallback"           # Using first available
 ```

@@ -267,7 +267,6 @@ async def delete_note(
     if project is None and project_id is None and identifier.strip().startswith("memory://"):
         detected = await detect_project_from_memory_url_prefix(
             identifier,
-            ConfigManager().config,
             context=context,
         )
         if detected:

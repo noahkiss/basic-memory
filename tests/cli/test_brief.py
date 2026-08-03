@@ -287,5 +287,6 @@ def test_resolve_project_uses_marker(tmp_path, config_manager):
     assert resolve_project(None, tmp_path) == "from-marker"
 
 
-def test_resolve_project_falls_back_to_default(tmp_path, config_manager):
-    assert resolve_project(None, tmp_path) == config_manager.default_project
+def test_resolve_project_falls_back_to_default(tmp_path, write_registry_file):
+    write_registry_file({"main": str(tmp_path)}, default="main")
+    assert resolve_project(None, tmp_path) == "main"

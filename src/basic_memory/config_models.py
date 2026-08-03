@@ -4,14 +4,13 @@ import importlib.util
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Dict, Literal, Optional, List
+from typing import TYPE_CHECKING, Any, ClassVar, Dict, Literal, Optional
 
-from loguru import logger
-from pydantic import BaseModel, Field, model_validator
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from basic_memory.config_migrations import (
-    migrate_legacy_projects,
+    drop_retired_config_keys,
     migrate_legacy_sync_fields,
 )
 from basic_memory.utils import generate_permalink
@@ -138,18 +137,35 @@ class ProjectConfig:
         return f"/{generate_permalink(self.name)}"
 
 
-class ProjectEntry(BaseModel):
-    """Unified project configuration entry.
+def is_locally_syncable(project_path: str) -> bool:
+    """Whether a project path can be synced/watched on the local filesystem.
 
-    Replaces the old pair of projects (Dict[str, str]) and project_modes with a
-    single structure per project.
+    An empty or relative path resolves against the process cwd, so syncing it
+    would adopt whatever directory the server was launched from as the project
+    root and mutate unrelated files (issue #949). A project entry whose path is
+    a bare slug rather than a directory is rejected by the same condition.
     """
+    return Path(project_path).is_absolute()
 
-    path: str = Field(description="Local filesystem path for the project")
+
+def bootstrap_project_home() -> Path:
+    """Return the directory a first-run bootstrap project is created in.
+
+    Honors ``BASIC_MEMORY_HOME`` so an install can place its first project
+    somewhere other than ``~/basic-memory`` without pre-seeding a registry.
+    """
+    return Path(os.getenv("BASIC_MEMORY_HOME", Path.home() / "basic-memory"))
 
 
 class BasicMemoryConfig(BaseSettings):
-    """Pydantic model for Basic Memory global configuration."""
+    """Pydantic model for Basic Memory global configuration.
+
+    Operational settings only. The project registry — which projects exist,
+    where they live, and which is default — is owned by the database `project`
+    table (GAPS B2); see ``basic_memory.project_registry``. A ``projects`` key
+    left behind by an older release is tolerated on load (``extra="ignore"``),
+    imported once by ``ensure_project_registry()``, and never written back.
+    """
 
     if TYPE_CHECKING:
         # Pydantic accepts raw constructor data and validates/coerces it at runtime.
@@ -157,23 +173,6 @@ class BasicMemoryConfig(BaseSettings):
         def __init__(self, **data: Any) -> None: ...
 
     env: Environment = Field(default="dev", description="Environment name")
-
-    projects: Dict[str, ProjectEntry] = Field(
-        default_factory=lambda: (
-            {
-                "main": ProjectEntry(
-                    path=str(Path(os.getenv("BASIC_MEMORY_HOME", Path.home() / "basic-memory")))
-                )
-            }
-            if os.getenv("BASIC_MEMORY_HOME")
-            else {}
-        ),
-        description="Mapping of project names to their ProjectEntry configuration",
-    )
-    default_project: Optional[str] = Field(
-        default=None,
-        description="Name of the default project to use. When set, acts as fallback when no project parameter is specified. Set to null to disable automatic project resolution.",
-    )
 
     # overridden by ~/.basic-memory/config.json
     log_level: str = "INFO"
@@ -482,19 +481,16 @@ class BasicMemoryConfig(BaseSettings):
 
     @model_validator(mode="before")
     @classmethod
-    def migrate_legacy_projects(cls, data: Any) -> Any:
-        """Migrate old-format config (Dict[str, str]) to new ProjectEntry format.
+    def drop_retired_keys(cls, data: Any) -> Any:
+        """Drop keys older releases wrote for surfaces this fork has retired.
 
-        Old format stored projects as a bare path map:
-          projects: {"name": "/path"}
-
-        New format wraps each in a ProjectEntry:
-          projects: {"name": {"path": "/path"}}
-
-        Also drops stale keys (default_project_mode, permalinks_include_project,
-        and the retired cloud/routing keys) that are no longer part of the model.
+        Nothing reads them now and leaving them in would resurrect a concept
+        that no longer exists. The registry keys (``projects``,
+        ``default_project``) are deliberately *not* dropped here: they are
+        ignored as extras so a legacy config still parses, and
+        ``ensure_project_registry()`` imports them once into the database.
         """
-        return migrate_legacy_projects(data)
+        return drop_retired_config_keys(data)
 
     @property
     def is_test_env(self) -> bool:
@@ -513,62 +509,10 @@ class BasicMemoryConfig(BaseSettings):
             or os.getenv("PYTEST_CURRENT_TEST") is not None
         )
 
-    def is_locally_syncable(self, project_name: str, project_path: str) -> bool:
-        """Whether a project should be synced/watched on the local filesystem.
-
-        Both conditions are required (issue #949):
-
-          * The project is present in config. Config is the source of truth, so a
-            stale database row that was removed from config — but whose deletion
-            has not yet been reconciled, or whose reconciliation failed — must
-            not be synced even though it still has a real directory on disk.
-          * Its path is absolute. An empty or relative path resolves against the
-            process cwd, so syncing it would adopt whatever directory the server
-            was launched from as the project root and mutate unrelated files.
-
-        A project entry whose path is a bare slug rather than a directory is
-        still rejected by the absolute-path condition, so no separate check is
-        needed.
-        """
-        entry = self.projects.get(project_name)
-        return entry is not None and Path(project_path).is_absolute()
-
     model_config = SettingsConfigDict(
         env_prefix="BASIC_MEMORY_",
         extra="ignore",
     )
-
-    def get_project_path(self, project_name: Optional[str] = None) -> Path:  # pragma: no cover
-        """Get the path for a specific project or the default project."""
-        name = project_name or self.default_project
-
-        if name not in self.projects:
-            raise ValueError(f"Project '{name}' not found in configuration")
-
-        return Path(self.projects[name].path)
-
-    def model_post_init(self, __context: Any) -> None:
-        """Ensure configuration is valid after initialization."""
-        # Trigger: no projects configured (fresh install or empty config)
-        # Why: every config needs at least one project to be functional
-        # Outcome: creates "main" project using BASIC_MEMORY_HOME or ~/basic-memory
-        if not self.projects:
-            self.projects["main"] = ProjectEntry(
-                path=str(Path(os.getenv("BASIC_MEMORY_HOME", Path.home() / "basic-memory")))
-            )
-
-        # Trigger: default_project was not explicitly provided in the input data
-        #          (config file omitted the key, or BasicMemoryConfig() called with no args)
-        # Why: callers like get_project_config() expect a valid project name;
-        #      but explicit None (discovery mode) must be preserved
-        # Outcome: sets default_project to the first available project
-        if "default_project" not in self.model_fields_set:
-            self.default_project = next(iter(self.projects.keys()))
-        # Trigger: default_project was explicitly set but references a non-existent project
-        # Why: project may have been removed or renamed since config was saved
-        # Outcome: corrects to the first available project
-        elif self.default_project is not None and self.default_project not in self.projects:
-            self.default_project = next(iter(self.projects.keys()))
 
     @property
     def app_database_path(self) -> Path:
@@ -600,29 +544,6 @@ class BasicMemoryConfig(BaseSettings):
         config_manager = ConfigManager()
         config = config_manager.load_config()  # pragma: no cover
         return config.app_database_path  # pragma: no cover
-
-    @property
-    def project_list(self) -> List[ProjectConfig]:  # pragma: no cover
-        """Get all configured projects as ProjectConfig objects."""
-        return [
-            ProjectConfig(name=name, home=Path(entry.path)) for name, entry in self.projects.items()
-        ]
-
-    @model_validator(mode="after")
-    def ensure_project_paths_exists(self) -> "BasicMemoryConfig":  # pragma: no cover
-        """Ensure project paths exist."""
-        for name, entry in self.projects.items():
-            path = Path(entry.path)
-            # A relative path is a stale/slug entry, not a directory we own.
-            if not path.is_absolute():
-                continue
-            if not path.exists():
-                try:
-                    path.mkdir(parents=True)
-                except Exception as e:
-                    logger.error(f"Failed to create project path: {e}")
-                    raise e
-        return self
 
     @property
     def data_dir_path(self) -> Path:

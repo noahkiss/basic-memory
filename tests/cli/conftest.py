@@ -37,6 +37,31 @@ def isolated_home(tmp_path, monkeypatch) -> Path:
     return tmp_path
 
 
+@pytest.fixture
+def bootstrapped_registry(isolated_home) -> None:
+    """Run the real first-run bootstrap against this test's data dir.
+
+    The database owns the project registry (GAPS B2), and synchronous
+    CLI-boundary code — ``get_project_config()`` in the importers, `.bm.yml`
+    resolution — reads it straight off disk. Tests that exercise those paths
+    need a genuinely migrated database with a project in it, so this calls the
+    same ``ensure_project_registry`` the first real command would.
+    """
+    import asyncio
+
+    from basic_memory import db
+    from basic_memory.config import ConfigManager
+    from basic_memory.services.initialization import ensure_project_registry
+
+    async def _bootstrap() -> None:
+        try:
+            await ensure_project_registry(ConfigManager().config)
+        finally:
+            await db.shutdown_db()
+
+    asyncio.run(_bootstrap())
+
+
 @pytest_asyncio.fixture
 async def app(
     app_config, project_config, engine_factory, test_config, aiolib

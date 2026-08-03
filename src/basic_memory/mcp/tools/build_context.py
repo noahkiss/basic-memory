@@ -6,7 +6,6 @@ from loguru import logger
 from fastmcp import Context
 from pydantic import AliasChoices, Field
 
-from basic_memory.config import ConfigManager
 from basic_memory.mcp.project_context import (
     detect_project_from_memory_url_prefix,
     get_project_client,
@@ -237,7 +236,6 @@ async def build_context(
     if project is None and project_id is None:
         detected = await detect_project_from_memory_url_prefix(
             url,
-            ConfigManager().config,
             context=context,
         )
         if detected:

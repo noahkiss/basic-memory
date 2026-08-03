@@ -178,9 +178,7 @@ async def test_reindex_project_full_uses_core_project_index_and_reports_summary(
 
     # _reindex imports its database/index dependencies at call time (#886),
     # so stubs target the source modules instead of db_cmd attributes.
-    monkeypatch.setattr(
-        "basic_memory.services.initialization.reconcile_projects_with_config", AsyncMock()
-    )
+    monkeypatch.setattr("basic_memory.services.initialization.ensure_project_registry", AsyncMock())
     monkeypatch.setattr(
         "basic_memory.db.get_or_create_db",
         AsyncMock(return_value=(None, session_maker)),
@@ -266,9 +264,7 @@ async def test_reindex_embeddings_only_full_passes_force_full_to_vector_reindex(
 
     # _reindex imports its database/sync dependencies at call time (#886),
     # so stubs target the source modules instead of db_cmd attributes.
-    monkeypatch.setattr(
-        "basic_memory.services.initialization.reconcile_projects_with_config", AsyncMock()
-    )
+    monkeypatch.setattr("basic_memory.services.initialization.ensure_project_registry", AsyncMock())
     monkeypatch.setattr(
         "basic_memory.db.get_or_create_db",
         AsyncMock(return_value=(None, session_maker)),
@@ -341,9 +337,7 @@ async def test_reindex_recovers_stuck_materializations_before_scan(monkeypatch, 
 
     # _reindex imports its database/index dependencies at call time (#886),
     # so stubs target the source modules instead of db_cmd attributes.
-    monkeypatch.setattr(
-        "basic_memory.services.initialization.reconcile_projects_with_config", AsyncMock()
-    )
+    monkeypatch.setattr("basic_memory.services.initialization.ensure_project_registry", AsyncMock())
     monkeypatch.setattr(
         "basic_memory.services.initialization.recover_project_materializations",
         record_recover,
@@ -407,9 +401,7 @@ async def test_reindex_full_does_not_double_embed(monkeypatch, session_maker):
         def update(self, *args, **kwargs) -> None:
             pass
 
-    monkeypatch.setattr(
-        "basic_memory.services.initialization.reconcile_projects_with_config", AsyncMock()
-    )
+    monkeypatch.setattr("basic_memory.services.initialization.ensure_project_registry", AsyncMock())
     monkeypatch.setattr(
         "basic_memory.db.get_or_create_db", AsyncMock(return_value=(None, session_maker))
     )

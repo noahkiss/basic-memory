@@ -12,7 +12,7 @@ from typing import Dict, Optional, Tuple
 from loguru import logger
 
 from basic_memory import config_logging as _config_logging
-from basic_memory.config_migrations import RETIRED_PROJECT_KEYS, RETIRED_TOP_LEVEL_KEYS
+from basic_memory.config_migrations import RETIRED_TOP_LEVEL_KEYS, normalize_legacy_projects
 from basic_memory.config_models import (
     APP_DATABASE_NAME as APP_DATABASE_NAME,
     CONFIG_DIR_MODE as CONFIG_DIR_MODE,
@@ -24,14 +24,15 @@ from basic_memory.config_models import (
     BasicMemoryConfig as BasicMemoryConfig,
     Environment as Environment,
     ProjectConfig as ProjectConfig,
-    ProjectEntry as ProjectEntry,
     _secure_config_dir,
     _secure_config_file,
+    bootstrap_project_home as bootstrap_project_home,
     default_fastembed_cache_dir as default_fastembed_cache_dir,
+    is_locally_syncable as is_locally_syncable,
     resolve_data_dir as resolve_data_dir,
     shared_fastembed_cache_dir as shared_fastembed_cache_dir,
 )
-from basic_memory.utils import generate_permalink, setup_logging
+from basic_memory.utils import setup_logging
 
 
 # Cache state remains on the public module because long-lived callers and test
@@ -39,6 +40,14 @@ from basic_memory.utils import generate_permalink, setup_logging
 _CONFIG_CACHE: Optional[BasicMemoryConfig] = None
 _CONFIG_MTIME: Optional[float] = None
 _CONFIG_SIZE: Optional[int] = None
+
+# The registry keys a pre-B2 config.json may still carry, captured verbatim the
+# last time the file was read. ``ensure_project_registry()`` imports them into
+# an empty database registry once; nothing writes them back. Captured at load
+# because a format migration resave (see ``load_config``) drops keys the model
+# no longer declares, which would otherwise destroy them before the import runs.
+_LEGACY_PROJECTS: Dict[str, str] = {}
+_LEGACY_DEFAULT_PROJECT: Optional[str] = None
 
 
 class ConfigManager:
@@ -87,19 +96,7 @@ class ConfigManager:
                 # rewrite, so the on-disk file stops carrying retired keys.
                 needs_resave = bool(RETIRED_TOP_LEVEL_KEYS & file_data.keys())
 
-                projects_raw = file_data.get("projects", {})
-                if projects_raw:
-                    first_value = next(iter(projects_raw.values()), None)
-                    if isinstance(first_value, str):
-                        needs_resave = True
-
-                if not needs_resave:
-                    for entry_data in projects_raw.values():
-                        if isinstance(entry_data, dict) and (
-                            RETIRED_PROJECT_KEYS & entry_data.keys()
-                        ):
-                            needs_resave = True
-                            break
+                _capture_legacy_registry(file_data)
 
                 merged_data = file_data.copy()
                 for field_name in BasicMemoryConfig.model_fields:
@@ -154,80 +151,52 @@ class ConfigManager:
         _CONFIG_MTIME = None
         _CONFIG_SIZE = None
 
-    @property
-    def projects(self) -> Dict[str, str]:
-        """Return the legacy name-to-path project mapping."""
-        return {name: entry.path for name, entry in self.config.projects.items()}
 
-    @property
-    def default_project(self) -> Optional[str]:
-        return self.config.default_project
+def _capture_legacy_registry(file_data: dict) -> None:
+    """Remember a pre-B2 registry found in config.json for the one-time import."""
+    global _LEGACY_PROJECTS, _LEGACY_DEFAULT_PROJECT
+    # Always reassign, including to empty: the capture must describe the file
+    # that was just read, or a later config dir inherits the previous one's
+    # registry.
+    _LEGACY_PROJECTS = normalize_legacy_projects(file_data)
+    legacy_default = file_data.get("default_project")
+    _LEGACY_DEFAULT_PROJECT = legacy_default if isinstance(legacy_default, str) else None
 
-    def add_project(self, name: str, path: str) -> ProjectConfig:
-        project_name, _ = self.get_project(name)
-        if project_name:  # pragma: no cover
-            raise ValueError(f"Project '{name}' already exists")
 
-        project_path = Path(path)
-        config = self.load_config()
-        config.projects[name] = ProjectEntry(path=str(project_path))
-        self.save_config(config)
-        return ProjectConfig(name=name, home=project_path)
+def legacy_config_registry() -> Tuple[Dict[str, str], Optional[str]]:
+    """Return the ``(projects, default_project)`` a legacy config.json declares.
 
-    def remove_project(self, name: str) -> None:
-        project_name, _ = self.get_project(name)
-        if not project_name:  # pragma: no cover
-            raise ValueError(f"Project '{name}' not found")
+    Reads the file directly so the caller does not depend on load ordering, and
+    falls back to what the last load captured — a format-migration resave will
+    have already dropped these keys from disk, and losing them would strand a
+    pre-B2 install with an empty registry.
+    """
+    config_file = resolve_data_dir() / CONFIG_FILE_NAME
+    if config_file.is_file():
+        try:
+            file_data = json.loads(config_file.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:  # pragma: no cover - load_config already exits on this
+            file_data = {}
+        legacy_projects = normalize_legacy_projects(file_data)
+        if legacy_projects:
+            legacy_default = file_data.get("default_project")
+            return legacy_projects, legacy_default if isinstance(legacy_default, str) else None
 
-        config = self.load_config()
-        if project_name == config.default_project:  # pragma: no cover
-            raise ValueError(f"Cannot remove the default project '{name}'")
-
-        del config.projects[project_name]
-        self.save_config(config)
-
-    def set_default_project(self, name: str) -> None:
-        project_name, _ = self.get_project(name)
-        if not project_name:  # pragma: no cover
-            raise ValueError(f"Project '{name}' not found")
-
-        config = self.load_config()
-        config.default_project = project_name
-        self.save_config(config)
-
-    def get_project(self, name: str) -> Tuple[str, str] | Tuple[None, None]:
-        """Look up a project by display name or permalink."""
-        project_permalink = generate_permalink(name)
-        for project_name, entry in self.config.projects.items():
-            if project_permalink == generate_permalink(project_name):
-                return project_name, entry.path
-        return None, None
+    return dict(_LEGACY_PROJECTS), _LEGACY_DEFAULT_PROJECT
 
 
 def get_project_config(project_name: Optional[str] = None) -> ProjectConfig:
-    """Get the requested or default project configuration."""
-    actual_project_name = None
-    app_config = ConfigManager().load_config()
+    """Get the requested or default project configuration from the registry."""
+    from basic_memory.project_registry import default_project_name, lookup_project
 
-    os_project_name = os.environ.get("BASIC_MEMORY_PROJECT")
-    if os_project_name:  # pragma: no cover
-        logger.warning(
-            "BASIC_MEMORY_PROJECT is not supported anymore. Set the default project "
-            f"in the config instead. Setting default project to {os_project_name}"
-        )
-        actual_project_name = project_name
-    elif not project_name:
-        actual_project_name = app_config.default_project
-    else:  # pragma: no cover
-        actual_project_name = project_name
+    actual_project_name = project_name or default_project_name()
+    if actual_project_name is None:
+        raise ValueError("No project specified and no default project is set")
 
-    assert actual_project_name is not None, "actual_project_name cannot be None"
-    project_permalink = generate_permalink(actual_project_name)
-    for name, entry in app_config.projects.items():
-        if project_permalink == generate_permalink(name):
-            return ProjectConfig(name=name, home=Path(entry.path))
-
-    raise ValueError(f"Project '{actual_project_name}' not found")  # pragma: no cover
+    name, path = lookup_project(actual_project_name)
+    if name is None or path is None:
+        raise ValueError(f"Project '{actual_project_name}' not found")
+    return ProjectConfig(name=name, home=Path(path))
 
 
 def save_basic_memory_config(file_path: Path, config: BasicMemoryConfig) -> None:

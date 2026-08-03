@@ -8,6 +8,7 @@ import time
 from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Protocol
 
 from loguru import logger
@@ -18,7 +19,9 @@ from watchfiles import awatch
 from watchfiles.main import Change, FileChange
 
 from basic_memory import db
-from basic_memory.config import BasicMemoryConfig, ConfigManager, WATCH_STATUS_JSON
+from basic_memory.config import BasicMemoryConfig, WATCH_STATUS_JSON
+from basic_memory.config_models import is_locally_syncable
+from basic_memory.project_registry import registry_projects
 from basic_memory.ignore_utils import load_gitignore_patterns
 from basic_memory.index.local_runtime import LocalWatchEventIndexRuntimeFactory
 from basic_memory.index.local_watch import (
@@ -177,11 +180,7 @@ class WatchService:
         if self.constrained_project:
             projects = [project for project in projects if project.name == self.constrained_project]
 
-        skipped = [
-            project.name
-            for project in projects
-            if not self.app_config.is_locally_syncable(project.name, project.path)
-        ]
+        skipped = [project.name for project in projects if not is_locally_syncable(project.path)]
         if skipped:
             projects = [project for project in projects if project.name not in skipped]
             logger.debug(f"Skipping projects that are not locally syncable: {skipped}")
@@ -253,8 +252,12 @@ class WatchService:
         """Return whether a watchfiles path should become a storage event."""
         project_roots = self._sorted_watch_filter_roots
         if project_roots is None:
+            # Trigger: a change arrives before the first watch cycle recorded its roots.
+            # Why: without roots, hidden-path checks run against absolute paths and
+            #      reject anything under a dotted directory anywhere above the project.
+            # Outcome: read the roots straight out of the registry.
             project_roots = local_watch_filter_roots(
-                entry for entry in self.app_config.projects.values() if entry.path
+                SimpleNamespace(path=path_value) for path_value in registry_projects().values()
             )
         return local_watch_path_is_observable(project_roots=project_roots, path=path)
 
@@ -269,15 +272,15 @@ class WatchService:
             path=path,
         )
 
-    def _project_is_configured(self, project: Project) -> bool:
-        """Return whether a project still exists in local config.
+    async def _project_is_registered(self, project: Project) -> bool:
+        """Return whether a project still exists in the registry.
 
-        Re-reads current config (via ConfigManager's mtime-validated cache) rather
-        than the startup snapshot captured in self.app_config: a project deleted
-        after the watcher started must not be re-indexed by background sync.
+        Re-queries the registry rather than trusting the project list captured
+        at the start of the watch cycle: a project deleted after the watcher
+        started must not be re-indexed by background sync.
         """
-        current_projects = ConfigManager().config.projects
-        return project.name in current_projects or project.permalink in current_projects
+        async with db.scoped_session(self.session_maker) as session:
+            return await self.project_repository.get_by_id(session, project.id) is not None
 
     async def _handle_changes_isolated(self, project: Project, changes: set[FileChange]) -> None:
         """Process one project's batch, containing failures to that project.
@@ -299,7 +302,7 @@ class WatchService:
 
     async def handle_changes(self, project: Project, changes: set[FileChange]) -> None:
         """Normalize one project's watchfiles batch and process it through indexing."""
-        if not self._project_is_configured(project):
+        if not await self._project_is_registered(project):
             logger.info(
                 f"Skipping event-index batch for deleted project: "
                 f"{project.name}, change_count={len(changes)}"

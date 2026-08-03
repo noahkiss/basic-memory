@@ -16,7 +16,6 @@ from fastmcp import Context
 from pydantic import AliasChoices, Field
 from mcp.server.fastmcp.exceptions import ToolError
 
-from basic_memory.config import ConfigManager
 from basic_memory.mcp.project_context import (
     detect_project_from_memory_url_prefix,
     get_project_client,
@@ -232,7 +231,6 @@ async def read_content(
     if project is None and project_id is None:
         detected = await detect_project_from_memory_url_prefix(
             path,
-            ConfigManager().config,
             context=context,
         )
         if detected:

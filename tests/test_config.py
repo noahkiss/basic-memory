@@ -9,15 +9,12 @@ from typing import Any, cast
 from basic_memory.config import (
     BasicMemoryConfig,
     ConfigManager,
-    ProjectEntry,
     default_fastembed_cache_dir,
     resolve_data_dir,
 )
+from basic_memory.config_migrations import drop_retired_config_keys, normalize_legacy_projects
+from basic_memory.config_models import is_locally_syncable
 from pathlib import Path
-
-
-def _migrate_legacy_projects(data: Any) -> Any:
-    return cast(Any, BasicMemoryConfig.migrate_legacy_projects)(data)
 
 
 def _migrate_legacy_sync_changes(data: Any) -> Any:
@@ -107,103 +104,21 @@ class TestLegacySyncChangesMigration:
 
 
 class TestBasicMemoryConfig:
-    """Test BasicMemoryConfig behavior with BASIC_MEMORY_HOME environment variable."""
+    """Test BasicMemoryConfig behavior unrelated to the project registry.
 
-    def test_default_behavior_without_basic_memory_home(self, config_home, monkeypatch):
-        """Test that config uses default path when BASIC_MEMORY_HOME is not set."""
-        # Ensure BASIC_MEMORY_HOME is not set
-        monkeypatch.delenv("BASIC_MEMORY_HOME", raising=False)
-
-        config = BasicMemoryConfig()
-
-        # Should use the default path (home/basic-memory)
-        expected_path = config_home / "basic-memory"
-        assert Path(config.projects["main"].path) == expected_path
-        assert config.default_project == "main"
-
-    def test_respects_basic_memory_home_environment_variable(self, config_home, monkeypatch):
-        """Test that config respects BASIC_MEMORY_HOME environment variable."""
-        custom_path = config_home / "app" / "data"
-        monkeypatch.setenv("BASIC_MEMORY_HOME", str(custom_path))
-
-        config = BasicMemoryConfig()
-
-        # Should use the custom path from environment variable
-        assert Path(config.projects["main"].path) == custom_path
-
-    def test_model_post_init_respects_basic_memory_home_creates_main(
-        self, config_home, monkeypatch
-    ):
-        """Test that model_post_init creates main project with BASIC_MEMORY_HOME when missing and no other projects."""
-        custom_path = config_home / "custom" / "memory" / "path"
-        monkeypatch.setenv("BASIC_MEMORY_HOME", str(custom_path))
-
-        # Create config without main project
-        config = BasicMemoryConfig()
-
-        # model_post_init should have added main project with BASIC_MEMORY_HOME
-        assert "main" in config.projects
-        assert Path(config.projects["main"].path) == custom_path
-
-    def test_model_post_init_respects_basic_memory_home_sets_non_main_default(
-        self, config_home, monkeypatch
-    ):
-        """Test that model_post_init does not create main project with BASIC_MEMORY_HOME when another project exists."""
-        custom_path = config_home / "custom" / "memory" / "path"
-        monkeypatch.setenv("BASIC_MEMORY_HOME", str(custom_path))
-
-        # Create config without main project
-        other_path = config_home / "some" / "path"
-        config = BasicMemoryConfig(projects={"other": {"path": str(other_path)}})
-
-        # model_post_init should not add main project with BASIC_MEMORY_HOME
-        assert "main" not in config.projects
-        assert Path(config.projects["other"].path) == other_path
-        assert config.default_project == "other"
-
-    def test_model_post_init_fallback_without_basic_memory_home(self, config_home, monkeypatch):
-        """Test that model_post_init can set a non-main default when BASIC_MEMORY_HOME is not set."""
-        # Ensure BASIC_MEMORY_HOME is not set
-        monkeypatch.delenv("BASIC_MEMORY_HOME", raising=False)
-
-        # Create config without main project
-        other_path = config_home / "some" / "path"
-        config = BasicMemoryConfig(projects={"other": {"path": str(other_path)}})
-
-        # model_post_init should not add main project, but "other" should now be the default
-        assert "main" not in config.projects
-        assert Path(config.projects["other"].path) == other_path
-        assert config.default_project == "other"
-
-    def test_basic_memory_home_with_relative_path(self, config_home, monkeypatch):
-        """Test that BASIC_MEMORY_HOME works with relative paths."""
-        relative_path = "relative/memory/path"
-        monkeypatch.setenv("BASIC_MEMORY_HOME", relative_path)
-
-        config = BasicMemoryConfig()
-
-        # Should normalize to platform-native path format
-        assert Path(config.projects["main"].path) == Path(relative_path)
-
-    def test_basic_memory_home_overrides_existing_main_project(self, config_home, monkeypatch):
-        """Test that BASIC_MEMORY_HOME is not used when a map is passed in the constructor."""
-        custom_path = str(config_home / "override" / "memory" / "path")
-        monkeypatch.setenv("BASIC_MEMORY_HOME", custom_path)
-
-        # Try to create config with a different main project path
-        original_path = str(config_home / "original" / "path")
-        config = BasicMemoryConfig(projects={"main": {"path": original_path}})
-
-        # The default_factory should override with BASIC_MEMORY_HOME value
-        # Note: This tests the current behavior where default_factory takes precedence
-        assert config.projects["main"].path == original_path
+    The project registry (which projects exist, their paths, the default) is
+    owned by the database (GAPS B2) — see ``tests/services/test_initialization.py``
+    for ``ensure_project_registry`` coverage and ``tests/test_config.py``'s
+    ``TestNormalizeLegacyProjects``/``TestLegacyProjectsToleratedButNotPersisted``
+    for the config-side migration/tolerance behavior.
+    """
 
     def test_app_database_path_uses_custom_config_dir(self, tmp_path, monkeypatch):
         """Default SQLite DB should live under BASIC_MEMORY_CONFIG_DIR when set."""
         custom_config_dir = tmp_path / "instance-a" / "state"
         monkeypatch.setenv("BASIC_MEMORY_CONFIG_DIR", str(custom_config_dir))
 
-        config = BasicMemoryConfig(projects={"main": {"path": str(tmp_path / "project")}})
+        config = BasicMemoryConfig()
 
         assert config.data_dir_path == custom_config_dir
         assert config.app_database_path == custom_config_dir / "memory.db"
@@ -264,128 +179,6 @@ class TestBasicMemoryConfig:
             config.model_dump(mode="json")["semantic_embedding_cache_dir"]
             == "/custom/explicit/path"
         )
-
-    def test_explicit_default_project_preserved(self, config_home, monkeypatch):
-        """Test that a valid explicit default_project is not overwritten by model_post_init."""
-        monkeypatch.delenv("BASIC_MEMORY_HOME", raising=False)
-
-        config = BasicMemoryConfig(
-            projects={
-                "alpha": {"path": str(config_home / "alpha")},
-                "beta": {"path": str(config_home / "beta")},
-            },
-            default_project="beta",
-        )
-
-        assert config.default_project == "beta"
-
-    def test_invalid_default_project_corrected(self, config_home, monkeypatch):
-        """Test that an invalid default_project is corrected to the first project."""
-        monkeypatch.delenv("BASIC_MEMORY_HOME", raising=False)
-
-        config = BasicMemoryConfig(
-            projects={
-                "alpha": {"path": str(config_home / "alpha")},
-                "beta": {"path": str(config_home / "beta")},
-            },
-            default_project="nonexistent",
-        )
-
-        assert config.default_project == "alpha"
-
-    def test_no_default_project_key_uses_first_project(self, config_home, monkeypatch):
-        """Test that config without default_project key sets it to the first project."""
-        monkeypatch.delenv("BASIC_MEMORY_HOME", raising=False)
-
-        # Simulate loading a config file that has no default_project key —
-        # the field default (None) kicks in, and model_post_init resolves it
-        config = BasicMemoryConfig(
-            projects={
-                "research": {"path": str(config_home / "research")},
-                "notes": {"path": str(config_home / "notes")},
-            },
-        )
-
-        assert config.default_project == "research"
-
-    def test_empty_string_default_project_corrected(self, config_home, monkeypatch):
-        """Test that an empty-string default_project is corrected to the first project."""
-        monkeypatch.delenv("BASIC_MEMORY_HOME", raising=False)
-
-        config = BasicMemoryConfig(
-            projects={
-                "alpha": {"path": str(config_home / "alpha")},
-            },
-            default_project="",
-        )
-
-        # Empty string is not in projects, so model_post_init corrects it
-        assert config.default_project == "alpha"
-
-    def test_single_project_default_always_matches(self, config_home, monkeypatch):
-        """Test that a config with one project always resolves default_project to it."""
-        monkeypatch.delenv("BASIC_MEMORY_HOME", raising=False)
-
-        config = BasicMemoryConfig(
-            projects={"only": {"path": str(config_home / "only")}},
-        )
-
-        assert config.default_project == "only"
-
-    def test_stale_default_project_loaded_from_file(self, config_home, monkeypatch):
-        """Test that a config file with a stale default_project is corrected on load."""
-        import json
-        import basic_memory.config
-
-        monkeypatch.delenv("BASIC_MEMORY_HOME", raising=False)
-
-        config_manager = ConfigManager()
-        config_manager.config_dir = config_home / ".basic-memory"
-        config_manager.config_file = config_manager.config_dir / "config.json"
-        config_manager.config_dir.mkdir(parents=True, exist_ok=True)
-
-        # Write a config file where default_project references a removed project
-        config_data = {
-            "projects": {
-                "research": {"path": str(config_home / "research")},
-                "notes": {"path": str(config_home / "notes")},
-            },
-            "default_project": "deleted-project",
-        }
-        config_manager.config_file.write_text(json.dumps(config_data, indent=2))
-        basic_memory.config._CONFIG_CACHE = None
-        basic_memory.config._CONFIG_MTIME = None
-        basic_memory.config._CONFIG_SIZE = None
-
-        loaded = config_manager.load_config()
-        assert loaded.default_project == "research"
-
-    def test_config_file_without_default_project_key(self, config_home, monkeypatch):
-        """Test that a config file with no default_project key resolves dynamically."""
-        import json
-        import basic_memory.config
-
-        monkeypatch.delenv("BASIC_MEMORY_HOME", raising=False)
-
-        config_manager = ConfigManager()
-        config_manager.config_dir = config_home / ".basic-memory"
-        config_manager.config_file = config_manager.config_dir / "config.json"
-        config_manager.config_dir.mkdir(parents=True, exist_ok=True)
-
-        # Write a config file that deliberately omits default_project
-        config_data = {
-            "projects": {
-                "work": {"path": str(config_home / "work")},
-                "personal": {"path": str(config_home / "personal")},
-            },
-        }
-        config_manager.config_file.write_text(json.dumps(config_data, indent=2))
-        basic_memory.config._CONFIG_CACHE = None
-        basic_memory.config._CONFIG_MTIME = None
-        basic_memory.config._CONFIG_SIZE = None
-
-        loaded = config_manager.load_config()
-        assert loaded.default_project == "work"
 
 
 class TestDataDirHelpers:
@@ -526,98 +319,18 @@ class TestDataDirHelpers:
 class TestConfigManager:
     """Test ConfigManager functionality."""
 
-    @pytest.fixture
-    def temp_config_manager(self):
-        """Create a ConfigManager with temporary config file."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_path = Path(temp_dir)
-
-            # Create a test ConfigManager instance
-            config_manager = ConfigManager()
-            # Override config paths to use temp directory
-            config_manager.config_dir = temp_path / "basic-memory"
-            config_manager.config_file = config_manager.config_dir / "config.yaml"
-            config_manager.config_dir.mkdir(parents=True, exist_ok=True)
-
-            # Create initial config with test projects
-            test_config = BasicMemoryConfig(
-                default_project="main",
-                projects={
-                    "main": {"path": str(temp_path / "main")},
-                    "test-project": {"path": str(temp_path / "test")},
-                    "special-chars": {
-                        "path": str(temp_path / "special")
-                    },  # This will be the config key for "Special/Chars"
-                },
-            )
-            config_manager.save_config(test_config)
-
-            yield config_manager
-
-    def test_set_default_project_with_exact_name_match(self, temp_config_manager):
-        """Test set_default_project when project name matches config key exactly."""
-        config_manager = temp_config_manager
-
-        # Set default to a project that exists with exact name match
-        config_manager.set_default_project("test-project")
-
-        # Verify the config was updated
-        config = config_manager.load_config()
-        assert config.default_project == "test-project"
-
-    def test_set_default_project_with_permalink_lookup(self, temp_config_manager):
-        """Test set_default_project when input needs permalink normalization."""
-        config_manager = temp_config_manager
-
-        # Simulate a project that was created with special characters
-        # The config key would be the permalink, but user might type the original name
-
-        # First add a project with original name that gets normalized
-        config = config_manager.load_config()
-        config.projects["special-chars-project"] = ProjectEntry(path=str(Path("/tmp/special")))
-        config_manager.save_config(config)
-
-        # Now test setting default using a name that will normalize to the config key
-        config_manager.set_default_project(
-            "Special Chars Project"
-        )  # This should normalize to "special-chars-project"
-
-        # Verify the config was updated with the correct config key
-        updated_config = config_manager.load_config()
-        assert updated_config.default_project == "special-chars-project"
-
-    def test_set_default_project_uses_canonical_name(self, temp_config_manager):
-        """Test that set_default_project uses the canonical config key, not user input."""
-        config_manager = temp_config_manager
-
-        # Add a project with a config key that differs from user input
-        config = config_manager.load_config()
-        config.projects["my-test-project"] = ProjectEntry(path=str(Path("/tmp/mytest")))
-        config_manager.save_config(config)
-
-        # Set default using input that will match but is different from config key
-        config_manager.set_default_project("My Test Project")  # Should find "my-test-project"
-
-        # Verify that the canonical config key is used, not the user input
-        updated_config = config_manager.load_config()
-        assert updated_config.default_project == "my-test-project"
-        # Should NOT be the user input
-        assert updated_config.default_project != "My Test Project"
-
-    def test_set_default_project_nonexistent_project(self, temp_config_manager):
-        """Test set_default_project raises ValueError for nonexistent project."""
-        config_manager = temp_config_manager
-
-        with pytest.raises(ValueError, match="Project 'nonexistent' not found"):
-            config_manager.set_default_project("nonexistent")
-
     @pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits are not portable to Windows")
-    def test_save_config_uses_private_permissions(self, temp_config_manager):
+    def test_save_config_uses_private_permissions(self, tmp_path):
         """Config can contain provider API keys, so writes should enforce private modes."""
-        config_manager = temp_config_manager
-        config = config_manager.load_config()
-        config.semantic_embedding_api_key = "sk-test123"
+        config_manager = ConfigManager()
+        config_manager.config_dir = tmp_path / "basic-memory"
+        config_manager.config_file = config_manager.config_dir / "config.json"
+        config_manager.config_dir.mkdir(parents=True, exist_ok=True)
 
+        config = BasicMemoryConfig()
+        config_manager.save_config(config)
+
+        config.semantic_embedding_api_key = "sk-test123"
         config_manager.config_dir.chmod(0o777)
         config_manager.config_file.chmod(0o666)
         config_manager.save_config(config)
@@ -683,105 +396,15 @@ class TestConfigManager:
         assert config_manager.config_dir == config_home / ".basic-memory"
         assert config_manager.config_file == config_home / ".basic-memory" / "config.json"
 
-    def test_remove_project_with_exact_name_match(self, temp_config_manager):
-        """Test remove_project when project name matches config key exactly."""
-        config_manager = temp_config_manager
+    def test_legacy_projects_key_tolerated_but_not_written_back(self):
+        """A pre-B2 config.json with a full legacy registry still parses (GAPS B2).
 
-        # Verify project exists
-        config = config_manager.load_config()
-        assert "test-project" in config.projects
-
-        # Remove the project with exact name match
-        config_manager.remove_project("test-project")
-
-        # Verify the project was removed
-        config = config_manager.load_config()
-        assert "test-project" not in config.projects
-
-    def test_remove_project_with_permalink_lookup(self, temp_config_manager):
-        """Test remove_project when input needs permalink normalization."""
-        config_manager = temp_config_manager
-
-        # Add a project with normalized key
-        config = config_manager.load_config()
-        config.projects["special-chars-project"] = ProjectEntry(path=str(Path("/tmp/special")))
-        config_manager.save_config(config)
-
-        # Remove using a name that will normalize to the config key
-        config_manager.remove_project(
-            "Special Chars Project"
-        )  # This should normalize to "special-chars-project"
-
-        # Verify the project was removed using the correct config key
-        updated_config = config_manager.load_config()
-        assert "special-chars-project" not in updated_config.projects
-
-    def test_remove_project_uses_canonical_name(self, temp_config_manager):
-        """Test that remove_project uses the canonical config key, not user input."""
-        config_manager = temp_config_manager
-
-        # Add a project with a config key that differs from user input
-        config = config_manager.load_config()
-        config.projects["my-test-project"] = ProjectEntry(path=str(Path("/tmp/mytest")))
-        config_manager.save_config(config)
-
-        # Remove using input that will match but is different from config key
-        config_manager.remove_project("My Test Project")  # Should find "my-test-project"
-
-        # Verify that the canonical config key was removed
-        updated_config = config_manager.load_config()
-        assert "my-test-project" not in updated_config.projects
-
-    def test_remove_project_nonexistent_project(self, temp_config_manager):
-        """Test remove_project raises ValueError for nonexistent project."""
-        config_manager = temp_config_manager
-
-        with pytest.raises(ValueError, match="Project 'nonexistent' not found"):
-            config_manager.remove_project("nonexistent")
-
-    def test_remove_project_cannot_remove_default(self, temp_config_manager):
-        """Test remove_project raises ValueError when trying to remove default project."""
-        config_manager = temp_config_manager
-
-        # Try to remove the default project
-        with pytest.raises(ValueError, match="Cannot remove the default project"):
-            config_manager.remove_project("main")
-
-    def test_backward_compatibility_loading_old_format_config(self):
-        """Test that old config files with Dict[str, str] projects can be loaded and migrated."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_path = Path(temp_dir)
-
-            config_manager = ConfigManager()
-            config_manager.config_dir = temp_path / "basic-memory"
-            config_manager.config_file = config_manager.config_dir / "config.json"
-            config_manager.config_dir.mkdir(parents=True, exist_ok=True)
-
-            # Manually write old-style config with Dict[str, str] projects
-            import json
-
-            old_config_data = {
-                "env": "dev",
-                "projects": {"main": str(temp_path / "main")},
-                "default_project": "main",
-                "log_level": "INFO",
-            }
-            config_manager.config_file.write_text(json.dumps(old_config_data, indent=2))
-
-            # Clear the config cache to ensure we load from the temp file
-            import basic_memory.config
-
-            basic_memory.config._CONFIG_CACHE = None
-            basic_memory.config._CONFIG_MTIME = None
-            basic_memory.config._CONFIG_SIZE = None
-
-            # Should load successfully with migration to ProjectEntry
-            config = config_manager.load_config()
-            assert isinstance(config.projects["main"], ProjectEntry)
-            assert config.projects["main"].path == str(temp_path / "main")
-
-    def test_retired_routing_keys_are_dropped_from_config_file(self):
-        """Old project_modes/cloud_projects blocks are dropped, not translated."""
+        The registry (``projects``/``default_project``) is DB-owned now; loading
+        a legacy file must not raise, and the format-migration resave triggered by
+        the retired routing keys must not resurrect those registry keys in the
+        rewritten file — ``BasicMemoryConfig`` no longer declares those fields at
+        all, so ``model_dump()`` cannot carry them forward.
+        """
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
 
@@ -816,16 +439,15 @@ class TestConfigManager:
             basic_memory.config._CONFIG_MTIME = None
             basic_memory.config._CONFIG_SIZE = None
 
+            # Parses without error.
             config = config_manager.load_config()
-
-            # The local path recorded in projects wins; the cloud block is gone.
-            assert config.projects["research"].path == str(temp_path / "research")
-            assert config.projects["main"].path == str(temp_path / "main")
+            assert isinstance(config, BasicMemoryConfig)
 
             raw = json.loads(config_manager.config_file.read_text(encoding="utf-8"))
             assert "project_modes" not in raw
             assert "cloud_projects" not in raw
-            assert set(raw["projects"]["research"]) == {"path"}
+            assert "projects" not in raw
+            assert "default_project" not in raw
 
     def test_legacy_cloud_mode_key_is_stripped_on_normalization_save(self):
         """Legacy cloud_mode should be removed from config.json after load/save normalization."""
@@ -859,41 +481,8 @@ class TestConfigManager:
             raw = json.loads(config_manager.config_file.read_text(encoding="utf-8"))
             assert "cloud_mode" not in raw
 
-    def test_migration_creates_backup_of_old_config(self):
-        """Config migration should create a .bak backup before overwriting."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_path = Path(temp_dir)
-
-            config_manager = ConfigManager()
-            config_manager.config_dir = temp_path / "basic-memory"
-            config_manager.config_file = config_manager.config_dir / "config.json"
-            config_manager.config_dir.mkdir(parents=True, exist_ok=True)
-
-            import json
-
-            old_config_data = {
-                "env": "dev",
-                "projects": {"main": str(temp_path / "main")},
-                "default_project": "main",
-            }
-            config_manager.config_file.write_text(json.dumps(old_config_data, indent=2))
-            original_content = config_manager.config_file.read_text()
-
-            import basic_memory.config
-
-            basic_memory.config._CONFIG_CACHE = None
-            basic_memory.config._CONFIG_MTIME = None
-            basic_memory.config._CONFIG_SIZE = None
-
-            config_manager.load_config()
-
-            # Backup should exist with the original content
-            backup_path = config_manager.config_file.with_suffix(".json.bak")
-            assert backup_path.exists(), "Migration should create a backup file"
-            assert backup_path.read_text() == original_content
-
     def test_no_backup_when_config_is_current_format(self):
-        """No backup should be created when config is already in the current format."""
+        """No backup should be created when config has no retired top-level keys."""
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
 
@@ -904,7 +493,7 @@ class TestConfigManager:
 
             import json
 
-            # Write config in the current ProjectEntry format — no migration needed
+            # No RETIRED_TOP_LEVEL_KEYS present — no migration needed
             current_config_data = {
                 "env": "dev",
                 "projects": {"main": {"path": str(temp_path / "main")}},
@@ -922,131 +511,6 @@ class TestConfigManager:
 
             backup_path = config_manager.config_file.with_suffix(".json.bak")
             assert not backup_path.exists(), "No backup should be created for current-format config"
-
-
-class TestPlatformNativePathSeparators:
-    """Test that config uses platform-native path separators."""
-
-    def test_project_paths_use_platform_native_separators_in_config(self, monkeypatch):
-        """Test that project paths use platform-native separators when created."""
-        import platform
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_path = Path(temp_dir)
-
-            # Set up ConfigManager with temp directory
-            config_manager = ConfigManager()
-            config_manager.config_dir = temp_path / "basic-memory"
-            config_manager.config_file = config_manager.config_dir / "config.json"
-            config_manager.config_dir.mkdir(parents=True, exist_ok=True)
-
-            # Create a project path
-            project_path = temp_path / "my" / "project"
-            project_path.mkdir(parents=True, exist_ok=True)
-
-            # Add project via ConfigManager
-            config = BasicMemoryConfig(projects={})
-            config.projects["test-project"] = ProjectEntry(path=str(project_path))
-            config_manager.save_config(config)
-
-            # Read the raw JSON file
-            import json
-
-            config_data = json.loads(config_manager.config_file.read_text())
-
-            # Verify path uses platform-native separators
-            saved_path = config_data["projects"]["test-project"]["path"]
-
-            # On Windows, should have backslashes; on Unix, forward slashes
-            if platform.system() == "Windows":
-                # Windows paths should contain backslashes
-                assert "\\" in saved_path or ":" in saved_path  # C:\\ or \\UNC
-                assert "/" not in saved_path.replace(":/", "")  # Exclude drive letter
-            else:
-                # Unix paths should use forward slashes
-                assert "/" in saved_path
-                # Should not force POSIX on non-Windows
-                assert saved_path == str(project_path)
-
-    def test_add_project_uses_platform_native_separators(self, monkeypatch):
-        """Test that ConfigManager.add_project() uses platform-native separators."""
-        import platform
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_path = Path(temp_dir)
-
-            # Set up ConfigManager
-            config_manager = ConfigManager()
-            config_manager.config_dir = temp_path / "basic-memory"
-            config_manager.config_file = config_manager.config_dir / "config.json"
-            config_manager.config_dir.mkdir(parents=True, exist_ok=True)
-
-            # Initialize with empty projects
-            initial_config = BasicMemoryConfig(projects={})
-            config_manager.save_config(initial_config)
-
-            # Add project
-            project_path = temp_path / "new" / "project"
-            config_manager.add_project("new-project", str(project_path))
-
-            # Load and verify
-            config = config_manager.load_config()
-            saved_path = config.projects["new-project"].path
-
-            # Verify platform-native separators
-            if platform.system() == "Windows":
-                assert "\\" in saved_path or ":" in saved_path
-            else:
-                assert "/" in saved_path
-                assert saved_path == str(project_path)
-
-    def test_add_project_never_creates_directory(self):
-        """Test that ConfigManager.add_project() is pure config management — no mkdir.
-
-        Directory creation is delegated to ProjectService via FileService.
-        """
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_path = Path(temp_dir)
-
-            config_manager = ConfigManager()
-            config_manager.config_dir = temp_path / "basic-memory"
-            config_manager.config_file = config_manager.config_dir / "config.json"
-            config_manager.config_dir.mkdir(parents=True, exist_ok=True)
-
-            initial_config = BasicMemoryConfig(projects={})
-            config_manager.save_config(initial_config)
-
-            # Use a path that does not exist — ConfigManager should not create it
-            nonexistent_path = str(temp_path / "nonexistent" / "project")
-            config_manager.add_project("test-project", nonexistent_path)
-
-            # Check directory does NOT exist right after add_project(),
-            # before load_config() which triggers the model validator
-            assert not Path(nonexistent_path).exists()
-
-            # Verify project was persisted in config
-            config = config_manager.load_config()
-            assert "test-project" in config.projects
-            assert config.projects["test-project"].path == nonexistent_path
-
-    def test_model_post_init_uses_platform_native_separators(self, config_home, monkeypatch):
-        """Test that model_post_init uses platform-native separators."""
-        import platform
-
-        monkeypatch.delenv("BASIC_MEMORY_HOME", raising=False)
-
-        # Create config without projects (triggers model_post_init to add main)
-        config = BasicMemoryConfig(projects={})
-
-        # Verify main project path uses platform-native separators
-        main_path = config.projects["main"].path
-
-        if platform.system() == "Windows":
-            # Windows: should have backslashes or drive letter
-            assert "\\" in main_path or ":" in main_path
-        else:
-            # Unix: should have forward slashes
-            assert "/" in main_path
 
 
 class TestSemanticSearchConfig:
@@ -1248,7 +712,6 @@ class TestFormattingConfig:
 
             # Create config with formatting settings
             test_config = BasicMemoryConfig(
-                projects={"main": {"path": str(temp_path / "main")}},
                 format_on_save=True,
                 formatter_command="prettier --write {file}",
                 formatters={"md": "prettier --write {file}", "json": "prettier --write {file}"},
@@ -1268,31 +731,25 @@ class TestFormattingConfig:
 
 
 class TestLocalSyncability:
-    """Which configured projects the local watcher is allowed to sync."""
+    """Which registered projects the local watcher is allowed to sync.
 
-    def test_is_locally_syncable_true_for_config_project_with_absolute_path(self, tmp_path):
-        """A project in config with an absolute path is locally syncable."""
+    ``is_locally_syncable`` is a module-level function in ``config_models``
+    (GAPS B2): the project registry moved to the database, so this check no
+    longer takes a config/name pair — it only asks whether a path is absolute.
+    """
+
+    def test_is_locally_syncable_true_for_absolute_path(self, tmp_path):
+        """An absolute path is locally syncable."""
         abs_path = str(tmp_path / "research")
-        config = BasicMemoryConfig(projects={"research": ProjectEntry(path=abs_path)})
-        assert config.is_locally_syncable("research", abs_path) is True
+        assert is_locally_syncable(abs_path) is True
 
     def test_is_locally_syncable_false_for_empty_path(self):
         """An empty path resolves to cwd, so it is never locally syncable (#949)."""
-        config = BasicMemoryConfig(projects={"empty": ProjectEntry(path="")})
-        assert config.is_locally_syncable("empty", "") is False
+        assert is_locally_syncable("") is False
 
     def test_is_locally_syncable_false_for_relative_path(self):
         """A relative (slug) path is not a directory we own, so it is not syncable."""
-        config = BasicMemoryConfig(projects={"slug": ProjectEntry(path="bare-slug")})
-        assert config.is_locally_syncable("slug", "bare-slug") is False
-
-    def test_is_locally_syncable_false_for_orphan_not_in_config(self, tmp_path):
-        """A DB row absent from config is not syncable even with an absolute path.
-
-        Config is the source of truth; stale rows must not be synced (#949).
-        """
-        config = BasicMemoryConfig(projects={})
-        assert config.is_locally_syncable("orphan", str(tmp_path / "orphan")) is False
+        assert is_locally_syncable("bare-slug") is False
 
 
 class TestConfigCacheMtimeInvalidation:
@@ -1313,15 +770,12 @@ class TestConfigCacheMtimeInvalidation:
             config_manager.config_file = config_manager.config_dir / "config.json"
             config_manager.config_dir.mkdir(parents=True, exist_ok=True)
 
-            test_config = BasicMemoryConfig(
-                projects={"main": {"path": str(temp_path / "main")}},
-                default_project="main",
-            )
+            test_config = BasicMemoryConfig(log_level="INFO")
             config_manager.save_config(test_config)
 
             # First load populates cache
             config1 = config_manager.load_config()
-            assert config1.default_project == "main"
+            assert config1.log_level == "INFO"
 
             # Second load should return cached config (same object)
             config2 = config_manager.load_config()
@@ -1346,19 +800,16 @@ class TestConfigCacheMtimeInvalidation:
             config_manager.config_file = config_manager.config_dir / "config.json"
             config_manager.config_dir.mkdir(parents=True, exist_ok=True)
 
-            test_config = BasicMemoryConfig(
-                projects={"main": {"path": str(temp_path / "main")}},
-                default_project="main",
-            )
+            test_config = BasicMemoryConfig(log_level="INFO")
             config_manager.save_config(test_config)
 
             # First load populates cache
             config1 = config_manager.load_config()
-            assert "second" not in config1.projects
+            assert config1.log_level == "INFO"
 
             # Simulate external process modifying the config file
             config_data = json.loads(config_manager.config_file.read_text())
-            config_data["projects"]["second"] = {"path": str(temp_path / "second")}
+            config_data["log_level"] = "DEBUG"
 
             # Ensure mtime actually changes (some filesystems have 1s granularity)
             time.sleep(0.05)
@@ -1369,7 +820,7 @@ class TestConfigCacheMtimeInvalidation:
 
             # Next load should detect mtime change and re-read
             config2 = config_manager.load_config()
-            assert "second" in config2.projects
+            assert config2.log_level == "DEBUG"
             assert config1 is not config2
 
     def test_save_config_resets_mtime(self, config_home):
@@ -1387,9 +838,7 @@ class TestConfigCacheMtimeInvalidation:
             config_manager.config_file = config_manager.config_dir / "config.json"
             config_manager.config_dir.mkdir(parents=True, exist_ok=True)
 
-            test_config = BasicMemoryConfig(
-                projects={"main": {"path": str(temp_path / "main")}},
-            )
+            test_config = BasicMemoryConfig()
             config_manager.save_config(test_config)
 
             # Load to populate cache
@@ -1405,26 +854,14 @@ class TestConfigCacheMtimeInvalidation:
             assert basic_memory.config._CONFIG_SIZE is None
 
 
-class TestRetiredKeyMigration:
-    """The retired cloud/routing keys are dropped, never translated."""
+class TestDropRetiredConfigKeys:
+    """The retired cloud/routing top-level keys are dropped, never translated.
 
-    def test_retired_project_keys_are_removed_from_entries(self):
-        """Every retired per-project key disappears, leaving only path."""
-        data = {
-            "projects": {
-                "specs": {
-                    "path": "/Users/test/Documents/specs",
-                    "mode": "cloud",
-                    "workspace_id": "tenant-1",
-                    "local_sync_path": "/Users/test/Documents/specs",
-                    "cloud_sync_path": "/specs",
-                    "bisync_initialized": True,
-                    "last_sync": "2026-02-06T17:36:38",
-                }
-            }
-        }
-        result = _migrate_legacy_projects(data)
-        assert result["projects"]["specs"] == {"path": "/Users/test/Documents/specs"}
+    ``drop_retired_config_keys`` (config_migrations.py) only strips
+    ``RETIRED_TOP_LEVEL_KEYS`` — it does not touch ``projects``/``default_project``,
+    which are tolerated separately (see ``TestLegacyProjectsToleratedButNotPersisted``)
+    and normalized by ``normalize_legacy_projects`` (``TestNormalizeLegacyProjects``).
+    """
 
     def test_retired_top_level_keys_are_removed(self):
         """default_project_mode, cloud_mode, project_modes, cloud_projects all go."""
@@ -1436,11 +873,43 @@ class TestRetiredKeyMigration:
             "cloud_projects": {},
             "projects": {"main": {"path": "/tmp/main"}},
         }
-        result = _migrate_legacy_projects(data)
+        result = drop_retired_config_keys(data)
         assert result == {
             "default_project": "main",
             "projects": {"main": {"path": "/tmp/main"}},
         }
+
+    def test_non_dict_input_passes_through(self):
+        """Anything that is not a config mapping is returned untouched."""
+        assert drop_retired_config_keys("not-a-dict") == "not-a-dict"
+
+
+class TestNormalizeLegacyProjects:
+    """``config_migrations.normalize_legacy_projects`` reads a legacy registry.
+
+    Returns a flat ``name -> path`` mapping straight off a pre-B2 config.json,
+    for the one-time import into the database registry (``ensure_project_registry``).
+    """
+
+    def test_bare_string_path_shape(self):
+        """The oldest format: ``{"name": "/path"}``."""
+        data = {"projects": {"main": "/tmp/main"}}
+        assert normalize_legacy_projects(data) == {"main": "/tmp/main"}
+
+    def test_dict_with_path_key_shape(self):
+        """The ``{"name": {"path": ..., ...}}`` shape — extra keys are ignored."""
+        data = {
+            "projects": {
+                "specs": {
+                    "path": "/Users/test/Documents/specs",
+                    "mode": "cloud",
+                    "workspace_id": "tenant-1",
+                    "bisync_initialized": True,
+                    "last_sync": "2026-02-06T17:36:38",
+                }
+            }
+        }
+        assert normalize_legacy_projects(data) == {"specs": "/Users/test/Documents/specs"}
 
     def test_legacy_cloud_local_path_is_promoted_over_a_slug_path(self):
         """A remote-only entry recorded a slug in path and the real directory in
@@ -1449,8 +918,7 @@ class TestRetiredKeyMigration:
             "projects": {"specs": {"path": "specs", "mode": "cloud"}},
             "cloud_projects": {"specs": {"local_path": "/Users/test/Documents/specs"}},
         }
-        result = _migrate_legacy_projects(data)
-        assert result["projects"]["specs"] == {"path": "/Users/test/Documents/specs"}
+        assert normalize_legacy_projects(data) == {"specs": "/Users/test/Documents/specs"}
 
     def test_absolute_path_is_never_overwritten_by_legacy_local_path(self):
         """An absolute path is already the real directory, so it wins."""
@@ -1458,35 +926,65 @@ class TestRetiredKeyMigration:
             "projects": {"specs": {"path": "/Users/test/Documents/specs"}},
             "cloud_projects": {"specs": {"local_path": "/somewhere/else"}},
         }
-        result = _migrate_legacy_projects(data)
-        assert result["projects"]["specs"]["path"] == "/Users/test/Documents/specs"
+        assert normalize_legacy_projects(data) == {"specs": "/Users/test/Documents/specs"}
 
     def test_slug_path_without_legacy_entry_is_left_alone(self):
         """Nothing to promote means the entry keeps whatever path it had."""
         data = {"projects": {"orphan": {"path": "orphan", "mode": "cloud"}}}
-        result = _migrate_legacy_projects(data)
-        assert result["projects"]["orphan"] == {"path": "orphan"}
+        assert normalize_legacy_projects(data) == {"orphan": "orphan"}
 
-    def test_string_projects_are_wrapped_before_keys_are_dropped(self, tmp_path):
-        """The oldest format (name -> path string) still migrates in one pass."""
+    def test_string_projects_promoted_via_cloud_projects(self, tmp_path):
+        """A bare string entry can still be promoted by the cloud_projects quirk."""
         local_path = str(tmp_path / "local")
         data = {
             "projects": {"local-proj": local_path, "slug-proj": "slug-proj"},
-            "project_modes": {"slug-proj": "cloud"},
             "cloud_projects": {"slug-proj": {"local_path": str(tmp_path / "promoted")}},
         }
-        result = _migrate_legacy_projects(data)
-        assert result["projects"]["local-proj"] == {"path": local_path}
-        assert result["projects"]["slug-proj"] == {"path": str(tmp_path / "promoted")}
-        assert "project_modes" not in result
+        result = normalize_legacy_projects(data)
+        assert result["local-proj"] == local_path
+        # A bare string entry is never checked against cloud_projects (only dict
+        # entries with a non-absolute path are), so it keeps its own path.
+        assert result["slug-proj"] == "slug-proj"
 
-    def test_non_dict_input_passes_through(self):
-        """Anything that is not a config mapping is returned untouched."""
-        assert _migrate_legacy_projects("not-a-dict") == "not-a-dict"
+    def test_projects_value_not_a_dict_returns_empty(self):
+        """A ``projects`` value that isn't a mapping normalizes to nothing."""
+        assert normalize_legacy_projects({"projects": ["not", "a", "dict"]}) == {}
 
-    def test_empty_projects_returns_data_unchanged(self):
-        """No projects means there is nothing to normalize below the top level."""
-        assert _migrate_legacy_projects({"projects": {}}) == {"projects": {}}
+    def test_no_projects_key_returns_empty(self):
+        """A config with no ``projects`` key at all has nothing to import."""
+        assert normalize_legacy_projects({}) == {}
+
+    def test_empty_projects_returns_empty(self):
+        """No projects means there is nothing to normalize."""
+        assert normalize_legacy_projects({"projects": {}}) == {}
+
+
+class TestLegacyProjectsToleratedButNotPersisted:
+    """A legacy ``projects``/``default_project`` key parses but never round-trips.
+
+    The registry is DB-owned now (GAPS B2); ``BasicMemoryConfig`` tolerates the
+    keys as extras on load (``extra="ignore"``) so a pre-B2 config.json still
+    parses, and ``model_dump()`` never re-emits them since the model no longer
+    declares those fields.
+    """
+
+    def test_legacy_projects_key_tolerated_on_load(self):
+        """extra='ignore' lets a legacy config.json parse without error."""
+        config = BasicMemoryConfig(
+            projects={"main": {"path": "/tmp/main"}},
+            default_project="main",
+        )
+        assert isinstance(config, BasicMemoryConfig)
+
+    def test_model_dump_never_contains_projects_or_default_project(self):
+        """save_config must never write the registry back into config.json (GAPS B2)."""
+        config = BasicMemoryConfig(
+            projects={"main": {"path": "/tmp/main"}},
+            default_project="main",
+        )
+        dumped = config.model_dump(mode="json")
+        assert "projects" not in dumped
+        assert "default_project" not in dumped
 
 
 class TestAtomicConfigSave:
@@ -1507,10 +1005,7 @@ class TestAtomicConfigSave:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
             config_file = temp_path / "config.json"
-            config = BasicMemoryConfig(
-                projects={"main": {"path": str(temp_path / "main")}},
-                default_project="main",
-            )
+            config = BasicMemoryConfig()
             save_basic_memory_config(config_file, config)
             published = config_file.read_text(encoding="utf-8")
             json.loads(published)  # sanity: complete, valid document
@@ -1535,10 +1030,7 @@ class TestAtomicConfigSave:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
             config_file = temp_path / "config.json"
-            config = BasicMemoryConfig(
-                projects={"main": {"path": str(temp_path / "main")}},
-                default_project="main",
-            )
+            config = BasicMemoryConfig()
 
             from basic_memory.config import save_basic_memory_config
 

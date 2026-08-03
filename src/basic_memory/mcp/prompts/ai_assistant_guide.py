@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from basic_memory.config import ConfigManager
+from basic_memory.project_registry import default_project_name
 from basic_memory.mcp.server import mcp
 from loguru import logger
 
@@ -27,18 +27,16 @@ def ai_assistant_guide() -> str:
     guide_doc = Path(__file__).parent.parent / "resources" / "ai_assistant_guide.md"
     content = guide_doc.read_text(encoding="utf-8")
 
-    # Check configuration for mode-specific instructions
-    config = ConfigManager().config
-
-    # Add mode-specific header based on whether a default project is configured
-    if config.default_project:
+    # Add mode-specific header based on whether a default project is registered
+    default_project = default_project_name()
+    if default_project:
         mode_info = f"""
 # Default Project Active
 
-**Current Configuration**: Operations automatically fall back to project '{config.default_project}'
+**Current Configuration**: Operations automatically fall back to project '{default_project}'
 
 **Simplified Usage**: You don't need to specify the project parameter in tool calls.
-- `write_note(title="Note", content="...", folder="docs")` - uses '{config.default_project}'
+- `write_note(title="Note", content="...", folder="docs")` - uses '{default_project}'
 - To use a different project, explicitly specify: `project="other-project"`
 
 ---
@@ -64,6 +62,6 @@ def ai_assistant_guide() -> str:
 
     logger.info(
         f"Loaded AI assistant guide ({len(enhanced_content)} chars) "
-        f"with default_project: {config.default_project or 'none'}"
+        f"with default_project: {default_project or 'none'}"
     )
     return enhanced_content

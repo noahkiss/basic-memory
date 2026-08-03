@@ -1210,7 +1210,7 @@ a scratch corpus (note with `supersedes: [tnd-aaaa1111]`):
 The bare-list form keeps AND/contains-all semantics deliberately (`$contains`/`$in` state the
 other intents explicitly). The error's exit-0-prose shape is O8/W7's business, not B1's.
 
-### B2 — project registry is split between the database and `config.json` — **DECIDED 2026-08-03: the DB owns the registry** (build pending)
+### B2 — project registry is split between the database and `config.json` — **SHIPPED 2026-08-03: the DB owns the registry**
 **Found:** 2026-07-26.
 
 ```
@@ -1256,6 +1256,27 @@ carries a `projects` key gets a one-time import into an empty DB registry (the
 `reconcile_projects_if_registry_empty` seam is already the right shape), after which the key is
 ignored and never written back. The sync code and the two-sources-of-truth drift risk go away with
 the split.
+
+**SHIPPED 2026-08-03.** `BasicMemoryConfig` no longer declares `projects` or `default_project`;
+`ConfigManager` no longer has `projects`/`default_project`/`add_project`/`remove_project`/
+`set_default_project`/`get_project`; `ProjectService.synchronize_projects()`, the
+`POST /v2/projects/config/sync` route, and every config-write half of a mutation path are deleted.
+`reconcile_projects_with_config` and `reconcile_projects_if_registry_empty` collapsed into
+`ensure_project_registry()`, which fills an **empty** registry — from a legacy `config.json`
+`projects` key when one exists, otherwise with one bootstrap project at `BASIC_MEMORY_HOME` — and
+never touches a populated one. A legacy key is tolerated on load (`extra="ignore"`) and, since the
+field no longer exists on the model, is never written back.
+
+Two judgment calls worth recording:
+
+- **A synchronous registry reader exists** (`basic_memory.project_registry`), reading the SQLite
+  file with the stdlib driver. The `.bm.yml` marker chain, `bm brief`, `bm schema`, and the
+  importers resolve projects from synchronous Typer code with no event loop; routing them through
+  SQLAlchemy would force `async` through ~20 call sites *and* put the 1.1 s import on the CLI
+  floor. Writes never go through it.
+- **`bm db reset` now snapshots and restores the registry** around the file delete. The registry
+  used to survive a reset because it lived in `config.json`; reset is an index rebuild, not a
+  de-registration.
 
 ### B3 — `bm tool list-projects --json` fails — **REFUTED 2026-07-31**
 **Found:** 2026-07-26. Claimed to exit 1 and emit nothing parseable as JSON. No output was ever

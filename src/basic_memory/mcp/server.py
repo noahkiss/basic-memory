@@ -14,6 +14,10 @@ from basic_memory.db import scoped_session
 from basic_memory.index.local_schedulers import drain_background_tasks
 from basic_memory.mcp.client_info import MCPClientInfoMiddleware
 from basic_memory.mcp.container import McpContainer, set_container
+from basic_memory.project_registry import (
+    default_project_name as registry_default_project_name,
+    registry_projects,
+)
 from basic_memory.services.initialization import initialize_app
 
 
@@ -63,10 +67,7 @@ async def lifespan(app: FastMCP):
 
     config = container.config
     logger.info(f"Starting Basic Memory MCP server (mode={container.mode.name})")
-    logger.info(
-        f"Config: semantic_search_enabled={config.semantic_search_enabled}, "
-        f"default_project={config.default_project}"
-    )
+    logger.info(f"Config: semantic_search_enabled={config.semantic_search_enabled}")
     if config.semantic_search_enabled:
         logger.info(
             f"Semantic search: provider={config.semantic_embedding_provider}, "
@@ -77,18 +78,20 @@ async def lifespan(app: FastMCP):
             f"query_prefix_set={bool(config.semantic_embedding_query_prefix)}"
         )
 
-    # Log configured projects
-    for name, entry in config.projects.items():
-        default = " (default)" if name == config.default_project else ""
-        logger.info(f"Project: {name} -> {entry.path}{default}")
-
     # Track if we created the engine (vs test fixtures providing it)
     # This prevents disposing an engine provided by test fixtures when
     # multiple Client connections are made in the same test
     engine_was_none = db._engine is None
 
-    # Initialize app (runs migrations, reconciles projects)
+    # Initialize app (runs migrations, bootstraps the registry if it is empty)
     await initialize_app(container.config)
+
+    # Log the registered projects. Read after initialize_app: the registry is a
+    # database table now, and a first run has nothing in it until then.
+    default_project_name = registry_default_project_name()
+    for name, path in registry_projects().items():
+        default = " (default)" if name == default_project_name else ""
+        logger.info(f"Project: {name} -> {path}{default}")
 
     # Log embedding status so it's easy to spot in the logs
     if config.semantic_search_enabled and db._session_maker is not None:

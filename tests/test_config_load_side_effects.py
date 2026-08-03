@@ -10,10 +10,16 @@ from basic_memory import config as config_module
 from basic_memory.config import ConfigManager
 
 
-def test_existing_config_load_does_not_create_default_project_directory(
+def test_legacy_project_registry_is_tolerated_and_never_written_back(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Reading a custom project config must not materialize the unused default path."""
+    """A pre-B2 config.json still parses, and its registry keys never round-trip.
+
+    The database owns the registry now. The legacy keys are read once — by
+    ``legacy_config_registry()``, for the one-time import into an empty
+    registry — and are absent from the model, so nothing can write them back.
+    Loading must also not materialize any project directory.
+    """
     home = tmp_path / "home"
     config_dir = tmp_path / "config"
     project_dir = tmp_path / "custom-project"
@@ -48,8 +54,15 @@ def test_existing_config_load_does_not_create_default_project_directory(
 
     loaded = ConfigManager().load_config()
 
-    assert loaded.projects["custom"].path == str(project_dir)
+    assert "projects" not in loaded.model_dump()
+    assert "default_project" not in loaded.model_dump()
     assert not (home / "basic-memory").exists()
+
+    # The legacy keys stay readable for the one-time import until something
+    # rewrites the file in the current shape.
+    legacy_projects, legacy_default = config_module.legacy_config_registry()
+    assert legacy_projects == {"custom": str(project_dir)}
+    assert legacy_default == "custom"
 
 
 def test_existing_config_load_keeps_environment_precedence(

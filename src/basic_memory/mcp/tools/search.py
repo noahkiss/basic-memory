@@ -920,7 +920,6 @@ async def search_notes(
     if project is None and project_id is None and query is not None:
         detected = await detect_project_from_identifier_prefix(
             query,
-            ConfigManager().config,
             context=context,
         )
         if detected:

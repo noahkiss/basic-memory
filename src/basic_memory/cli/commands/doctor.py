@@ -51,13 +51,6 @@ async def _delete_doctor_project_locally(project_name: str, project_id: str) -> 
             )
         await repository.delete(session, project.id)
 
-    config = config_manager.load_config()
-    if project_name in config.projects:
-        del config.projects[project_name]
-        if config.default_project == project_name:
-            config.default_project = next(iter(config.projects), None)
-        config_manager.save_config(config)
-
 
 async def _delete_doctor_project(
     project_client: ProjectClient, project_name: str, project_id: str
@@ -72,8 +65,8 @@ async def _delete_doctor_project(
         if not _is_default_project_delete_error(exc):
             raise
 
-        # Trigger: fresh local configs can promote the generated doctor project
-        # to default because the placeholder default has no DB row.
+        # Trigger: a registry that was empty before doctor ran promotes the
+        # generated doctor project to default, because it is the first project.
         # Why: the project is disposable doctor-owned state, while the public API
         # must keep rejecting default-project deletion for normal callers.
         # Outcome: cleanup removes only the exact doctor project it created.

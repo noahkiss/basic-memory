@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from basic_memory.config import BasicMemoryConfig
+from basic_memory.project_registry import lookup_project
 from basic_memory.schemas.memory import memory_url_path
 from basic_memory.schemas.project_info import ProjectItem
 from basic_memory.utils import (
@@ -25,19 +25,13 @@ class UnresolvedProjectRouteError(ValueError):
         )
 
 
-def canonicalize_project_name(
-    project_name: Optional[str],
-    config: BasicMemoryConfig,
-) -> Optional[str]:
-    """Return the configured name when an identifier matches by permalink."""
+def canonicalize_project_name(project_name: Optional[str]) -> Optional[str]:
+    """Return the registered name when an identifier matches by permalink."""
     if project_name is None:
         return None
 
-    requested_permalink = generate_permalink(project_name)
-    for configured_name in config.projects:
-        if generate_permalink(configured_name) == requested_permalink:
-            return configured_name
-    return project_name
+    registered, _ = lookup_project(project_name)
+    return registered or project_name
 
 
 def project_matches_identifier(project_item: ProjectItem, identifier: Optional[str]) -> bool:
@@ -81,18 +75,12 @@ def add_project_metadata(result: str, project_name: str) -> str:
     return f"{result}\n\n[Session: Using project '{project_name}']"
 
 
-def detect_project_from_url_prefix(
-    identifier: str,
-    config: BasicMemoryConfig,
-) -> Optional[str]:
-    """Return the local config project matching a memory URL path prefix."""
+def detect_project_from_url_prefix(identifier: str) -> Optional[str]:
+    """Return the registered project matching a memory URL path prefix."""
     path = memory_url_path(identifier) if identifier.strip().startswith("memory://") else identifier
     normalized = normalize_project_reference(path)
     prefix, _ = split_project_prefix(normalized)
     if prefix is None:
         return None
-    prefix_permalink = generate_permalink(prefix)
-    for project_name in config.projects:
-        if generate_permalink(project_name) == prefix_permalink:
-            return project_name
-    return None
+    registered, _ = lookup_project(prefix)
+    return registered

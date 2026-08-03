@@ -7,6 +7,7 @@ test config fixtures.
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
@@ -18,10 +19,10 @@ from basic_memory.index.local_runtime import LocalWatchEventIndexRuntimeFactory
 from basic_memory.repository.project_repository import ProjectRepository
 from basic_memory.services.initialization import (
     ensure_initialization,
+    ensure_project_registry,
     initialize_app,
     initialize_database,
     initialize_file_indexing,
-    reconcile_projects_with_config,
 )
 
 
@@ -44,146 +45,132 @@ async def test_initialize_database_creates_engine_and_allows_queries(app_config:
 
 
 @pytest.mark.asyncio
-async def test_reconcile_projects_with_config_creates_projects_and_default(
+async def test_ensure_project_registry_imports_legacy_config_projects_into_empty_db(
     app_config: BasicMemoryConfig, config_manager, config_home
 ):
+    """A pre-B2 config.json's legacy registry imports once into an empty DB (GAPS B2).
+
+    ``legacy_config_registry()`` reads the raw config.json file directly, so the
+    legacy shape is written straight to disk here rather than through
+    ``BasicMemoryConfig`` — the model no longer declares ``projects``/
+    ``default_project`` at all.
+    """
+    import json
+
     await db.shutdown_db()
     try:
-        # Ensure the configured paths exist
         proj_a = config_home / "proj-a"
         proj_b = config_home / "proj-b"
-        proj_a.mkdir(parents=True, exist_ok=True)
-        proj_b.mkdir(parents=True, exist_ok=True)
+        legacy_data = {
+            "env": "test",
+            "projects": {
+                "proj-a": str(proj_a),
+                "proj-b": str(proj_b),
+            },
+            "default_project": "proj-b",
+        }
+        config_manager.config_file.write_text(json.dumps(legacy_data, indent=2))
 
-        from basic_memory.config import ProjectEntry
-
-        updated = app_config.model_copy(
-            update={
-                "projects": {
-                    "proj-a": ProjectEntry(path=str(proj_a)),
-                    "proj-b": ProjectEntry(path=str(proj_b)),
-                },
-                "default_project": "proj-b",
-            }
-        )
-        config_manager.save_config(updated)
-
-        # Real DB init + reconcile
-        await initialize_database(updated)
-        await reconcile_projects_with_config(updated)
+        await initialize_database(app_config)
+        await ensure_project_registry(app_config)
 
         _, session_maker = await db.get_or_create_db(
-            updated.database_path, db_type=db.DatabaseType.FILESYSTEM
+            app_config.database_path, db_type=db.DatabaseType.FILESYSTEM
         )
         repo = ProjectRepository()
 
         async with db.scoped_session(session_maker) as session:
             active = await repo.get_active_projects(session)
             names = {p.name for p in active}
-            assert names.issuperset({"proj-a", "proj-b"})
+            assert names == {"proj-a", "proj-b"}
 
             default = await repo.get_default_project(session)
             assert default is not None
             assert default.name == "proj-b"
+
+        # Absolute legacy paths are created on import.
+        assert proj_a.is_dir()
+        assert proj_b.is_dir()
     finally:
         await db.shutdown_db()
 
 
 @pytest.mark.asyncio
-async def test_reconcile_if_registry_empty_syncs_fresh_config(
+async def test_ensure_project_registry_leaves_populated_registry_untouched(
     app_config: BasicMemoryConfig, config_manager, config_home
 ):
-    """An empty DB registry adopts the config's projects on first touch (GAPS B2)."""
-    from basic_memory.config import ProjectEntry
-    from basic_memory.services.initialization import reconcile_projects_if_registry_empty
+    """A populated DB registry is never touched, no matter what config.json still names."""
+    import json
 
-    await db.shutdown_db()
-    try:
-        proj_a = config_home / "proj-a"
-        proj_a.mkdir(parents=True, exist_ok=True)
-        updated = app_config.model_copy(
-            update={
-                "projects": {"proj-a": ProjectEntry(path=str(proj_a))},
-                "default_project": "proj-a",
-            }
-        )
-        config_manager.save_config(updated)
-
-        await reconcile_projects_if_registry_empty(updated)
-
-        _, session_maker = await db.get_or_create_db(
-            updated.database_path, db_type=db.DatabaseType.FILESYSTEM
-        )
-        async with db.scoped_session(session_maker) as session:
-            active = await ProjectRepository().get_active_projects(session)
-            assert {p.name for p in active} == {"proj-a"}
-    finally:
-        await db.shutdown_db()
-
-
-@pytest.mark.asyncio
-async def test_reconcile_if_registry_empty_leaves_populated_registry_alone(
-    app_config: BasicMemoryConfig, config_manager, config_home, monkeypatch
-):
-    """A populated registry is never touched — drift stays the explicit paths' business."""
-    from basic_memory.config import ProjectEntry
-    from basic_memory.services import initialization as init_mod
-
-    await db.shutdown_db()
-    try:
-        proj_a = config_home / "proj-a"
-        proj_b = config_home / "proj-b"
-        proj_a.mkdir(parents=True, exist_ok=True)
-        proj_b.mkdir(parents=True, exist_ok=True)
-        seeded = app_config.model_copy(
-            update={
-                "projects": {"proj-a": ProjectEntry(path=str(proj_a))},
-                "default_project": "proj-a",
-            }
-        )
-        config_manager.save_config(seeded)
-        await initialize_database(seeded)
-        await reconcile_projects_with_config(seeded)
-
-        # Config now declares an extra project the DB has never seen.
-        drifted = seeded.model_copy(
-            update={
-                "projects": {
-                    "proj-a": ProjectEntry(path=str(proj_a)),
-                    "proj-b": ProjectEntry(path=str(proj_b)),
-                },
-            }
-        )
-        config_manager.save_config(drifted)
-
-        full_sync = AsyncMock()
-        monkeypatch.setattr(init_mod, "reconcile_projects_with_config", full_sync)
-        await init_mod.reconcile_projects_if_registry_empty(drifted)
-
-        full_sync.assert_not_awaited()
-    finally:
-        await db.shutdown_db()
-
-
-@pytest.mark.asyncio
-async def test_reconcile_projects_with_config_swallow_errors(
-    monkeypatch, app_config: BasicMemoryConfig
-):
-    """reconcile_projects_with_config should not raise if ProjectService sync fails."""
     await db.shutdown_db()
     try:
         await initialize_database(app_config)
 
-        async def boom(self):  # noqa: ANN001
-            raise ValueError("Project synchronization error")
-
-        monkeypatch.setattr(
-            "basic_memory.services.project_service.ProjectService.synchronize_projects",
-            boom,
+        repository = ProjectRepository()
+        _, session_maker = await db.get_or_create_db(
+            app_config.database_path, db_type=db.DatabaseType.FILESYSTEM
         )
+        seeded_path = config_home / "seeded"
+        async with db.scoped_session(session_maker) as session:
+            await repository.create(
+                session,
+                {
+                    "name": "seeded",
+                    "path": str(seeded_path),
+                    "is_active": True,
+                    "is_default": True,
+                },
+            )
 
-        # Should not raise
-        await reconcile_projects_with_config(app_config)
+        # config.json still declares a completely different legacy registry.
+        legacy_data = {
+            "env": "test",
+            "projects": {"other": str(config_home / "other")},
+            "default_project": "other",
+        }
+        config_manager.config_file.write_text(json.dumps(legacy_data, indent=2))
+
+        await ensure_project_registry(app_config)
+
+        async with db.scoped_session(session_maker) as session:
+            active = await repository.get_active_projects(session)
+            assert {p.name for p in active} == {"seeded"}
+    finally:
+        await db.shutdown_db()
+
+
+@pytest.mark.asyncio
+async def test_ensure_project_registry_bootstraps_main_when_nothing_exists(
+    app_config: BasicMemoryConfig, config_manager, config_home
+):
+    """A genuinely fresh install (no DB rows, no legacy config) gets one bootstrap
+    project 'main' at BASIC_MEMORY_HOME, flagged default."""
+    import basic_memory.config as config_module
+
+    # The legacy-registry capture is process-global state; an earlier test's
+    # legacy projects must not leak into this "nothing configured" case.
+    config_module._LEGACY_PROJECTS = {}
+    config_module._LEGACY_DEFAULT_PROJECT = None
+
+    bootstrap_home = config_home / "basic-memory"  # set by the config_home fixture
+
+    await db.shutdown_db()
+    try:
+        await initialize_database(app_config)
+        await ensure_project_registry(app_config)
+
+        _, session_maker = await db.get_or_create_db(
+            app_config.database_path, db_type=db.DatabaseType.FILESYSTEM
+        )
+        repo = ProjectRepository()
+        async with db.scoped_session(session_maker) as session:
+            active = await repo.get_active_projects(session)
+            assert {p.name for p in active} == {"main"}
+
+            default = await repo.get_default_project(session)
+            assert default is not None
+            assert default.name == "main"
+            assert Path(default.path) == bootstrap_home
     finally:
         await db.shutdown_db()
 
@@ -205,11 +192,11 @@ async def test_initialize_app_warns_on_frontmatter_permalink_precedence(
     app_config.disable_permalinks = True
 
     init_db_mock = AsyncMock()
-    reconcile_mock = AsyncMock()
+    ensure_registry_mock = AsyncMock()
     monkeypatch.setattr("basic_memory.services.initialization.initialize_database", init_db_mock)
     monkeypatch.setattr(
-        "basic_memory.services.initialization.reconcile_projects_with_config",
-        reconcile_mock,
+        "basic_memory.services.initialization.ensure_project_registry",
+        ensure_registry_mock,
     )
 
     warnings: list[str] = []
@@ -222,7 +209,7 @@ async def test_initialize_app_warns_on_frontmatter_permalink_precedence(
     await initialize_app(app_config)
 
     assert init_db_mock.await_count == 1
-    assert reconcile_mock.await_count == 1
+    assert ensure_registry_mock.await_count == 1
     assert any(
         "ensure_frontmatter_on_sync=True overrides disable_permalinks=True" in message
         for message in warnings
@@ -302,25 +289,29 @@ async def test_initialize_file_indexing_wires_event_index_runtime_by_default(
 
 @pytest.mark.asyncio
 async def test_initialize_file_indexing_uses_project_index_runtime_for_initial_sync_by_default(
-    app_config: BasicMemoryConfig, config_manager, config_home, monkeypatch
+    app_config: BasicMemoryConfig, config_home, monkeypatch
 ):
     """Default startup indexing uses project fanout instead of the legacy sync scan."""
     await db.shutdown_db()
     try:
-        from basic_memory.config import ProjectEntry
-
         project_dir = config_home / "event-startup"
         project_dir.mkdir(parents=True, exist_ok=True)
-        updated = app_config.model_copy(
-            update={
-                "projects": {"event-startup": ProjectEntry(path=str(project_dir))},
-                "default_project": "event-startup",
-            }
-        )
-        config_manager.save_config(updated)
+        updated = app_config
 
         await initialize_database(updated)
-        await reconcile_projects_with_config(updated)
+        _, session_maker = await db.get_or_create_db(
+            updated.database_path, db_type=db.DatabaseType.FILESYSTEM
+        )
+        async with db.scoped_session(session_maker) as session:
+            await ProjectRepository().create(
+                session,
+                {
+                    "name": "event-startup",
+                    "path": str(project_dir),
+                    "is_active": True,
+                    "is_default": True,
+                },
+            )
 
         _disable_test_env_short_circuit(monkeypatch)
         monkeypatch.setattr("basic_memory.index.watch_service.WatchService", _FakeWatchService)
@@ -384,35 +375,46 @@ async def test_initialize_file_indexing_uses_project_index_runtime_for_initial_s
 
 @pytest.mark.asyncio
 async def test_initialize_file_indexing_skips_project_with_non_absolute_path(
-    app_config: BasicMemoryConfig, config_manager, config_home, monkeypatch
+    app_config: BasicMemoryConfig, config_home, monkeypatch
 ):
     """Projects without an absolute local path are excluded from background indexing (issue #949).
 
-    A config entry of ``{"path": ""}`` defaults to LOCAL mode and is not
-    recognized as cloud, yet Path("") resolves to the process cwd. Indexing it
-    would inject frontmatter into unrelated files, so it must be skipped.
+    A project row with ``path=""`` is not recognized as cloud, yet ``Path("")``
+    resolves to the process cwd. Indexing it would inject frontmatter into
+    unrelated files, so it must be skipped.
     """
     await db.shutdown_db()
     try:
-        from basic_memory.config import ProjectEntry
-
         good = config_home / "good"
         good.mkdir(parents=True, exist_ok=True)
 
-        updated = app_config.model_copy(
-            update={
-                "projects": {
-                    "good": ProjectEntry(path=str(good)),
-                    # No mode -> defaults to LOCAL, empty (cwd-relative) path.
-                    "empty-path": ProjectEntry(path=""),
-                },
-                "default_project": "good",
-            }
-        )
-        config_manager.save_config(updated)
+        updated = app_config
 
         await initialize_database(updated)
-        await reconcile_projects_with_config(updated)
+        _, session_maker = await db.get_or_create_db(
+            updated.database_path, db_type=db.DatabaseType.FILESYSTEM
+        )
+        async with db.scoped_session(session_maker) as session:
+            repository = ProjectRepository()
+            await repository.create(
+                session,
+                {
+                    "name": "good",
+                    "path": str(good),
+                    "is_active": True,
+                    "is_default": True,
+                },
+            )
+            # Empty (cwd-relative) path is not locally syncable.
+            await repository.create(
+                session,
+                {
+                    "name": "empty-path",
+                    "path": "",
+                    "is_active": True,
+                    "is_default": False,
+                },
+            )
 
         _disable_test_env_short_circuit(monkeypatch)
         monkeypatch.setattr("basic_memory.index.watch_service.WatchService", _FakeWatchService)
@@ -445,7 +447,7 @@ async def test_initialize_app_no_precedence_warning_when_not_conflicting(
         AsyncMock(),
     )
     monkeypatch.setattr(
-        "basic_memory.services.initialization.reconcile_projects_with_config",
+        "basic_memory.services.initialization.ensure_project_registry",
         AsyncMock(),
     )
 

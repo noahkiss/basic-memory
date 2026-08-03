@@ -42,15 +42,6 @@ def _parse_json_output(output: str) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def _mock_config_manager():
-    """Create a mock ConfigManager that avoids reading real config."""
-    mock_cm = MagicMock()
-    mock_cm.config = MagicMock()
-    mock_cm.default_project = "test-project"
-    mock_cm.get_project.return_value = ("test-project", "/tmp/test")
-    return mock_cm
-
-
 PROJECT_INDEX_STATUS_WITH_FILES = ProjectIndexStatusResponse(
     total_files=2,
     unindexed_file_count=0,
@@ -310,7 +301,7 @@ def test_status_wait_json_timeout_emits_error(mock_get_client, mock_get_active, 
 # ---------------------------------------------------------------------------
 
 
-@patch("basic_memory.cli.commands.schema.ConfigManager")
+@patch("basic_memory.cli.commands.schema.resolve_cli_project", return_value="test-project")
 @patch(
     "basic_memory.mcp.tools.schema_validate",
     new_callable=AsyncMock,
@@ -318,8 +309,6 @@ def test_status_wait_json_timeout_emits_error(mock_get_client, mock_get_active, 
 )
 def test_schema_validate_json(mock_mcp, mock_config_cls):
     """bm schema validate person --json outputs the validation report as JSON."""
-    mock_config_cls.return_value = _mock_config_manager()
-
     result = runner.invoke(cli_app, ["schema", "validate", "person", "--json"])
 
     assert result.exit_code == 0, f"CLI failed: {result.output}"
@@ -329,7 +318,7 @@ def test_schema_validate_json(mock_mcp, mock_config_cls):
     assert len(data["results"]) == 2
 
 
-@patch("basic_memory.cli.commands.schema.ConfigManager")
+@patch("basic_memory.cli.commands.schema.resolve_cli_project", return_value="test-project")
 @patch(
     "basic_memory.mcp.tools.schema_validate",
     new_callable=AsyncMock,
@@ -337,8 +326,6 @@ def test_schema_validate_json(mock_mcp, mock_config_cls):
 )
 def test_schema_validate_json_error(mock_mcp, mock_config_cls):
     """bm schema validate --json failure keeps error JSON on stdout, exits 1."""
-    mock_config_cls.return_value = _mock_config_manager()
-
     result = runner.invoke(cli_app, ["schema", "validate", "person", "--json"])
 
     assert result.exit_code == 1
@@ -346,7 +333,7 @@ def test_schema_validate_json_error(mock_mcp, mock_config_cls):
     assert "error" in data
 
 
-@patch("basic_memory.cli.commands.schema.ConfigManager")
+@patch("basic_memory.cli.commands.schema.resolve_cli_project", return_value="test-project")
 @patch(
     "basic_memory.mcp.tools.schema_validate",
     new_callable=AsyncMock,
@@ -354,8 +341,6 @@ def test_schema_validate_json_error(mock_mcp, mock_config_cls):
 )
 def test_schema_validate_json_strict_exit(mock_mcp, mock_config_cls):
     """bm schema validate --json --strict exits 1 when errors present."""
-    mock_config_cls.return_value = _mock_config_manager()
-
     result = runner.invoke(cli_app, ["schema", "validate", "person", "--json", "--strict"])
 
     assert result.exit_code == 1
@@ -369,7 +354,7 @@ def test_schema_validate_json_strict_exit(mock_mcp, mock_config_cls):
 # ---------------------------------------------------------------------------
 
 
-@patch("basic_memory.cli.commands.schema.ConfigManager")
+@patch("basic_memory.cli.commands.schema.resolve_cli_project", return_value="test-project")
 @patch(
     "basic_memory.mcp.tools.schema_infer",
     new_callable=AsyncMock,
@@ -377,8 +362,6 @@ def test_schema_validate_json_strict_exit(mock_mcp, mock_config_cls):
 )
 def test_schema_infer_json(mock_mcp, mock_config_cls):
     """bm schema infer person --json outputs the inference report as JSON."""
-    mock_config_cls.return_value = _mock_config_manager()
-
     result = runner.invoke(cli_app, ["schema", "infer", "person", "--json"])
 
     assert result.exit_code == 0, f"CLI failed: {result.output}"
@@ -393,7 +376,7 @@ def test_schema_infer_json(mock_mcp, mock_config_cls):
 # ---------------------------------------------------------------------------
 
 
-@patch("basic_memory.cli.commands.schema.ConfigManager")
+@patch("basic_memory.cli.commands.schema.resolve_cli_project", return_value="test-project")
 @patch(
     "basic_memory.mcp.tools.schema_diff",
     new_callable=AsyncMock,
@@ -401,8 +384,6 @@ def test_schema_infer_json(mock_mcp, mock_config_cls):
 )
 def test_schema_diff_json(mock_mcp, mock_config_cls):
     """bm schema diff person --json outputs the drift report as JSON."""
-    mock_config_cls.return_value = _mock_config_manager()
-
     result = runner.invoke(cli_app, ["schema", "diff", "person", "--json"])
 
     assert result.exit_code == 0, f"CLI failed: {result.output}"
@@ -442,15 +423,7 @@ def test_project_list_json_outputs_projects(write_config, tmp_path, monkeypatch)
     """project list --json outputs structured JSON with project data."""
     alpha_local = (tmp_path / "alpha-local").as_posix()
 
-    write_config(
-        {
-            "env": "dev",
-            "projects": {
-                "alpha": {"path": alpha_local},
-            },
-            "default_project": "alpha",
-        }
-    )
+    write_config({"env": "dev"})
 
     local_payload = {
         "projects": [
