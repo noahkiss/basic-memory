@@ -21,6 +21,7 @@ from basic_memory.config import (
     BasicMemoryConfig,
     ConfigManager,
 )
+from basic_memory.config_models import default_fastembed_cache_dir
 from basic_memory.db import DatabaseType
 from basic_memory.index.local_project import LocalProjectIndexRunner
 from basic_memory.index.watch_service import WatchService
@@ -42,6 +43,11 @@ from basic_memory.services.directory_service import DirectoryService
 from basic_memory.services.file_service import FileService
 from basic_memory.services.link_resolver import LinkResolver
 from basic_memory.services.search_service import SearchService
+
+# Resolved once at import time, while HOME is still the real one. Every fixture
+# that redirects HOME runs later, so this is the only point where the host's
+# own cache location is observable.
+_HOST_FASTEMBED_CACHE = default_fastembed_cache_dir()
 
 
 @pytest.fixture
@@ -68,6 +74,17 @@ def isolate_data_dir_env(monkeypatch) -> None:
     """
     monkeypatch.delenv("BASIC_MEMORY_CONFIG_DIR", raising=False)
     monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+
+    # Trigger: config_home redirects HOME at tmp_path, so the shared XDG cache
+    # resolves to <tmp>/.cache/fastembed and a semantic test re-downloads the
+    # 64 MB embedding model into a directory that dies with the run.
+    # Why: the model is an immutable artifact keyed by model name (GAPS S1) —
+    # it was deliberately moved outside the isolation boundary these fixtures
+    # draw, and re-isolating it here undoes that fix.
+    # Outcome: pin the real user cache, captured at import time before any
+    # fixture patches HOME. Tests that exercise the resolution order clear this
+    # variable themselves.
+    monkeypatch.setenv("FASTEMBED_CACHE_PATH", _HOST_FASTEMBED_CACHE)
 
 
 @pytest_asyncio.fixture(autouse=True)

@@ -57,6 +57,23 @@ an immutable artifact keyed by model name and does not belong inside the isolati
 already at the legacy path keeps using it rather than silently re-downloading. 551 tests pass.
 See `default_fastembed_cache_dir()` in `src/basic_memory/config_models.py`.
 
+**Amended 2026-08-03 — the test harness and `just doctor` defeated the fix.** Both redirect `HOME`
+at a temp dir, so `shared_fastembed_cache_dir()`'s `Path.home() / ".cache"` resolved *inside* that
+temp dir and the semantic path re-downloaded all 64 MB per run:
+
+```
+$ du -sh ~/.cache/fastembed
+65M	/home/<user>/.cache/fastembed
+$ du -sh /tmp/pytest-of-.../test_local_watcher_embeds_inde0/.cache/fastembed
+65M	                                       # a whole second copy, thrown away with the run
+```
+
+Fixed by pinning `FASTEMBED_CACHE_PATH` to the host cache resolved at conftest import time (before
+any fixture patches `HOME`) in both `tests/conftest.py` and `test-int/conftest.py`, and to the real
+`$HOME` before the redirect in the `doctor` recipe. The resolution-order tests clear the variable
+themselves, so they still exercise every branch. After the fix the same test leaves a 16 KB basetemp
+and runs in 2.25 s.
+
 ### S2 — `.claude/commands/` held two upstream-only prompts
 **Done 2026-07-29.** Deleted `.claude/commands/spec.md` and `.claude/commands/test-live.md`; the
 directory is now empty and gone. Judgment call taken under the campaign's decide-and-flag rule, not

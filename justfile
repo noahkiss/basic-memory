@@ -407,7 +407,12 @@ doctor:
     set -euo pipefail
     TMP_HOME=$(mktemp -d)
     TMP_CONFIG=$(mktemp -d)
+    # Resolve the embedding cache against the REAL home, before HOME is
+    # redirected below — otherwise the 64 MB model would download into a temp
+    # dir that this recipe throws away (GAPS S1).
+    FASTEMBED_CACHE_PATH="${FASTEMBED_CACHE_PATH:-${XDG_CACHE_HOME:-$HOME/.cache}/fastembed}"
     HOME="$TMP_HOME" \
+    FASTEMBED_CACHE_PATH="$FASTEMBED_CACHE_PATH" \
     BASIC_MEMORY_ENV=test \
     BASIC_MEMORY_HOME="$TMP_HOME/basic-memory" \
     BASIC_MEMORY_CONFIG_DIR="$TMP_CONFIG" \
