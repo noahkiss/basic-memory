@@ -1382,7 +1382,8 @@ before that lands.
 **SHIPPED 2026-07-31** (T9 landed; decisions delegated by the user). The three blockers dissolved
 smaller than feared because `bm brief` had already prototyped the chain in-tree:
 
-- **Marker schema (what B5 needs of it):** `.bm.yml` at the project root with one read key —
+- **Marker schema (what B5 needs of it):** `.bm.yml` at a working-directory root (a pointer, not a
+  container — note content lives only in the store; see W3's 2026-08-03 decision) with one read key —
   `project: <registered name>`. All other keys are ignored, so the store design remains free to
   add its id (`bm history`/`bm undo`) without churn here. No new identity was invented — that was
   blocker 1's trap, and carrying the name instead of an opaque id removes blocker 2 (no id→name
@@ -1509,6 +1510,24 @@ line after frontmatter, trailing newline — or every touch produces a spurious 
 noise before it exists. The `git clean` output above is also why the store must live outside the
 worktree: a casual command destroys an in-tree store unrecoverably today.
 
+**Decided 2026-08-03 (user) — the store is the only home for note content, so W3 has no mirror to
+maintain.** The question this closes: does `store/<id>/` *hold* the notes, or does it mirror content
+that lives at some arbitrary project root? It holds them. `.bm.yml` is a pointer that maps a working
+directory to a project; it never has note content beside it. See `AGENTS.md` for the full statement
+and its consequences (project paths become store-derived, a path argument to `bm project add`
+becomes an import source, existing projects migrate under W6).
+
+Three things follow for the build:
+
+1. **The commit is a plain `add -A` in one repo.** No copy-on-write, no divergence check, no
+   reconcile step. This is what makes the 12 ms measurement above the real cost rather than a
+   floor.
+2. **The `git clean` hazard is gone by construction**, not by discipline — nothing of value sits
+   inside another repo's worktree. The `info/exclude` requirement stands anyway, for speed.
+3. **W3 lands before W6.** The importer is the largest destructive operation this fork will run,
+   and it should run *into* a repo that already commits every write, so the first entry in the
+   history is the import itself, fully revertable.
+
 Found in: sweep-localhist.md:1, :7, :13, :19, :31, :37, sweep-handoffs.md:13, sweep-beans.md:1.
 
 ### W4 — closed record vocabulary enforced in the write path
@@ -1572,6 +1591,10 @@ store-c 14, store-d 10+37 = ~240 records) carry on-disk schema drift — `store-
 `status: done` where `store-b` uses `status: in_progress`. And every tool in this space assumes
 a greenfield directory (`bm project add` included), so bringing 7,746 lines across 52 heterogeneous
 files in is bespoke code either way.
+
+**Destination, fixed 2026-08-03:** every import lands in the central store at `store/<id>/` — the
+source path is a source and nothing more, and is not adopted as the project's home (see W3's decision
+block and `AGENTS.md`). W6 therefore runs **after** W3, so the import is itself a revertable commit.
 
 Found in: sweep-status-agents.md:61, sweep-handoffs.md:37, sweep-inv-plan.md:49,
 sweep-decisions.md:25, sweep-prior-art.md:31.

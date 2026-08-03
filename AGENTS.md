@@ -66,11 +66,25 @@ Planned, in rough dependency order:
 4. **A decision-mining subcommand** over Claude Code transcripts, to recover decisions that were made
    in conversation and never written down.
 
-The store is central and id-keyed (not one repo per project): a single plain git repo at
-**`~/.basic-memory/store/`**, with the id written once into a **`.bm.yml`** marker at each project
-root. The id is authoritative; any directory name in the store is a human-browsing label that
-nothing reads. The store path must derive from `resolve_data_dir()` so it honours
-`BASIC_MEMORY_CONFIG_DIR` like `config.json` and `memory.db` do — never hardcode it.
+**The store is the only home for note content.** Every note lives in a single plain git repo at
+**`~/.basic-memory/store/`**, under `store/<id>/` — central and id-keyed, not one repo per project,
+and never a mirror of content that lives somewhere else. Nothing is copied on write, so there is no
+project-root-versus-store divergence to reconcile. The store path must derive from
+`resolve_data_dir()` so it honours `BASIC_MEMORY_CONFIG_DIR` like `config.json` and `memory.db` do
+— never hardcode it.
+
+A **`.bm.yml`** marker is a **pointer, not a container**. It sits at the root of a *working*
+directory — usually a code repo you run `bm` from — and says "when I am here, I mean this project."
+It never has note content beside it. The id in it is authoritative; any directory name inside the
+store is a human-browsing label that nothing reads.
+
+Consequences, all deliberate:
+
+- A project's path is **store-derived** (`store/<id>/`), not user-chosen. A path argument to
+  `bm project add` therefore means an *import source*, not the project's home.
+- Existing projects that live at arbitrary paths are migrated by **W6**, the importer.
+- The `git clean -xdfn` hazard recorded in `GAPS.md` W3 cannot arise: nothing of value sits inside
+  another repo's worktree.
 
 **Naming:** `tend` is a **codename for the design, not a command.** There is no `tend` binary and no
 `bm tend` namespace — the verbs ship flat under `bm` (`bm gc`, `bm ls`, `bm new`, `bm path`,

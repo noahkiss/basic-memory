@@ -1,10 +1,14 @@
 """cwd → project resolution via the `.bm.yml` marker (GAPS B5).
 
-A `.bm.yml` file at a project root maps "where I am" to "which BM project that
-is". The CLI resolution chain is: explicit `--project` flag > nearest marker
-walking up from cwd > configured default project. The marker is a CLI-boundary
-concept — the MCP server and API never read cwd; marker resolution happens once
-at CLI entry and flows down as an explicit project name.
+A `.bm.yml` file maps "where I am" to "which BM project that is". The CLI
+resolution chain is: explicit `--project` flag > nearest marker walking up from
+cwd > configured default project. The marker is a CLI-boundary concept — the
+MCP server and API never read cwd; marker resolution happens once at CLI entry
+and flows down as an explicit project name.
+
+The marker is a **pointer, not a container**: it sits at the root of a working
+directory (usually a code repo you run `bm` from) and never has note content
+beside it. Note content lives only in the central store at `store/<id>/`.
 
 The marker's full schema (the store id that `bm history`/`bm undo` will key
 off) is owned by the store design and not built yet. This module reads one
