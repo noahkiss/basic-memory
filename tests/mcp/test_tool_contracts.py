@@ -158,14 +158,6 @@ EXPECTED_TOOL_ANNOTATIONS: dict[str, dict[str, bool]] = {
     "write_note": {"readOnlyHint": False, "destructiveHint": True},
 }
 
-# The MCP-UI tools are disabled in tools/__init__.py but register onto the shared
-# server whenever tests import their module directly, so tolerate their presence
-# without requiring it — keeps this contract independent of test execution order.
-OPTIONAL_TOOL_ANNOTATIONS: dict[str, dict[str, bool]] = {
-    "read_note_ui": {"readOnlyHint": True, "destructiveHint": False},
-    "search_notes_ui": {"readOnlyHint": True, "destructiveHint": False},
-}
-
 EXPECTED_EDIT_NOTE_OPERATIONS = [
     "append",
     "prepend",
@@ -229,17 +221,16 @@ async def test_mcp_tool_annotations_meet_directory_requirements():
     tools_by_name = {tool.name: tool for tool in tool_list}
 
     required = set(EXPECTED_TOOL_ANNOTATIONS)
-    optional = set(OPTIONAL_TOOL_ANNOTATIONS)
     registered = set(tools_by_name)
     missing = required - registered
-    unexpected = registered - required - optional
+    unexpected = registered - required
     assert not missing, f"Tools missing from server: {sorted(missing)}"
     assert not unexpected, (
         f"Tools without annotation expectations: {sorted(unexpected)} — "
         "add them to EXPECTED_TOOL_ANNOTATIONS with directory-compliant annotations"
     )
 
-    all_expected = {**EXPECTED_TOOL_ANNOTATIONS, **OPTIONAL_TOOL_ANNOTATIONS}
+    all_expected = EXPECTED_TOOL_ANNOTATIONS
     for tool_name, tool in tools_by_name.items():
         expected = all_expected[tool_name]
         # Assert on the protocol-level payload the directory review actually sees.
