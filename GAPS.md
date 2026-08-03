@@ -1210,7 +1210,7 @@ a scratch corpus (note with `supersedes: [tnd-aaaa1111]`):
 The bare-list form keeps AND/contains-all semantics deliberately (`$contains`/`$in` state the
 other intents explicitly). The error's exit-0-prose shape is O8/W7's business, not B1's.
 
-### B2 — project registry is split between the database and `config.json`
+### B2 — project registry is split between the database and `config.json` — **DECIDED 2026-08-03: the DB owns the registry** (build pending)
 **Found:** 2026-07-26.
 
 ```
@@ -1248,6 +1248,14 @@ when `.bm.yml` lands" is now due, not future. `config_models.py:161` still decla
 `projects: Dict[str, ProjectEntry]` keyed by human name, so the split is exactly as recorded.
 **This is a user decision, not an agent one** — whether to move to the id-keyed registry layout now
 or keep the split until the verbs force it. Nothing is decided here.
+
+**DECIDED 2026-08-03 (user): the database becomes the sole owner of the registry — now, not with
+W4.** `config.json` keeps operational settings only; the project list and the default flag live in
+the DB alone. Adds/removes/default changes write the DB only. A legacy `config.json` that still
+carries a `projects` key gets a one-time import into an empty DB registry (the
+`reconcile_projects_if_registry_empty` seam is already the right shape), after which the key is
+ignored and never written back. The sync code and the two-sources-of-truth drift risk go away with
+the split.
 
 ### B3 — `bm tool list-projects --json` fails — **REFUTED 2026-07-31**
 **Found:** 2026-07-26. Claimed to exit 1 and emit nothing parseable as JSON. No output was ever
@@ -1579,7 +1587,7 @@ Found in: sweep-prior-art.md:49, sweep-beans.md:19.
   version; every consumer is in-repo and in-process, so a wire version field is speculative
   flexibility. Revisit only if an external consumer appears.
 
-### W8 — a bounded, pointer-shaped session primer
+### W8 — a bounded, pointer-shaped session primer — **DECIDED 2026-08-03: `bm brief` is the home; extend it, then close**
 Nothing puts prior state into an agent's context: the `SessionStart` hook was deliberately unwired and
 kept unwired, so recall now depends on an agent choosing to read a file. BM writes no
 `AGENTS.md`/`CLAUDE.md` equivalent — grepping the package returns no hits — and its
@@ -1596,10 +1604,19 @@ Found in: sweep-inv-plan.md:1, sweep-spike.md:37, sweep-transcript.md:31, sweep-
 sweep-prior-art.md:13, sweep-prior-art.md:37.
 
 **2026-08-03 — `bm brief` now exists and this entry has never mentioned it.** `e0d8631c` replaced
-`bm hook` and the harness plugins with `bm brief`. **Open user question: is `bm brief` W8's primer,
-or a different thing that happens to be adjacent?** The test is the one this entry already states —
-size-capped, index-only, one line per record, pointers rather than content. Nothing is decided here;
-W8 stays open until the user answers.
+`bm hook` and the harness plugins with `bm brief`. The test is the one this entry already states —
+size-capped, index-only, one line per record, pointers rather than content.
+
+**DECIDED 2026-08-03 (user): `bm brief` is the primer's home.** It already passes most of the test:
+size-capped (`MAX_BRIEF_CHARS`, `MAX_ROWS`), pointer rows (title/permalink/file_path), empty brief
+prints nothing and exits 0, direct DB path (no MCP import cost). W8 closes when `bm brief` adds:
+
+1. **A pointer-shaped search mode** — a query flag that returns compact pointers (one line per hit,
+   permalink + title), never note content. Today brief has no search at all.
+2. **Full record-vocabulary coverage** — brief hardcodes three note types (`task` active,
+   `decision` open, `session` recent). When W4's closed vocabulary lands, brief must derive its
+   sections from the vocabulary instead of the hardcoded trio, so new record types appear without
+   editing brief.
 
 ### W9 — a `STATUS.local.md` emitter with a validated contract
 The headline file stays flat (B4), but it must be written *by* the store rather than by hand — and the
