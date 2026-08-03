@@ -21,6 +21,16 @@ claim, not a gap.
 
 **Order of work:** fix the gaps that block the thing being built next, then build. Not the reverse.
 
+**An entry's HEADING is its status field, not its title.** A commit that fixes, refutes, or reshapes
+a gap must edit that gap's heading in the same commit — append the em-dash **SHIPPED `<sha>`** /
+**RESOLVED** / **REFUTED** marker the closed entries below already use, or restate the claim the
+heading makes if the fix only narrowed it.
+Amending the body and leaving the heading alone is how this file rots: on 2026-08-03 an audit found
+**9 of 20 open entries carrying falsified premises**, every one of them a heading that still
+advertised a defect its own body recorded as fixed. A reader who greps headings — which is how this
+file is read — was being told the opposite of the truth. Body-only amendments are not a status
+update.
+
 ---
 
 ## Legend
@@ -93,7 +103,7 @@ sidecar tree (`tool-results/`, `subagents/`, hidden `.context-window-*.json`). T
 were plain Markdown lines from `tool-results/hook-*-stdout.txt` files.
 
 ```
-$ cd /home/flight/.claude/projects
+$ cd <claude-code projects dir>
 $ rg "mem_limit" $P | wc -l                    # the 4 pilot slugs, no glob filter
 47
 $ rg "mem_limit" -g '*.jsonl' $P | wc -l       # filtered to transcripts
@@ -268,7 +278,7 @@ The amended reindex-cost note referenced the retired fork-point embed baseline; 
 point (tend verbs that write via the filesystem must reindex) stands and is what the warning now
 surfaces.
 
-### T3 — `bm --version` reports upstream's version, not the installed build
+### T3 — `bm --version` reports upstream's version, not the installed build — **SHIPPED `9e4f3c8c`**
 **Found:** at fork setup; re-confirmed 2026-07-26.
 
 ```
@@ -505,7 +515,7 @@ dead project name, while links keep resolving. The ~2×/year × 66-dirs rewrite 
 to justify itself **does not exist**. `update_permalinks_on_move` (config_models.py:489, default
 `False`) was NOT tested.
 
-### T10 — `build-context` silently resolves a miss to an arbitrary note
+### T10 — `build-context` silently resolves a miss to an arbitrary note — **SHIPPED `829e5af5`**
 **Found:** 2026-07-26, while capturing T9. **Verified twice, independently.**
 
 A `memory://` URI that matches nothing returns a real note with `exit 0` and no error, and the
@@ -571,20 +581,24 @@ this, but we do not track upstream — reporting it is a courtesy, not a depende
 ### T11 — no newer-schema guard: an older build over a newer DB dies in a raw stack trace — **CONFIRMED 2026-07-31**
 **Found:** 2026-07-27, in `.forked/release-design.md` §2. Code sites re-verified before recording.
 
-`run_migrations` (`src/basic_memory/db.py:525`) builds the Alembic config and calls
-`command.upgrade(config, "head")` at `db.py:554`. It never reads the database's `alembic_version`
+`run_migrations` (`src/basic_memory/db.py:401`) builds the Alembic config and calls
+`command.upgrade(config, "head")` at `db.py:428`. It never reads the database's `alembic_version`
 to compare it against the code's head revision, and nothing in `src/` ever calls
 `command.downgrade`:
 
 ```
 $ grep -rn "alembic_version\|command.downgrade\|get_current_head\|MigrationContext" src/ | grep -v "/alembic/"
-src/basic_memory/db.py:530:    Note: Alembic tracks which migrations have been applied via the alembic_version table,
+src/basic_memory/db.py:406:    Note: Alembic tracks which migrations have been applied via the alembic_version table,
 ```
 
 One hit in the whole of `src/` outside the migration directory itself, and it is a **comment**.
 So installing an *older* build over a database a *newer* build already migrated raises out of the
-generic `except Exception` re-raise at `db.py:577-579` — the user gets Alembic's internal error and
+generic `except Exception` re-raise at `db.py:443-445` — the user gets Alembic's internal error and
 no actionable message.
+
+*(Line numbers re-verified against `src/basic_memory/db.py` on 2026-08-03; they had drifted from the
+2026-07-27 capture — 525/530/554/577 then, 401/406/428/443 now. The single-hit grep result is
+unchanged.)*
 
 **Why it matters:** in this fork "upgrade" means `git pull` + reinstall, so **rollback is a normal
 operation**, not an exotic one — `git checkout <older-commit> && uv tool install --reinstall .` is
@@ -865,7 +879,7 @@ passes touch the justfile for benchmark recipes (pass 4) and that is the natural
 
 ---
 
-### T17 — 10 integration tests fail on `main`; `test-int/` was never run against the W13 tree
+### T17 — 10 integration tests fail on `main`; `test-int/` was never run against the W13 tree — **SHIPPED `879681d4`: all ten fixed, `test-int` baseline green**
 **Found:** 2026-07-27. **DIAGNOSED 2026-07-28 by bisect. W13 is exonerated.** All ten are strip
 residue — tests left behind asserting on surface this fork deliberately deleted. None is a
 regression in shipping code.
@@ -1096,8 +1110,34 @@ shape.
 
 ---
 
-### T20 — `AGENTS.md` requires 100% coverage; the tree is at 96% and nothing enforces it
-**Found:** 2026-07-29, running the campaign's Phase 0 `just coverage` item.
+### T20 — no coverage ratchet: nothing enforces the 96% floor `AGENTS.md` now states
+**Found:** 2026-07-29, running the campaign's Phase 0 `just coverage` item. **Rewritten down to its
+surviving claim 2026-08-03** — half of it shipped and the heading never said so.
+
+**Dead half — the documentation defect is fixed.** `8bff120e` replaced the false
+*"Coverage must stay at 100%"* rule with the measured number; `AGENTS.md` now reads *"Coverage is
+96%, measured, and must not go down"* and cites `19463` statements / `866` missed on 2026-07-29.
+Nothing in this entry's original text about `AGENTS.md` is still true.
+
+**Surviving claim — the ratchet does not exist.** The rule is still enforced by nothing:
+
+```
+$ grep -n "fail_under\|fail-under" pyproject.toml justfile
+$ echo $?
+1
+$ grep -n "tool.coverage" pyproject.toml
+144:[tool.coverage.run]
+149:[tool.coverage.report]
+```
+
+Positive control: `[tool.coverage.report]` **does** exist at `pyproject.toml:149`, so the grep is
+looking in a section that is there and simply has no `fail_under` key. No recipe passes
+`--cov-fail-under`, and there is no CI (`just gate` is lint + typecheck + unit tests). So "must not
+go down" is advisory prose, and the next regression is silent — which is how the 100% claim managed
+to be false for an unknown length of time in the first place. The fix below is unchanged and still
+owed.
+
+*Original entry:*
 
 `AGENTS.md` states, as a rule: *"**Coverage must stay at 100%**: Write tests for new code. Only use
 `# pragma: no cover` when tests would require excessive mocking."* The measured value:
@@ -1203,6 +1243,12 @@ label carried separately. That is unworkable while the registry is ambiguous and
   stores agreeing), which is the design question R8's id-keyed layout has to answer — revisit
   when `.bm.yml` (W4/B5) lands.
 
+**2026-08-03 — the deferral trigger has fired.** `.bm.yml` landed with B5 (`eb8df433`), so "revisit
+when `.bm.yml` lands" is now due, not future. `config_models.py:161` still declares
+`projects: Dict[str, ProjectEntry]` keyed by human name, so the split is exactly as recorded.
+**This is a user decision, not an agent one** — whether to move to the id-keyed registry layout now
+or keep the split until the verbs force it. Nothing is decided here.
+
 ### B3 — `bm tool list-projects --json` fails — **REFUTED 2026-07-31**
 **Found:** 2026-07-26. Claimed to exit 1 and emit nothing parseable as JSON. No output was ever
 captured, and it stayed in BLOCKERS only because W7 is built on it.
@@ -1225,8 +1271,29 @@ exit=0
 Valid JSON, exit 0. Either the original observation was wrong or the intervening strip fixed it;
 either way there is nothing to build. W7 can rely on this surface.
 
-### B4 — no fast path: anything touching `mcp.tools` / `api.app` costs ~4 s
-**Found:** fork-point baseline (see `AGENTS.md`). `bm tool search-notes` is 4.3–4.8 s; a native
+### B4 — the fast path exists; `bm tool *` still pays the full MCP import graph, and the ~1.1 s direct floor stands
+**Found:** fork-point baseline. **Retitled 2026-08-03** — the old heading, "no fast path: anything
+touching `mcp.tools` / `api.app` costs ~4 s", has been false since `7d3459da` shipped
+`basic_memory.cli.direct` (T18). The entry's own 2026-07-31 amendment said so and the heading did
+not; it is promoted here.
+
+**What is true now.** `basic_memory.cli.direct` gives a native command a repository/service route
+with none of `api.app` / `mcp.tools` / `fastapi` / `dateparser` on it, guarded by
+`tests/cli/test_native_command_import_guard.py`, which runs `project list` in a subprocess and fails
+if any of those four enters `sys.modules`. `project list` measures 1.1 s user / 115 MB.
+
+**What remains open, and it is the whole of B4 now:**
+
+- `bm tool *` one-shots still pay the full MCP import graph — by design, not by oversight.
+- The **~1.1 s direct-path floor** (SQLAlchemy + pydantic + alembic) plus the 0.15 s interpreter
+  floor bound every fast verb we build. That floor, not the 4 s one, is the number the verb designs
+  have to live with.
+
+Close B4 when the verbs land on the direct path and the 1.1 s floor is either accepted explicitly or
+reduced.
+
+*Original entry:*
+`bm tool search-notes` is 4.3–4.8 s; a native
 command like `project list` is ~0.55 s; the `--version` floor alone is 0.33 s.
 
 This already forced one design decision — `STATUS.local.md` stays a flat file, because a per-prompt
@@ -1323,6 +1390,12 @@ Recovers decisions made in conversation and never written down. **Measured 2026-
 needed** — plain `rg` over the 4 pilot slugs (106 MB / 77 sessions) is ~20 ms, worst case 0.47 s,
 and `rg --json` plus a full parse is 0.039 s. An index would add a staleness problem for nothing.
 
+> **The figures in this entry come from a private local transcript corpus and are not reproducible
+> from this repo.** The pilot was one machine's Claude Code project directories; nothing here ships
+> them and no fixture recreates them. Treat the numbers as the record of a measurement that was
+> taken, not as a check anyone can re-run — the *design constraints* they produced are the durable
+> part and stand on their own.
+
 **The real work is a turn classifier, not search.** `role: user` does not mean the human spoke —
 tool *results* are recorded as user-role turns. Of 47 hits on one term: 15 `user/user`, 14
 `assistant/assistant`, 6 `attachment/-`, and every sampled "user hit" was a `tool_result` block. A
@@ -1363,7 +1436,7 @@ One scope choice to make deliberately rather than by default: `-g '*.jsonl'` als
 parse fine, but a subagent turn's speaker attribution differs from a main-thread turn's — decide
 in or out, and record which.
 
-### W2 — `bm tend gc`: the gardener
+### W2 — `bm gc`: the gardener
 Strictly lossless — may move, index, dedupe, re-label, and flag; may never summarize, merge, or
 resolve. Ship the flag-only version first so the constraint is structural rather than aspirational.
 
@@ -1373,8 +1446,8 @@ derived at read time by the store itself.
 
 ### W3 — local git history on the write path
 Every mutation commits into a local-only store repo so pruning is recoverable. Two traps: set
-`core.excludesFile` **and** `core.hooksPath` to `/dev/null` inside that repo (the global
-`betterleaks` pre-commit hook will otherwise block automated commits), and never export `GIT_DIR`.
+`core.excludesFile` **and** `core.hooksPath` to `/dev/null` inside that repo (a globally configured
+secret-scanning pre-commit hook will otherwise block automated commits), and never export `GIT_DIR`.
 
 **Amended 2026-07-26 — a third init trap, a required exclude pattern, and the measured cadence.**
 
@@ -1417,30 +1490,57 @@ fully open, so enforcement is ours and cannot live in a wrapper.
 commit of this build (see O-picoschema for grounds). The vocabulary source is `.bm.yml`, validated
 by a bespoke checker that W5 wires into `bm doctor`.
 
-### W5 — `bm tend check`: schema and integrity lint
-Covers T4 (unresolved relations), T6 (doubled frontmatter blocks), set-once field violations, and
-`supersedes` appearing on a type other than `finding`.
+### W5 — the remaining schema-validation rules, inside `bm doctor` — **NOT a `bm check` command**
+**Rewritten 2026-08-03.** Two things were wrong with this entry, one naming and one substantive.
 
-**Amended 2026-07-26 — five further rules the schema draft names explicitly:**
+**Naming.** It was titled `bm tend check`. There is no such verb and there will not be one:
+`AGENTS.md` says the verbs ship flat under `bm` and, explicitly, *"There is no `bm check` — the
+schema and integrity checks land inside the existing `bm doctor`"*, because a second checking
+command would immediately be the one nobody runs. `tend` is the codename for the design, not a
+namespace.
 
-1. `date-ref` present on an `inline`/`mtime`/`inferred` rung (it is permitted on one rung only).
-2. `review-by` missing on a `finding`, and its default injected from `.tend.yml` at write time.
-3. `permalink` absent or `!= id` — permalink is a set-once identity field (see T9).
-4. **Any** list-valued frontmatter field at all, because `--meta` can never query one (T1).
-5. Validation must run **on the read path as well as the write path**. Beans' `check` validated only
-   on write, which is why `status: done` drift sat undetected on disk for six months.
+**Substantive — four of the eight rules are already closed.** Struck, with the commit that closed
+each:
+
+- ~~T4, unresolved relations~~ — **shipped `7e4a0d2e`**. `bm doctor --project` prints dangling
+  forward references, oldest source first (`cli/commands/doctor.py:198-218`, reached through
+  `direct_corpus_integrity_report` on the fast path).
+- ~~`permalink` absent or `!= id`~~ (rule 3) — **shipped `6cf15451`**. The same command reports
+  permalink-invariant issues; the query is `EntityRepository.find_permalink_integrity_issues`
+  (`cli/direct.py:73`).
+- ~~T6, doubled frontmatter blocks~~ — **moot**. The defect does not exist in this tree; see
+  **R-T6** in RESOLVED. There is nothing to lint for.
+- ~~Rule 4, flag **any** list-valued frontmatter field~~ — **premise reversed**. It existed only
+  because `--meta` could not query a list (T1). B1 shipped `$contains` and `$in` in `43d1a3a4`, so
+  list-valued fields are queryable and flagging them all would now be noise.
+
+**What W5 still owes** — the schema rules that have no home in `doctor` yet:
+
+1. `supersedes` appearing on a type other than `finding`.
+2. Set-once field violations generally (the permalink case is done; the rule is not).
+3. `date-ref` present on an `inline`/`mtime`/`inferred` rung — it is permitted on one rung only.
+4. `review-by` missing on a `finding`, and its default injected from `.bm.yml` at write time.
+5. Validation must run **on the read path as well as the write path**. The predecessor tool
+   validated only on write, which is why `status: done` drift sat undetected on disk for six months.
+
+All five are `.bm.yml`-vocabulary rules, which is why W5 is wired by the bespoke checker W4 builds
+and not by `picoschema/` (see O-picoschema for the grounds).
 
 Found in: sweep-schema.md:43.
 
 ### W6 — an idempotent, resumable importer
 The corpus is written by other sessions while a migration runs. Measured over twenty minutes in a
-single session: `pegemony` 271 → 368 lines, `palimpsest` 292 → 438, `hn-app` 21 → 31, and the corpus
-count 52 → 53 files. A one-shot importer silently drops everything written while it runs, and BM's
-import path offers no resume.
+single session: `project-a` 271 → 368 lines, `project-b` 292 → 438, `project-c` 21 → 31, and the
+corpus count 52 → 53 files. A one-shot importer silently drops everything written while it runs, and
+BM's import path offers no resume.
 
-It must also **normalize, not copy**: the four existing beans stores (athena 176, just-chatting 40,
-trmnl 14, tinyledger 10+37 = ~240 records) carry on-disk schema drift — `tinyledger` uses
-`status: done` where `just-chatting` uses `status: in_progress`. And every tool in this space assumes
+> **These counts come from a private local corpus and are not reproducible from this repo.** They
+> are the record of a measurement, not a check to re-run; the requirements they produced
+> (idempotence, resumability, normalize-don't-copy) are the durable part.
+
+It must also **normalize, not copy**: the four existing predecessor stores (store-a 176, store-b 40,
+store-c 14, store-d 10+37 = ~240 records) carry on-disk schema drift — `store-d` uses
+`status: done` where `store-b` uses `status: in_progress`. And every tool in this space assumes
 a greenfield directory (`bm project add` included), so bringing 7,746 lines across 52 heterogeneous
 files in is bespoke code either way.
 
@@ -1495,17 +1595,25 @@ compact pointers rather than whole notes.
 Found in: sweep-inv-plan.md:1, sweep-spike.md:37, sweep-transcript.md:31, sweep-decisions.md:19,
 sweep-prior-art.md:13, sweep-prior-art.md:37.
 
+**2026-08-03 — `bm brief` now exists and this entry has never mentioned it.** `e0d8631c` replaced
+`bm hook` and the harness plugins with `bm brief`. **Open user question: is `bm brief` W8's primer,
+or a different thing that happens to be adjacent?** The test is the one this entry already states —
+size-capped, index-only, one line per record, pointers rather than content. Nothing is decided here;
+W8 stays open until the user answers.
+
 ### W9 — a `STATUS.local.md` emitter with a validated contract
 The headline file stays flat (B4), but it must be written *by* the store rather than by hand — and the
-write has to satisfy three consumers with three different parsers: `noah-statusline.js` requires
-`lines[0].trim() === '---'` **and** `lines[1].startsWith('headline:')`; `~/bin/projects` reads line 2
-with no `---` check; `notify.sh` also reads line 2. A malformed write fails silently in the statusline
-while the other two display the wrong text. Three of 52 files were doing exactly this for months:
-`blog/landing/STATUS.local.md` has an HTML comment on line 1, and
-`well-educated-mind/STATUS.local.md` has `status: active` hoisted above `headline:` — both give the
-lint two real, reproducible failure modes to detect.
+write has to satisfy three consumers with three different parsers: the statusline script requires
+`lines[0].trim() === '---'` **and** `lines[1].startsWith('headline:')`; a local projects-overview
+script reads line 2 with no `---` check; a notify script also reads line 2. A malformed write fails
+silently in the statusline while the other two display the wrong text. Three of 52 files were doing
+exactly this for months: `project-a/STATUS.local.md` has an HTML comment on line 1, and
+`project-b/STATUS.local.md` has `status: active` hoisted above `headline:` — both give the
+lint two real, reproducible failure modes to detect. (The consumers are local, private scripts; the
+parser requirements above are the whole of what the emitter has to satisfy.)
 
-The emitter must also preserve **mtime semantics**, not just content: `~/bin/projects` uses file mtime
+The emitter must also preserve **mtime semantics**, not just content: the projects-overview script
+uses file mtime
 as its staleness check, so a regen that rewrites unconditionally makes every stale project read as
 fresh — the precise silent failure the flat file was kept for.
 
@@ -1548,8 +1656,8 @@ Found in: sweep-schema.md:31, sweep-prior-art.md:55.
 
 ### W11 — a cross-project read
 Every BM query is project-scoped and nothing aggregates across projects. The gardener's staleness
-sweep and any "what is open everywhere" question both need one read across all stores; today
-`~/bin/projects` is the only cross-project view and it reads line 2 and mtime, nothing more.
+sweep and any "what is open everywhere" question both need one read across all stores; today a local
+projects-overview script is the only cross-project view and it reads line 2 and mtime, nothing more.
 
 Found in: sweep-inv-plan.md:25.
 
@@ -1571,7 +1679,7 @@ configuration reality that every registry change has to be reasoned about twice.
 
 See AGENTS.md → "We do not track upstream" → "Strip policy" for the rule this falls under.
 
-### W13 — delete the Postgres backend
+### W13 — delete the Postgres backend — **SHIPPED `79e0dad9`**
 **SHIPPED `79e0dad9`.** 97 files, −6790/+694. Verified `3406 passed / 10 skipped / 0 failed`
 (baseline 3444+33 collected, −61 `def test_`), `fast-check` exit 0 with zero `ty` advisories.
 No alembic revision file was deleted — whole-body-Postgres revisions are no-ops so the
@@ -1597,12 +1705,13 @@ changed 27 lines of `postgres_search_repository.py` purely to mirror a SQLite fi
 halves every future search-repository change — the dual-repository shape is the single most
 duplicated surface in this tree.
 
-**Until this lands**, run the Postgres tests on any commit touching `postgres_search_repository.py`:
-`BASIC_MEMORY_TEST_POSTGRES=1` over the two metadata-filter files and
-`tests/repository/test_postgres_search_repository.py`. Testcontainers pulls
-`pgvector/pgvector:pg16` — verify it ran by filtering `docker ps` on that image or on label
-`org.testcontainers=true`, **not** `--filter ancestor=postgres`, which cannot match and produced a
-false "Postgres never ran" conclusion on 2026-07-26.
+*(A paragraph instructing "until this lands, run the Postgres tests with
+`BASIC_MEMORY_TEST_POSTGRES=1`" was deleted 2026-08-03. It survived the deletion it was written
+against: `postgres_search_repository.py` and its tests went with `79e0dad9`, so the instruction had
+become unrunnable. Recoverable from this file's own history if wanted; the one reusable fact is
+restated here — `docker ps --filter ancestor=postgres` cannot match a testcontainers run, so filter
+on the image name or on label `org.testcontainers=true`. That mis-filter produced a false "Postgres
+never ran" conclusion on 2026-07-26.)*
 
 ### W14 — delete the `bm ci` GitHub CI-capture surface — **SHIPPED `6098d9b0`**
 **Done 2026-07-27.** Deleted `src/basic_memory/ci/` (3 files), `cli/commands/ci.py`,
@@ -1795,16 +1904,28 @@ strip as the first commit of the W4 build.** Grounds, each checked against the c
 
 Not stripped tonight: a deletion pass has its own rules (grep the test tree, entry points, W15-class
 escape checks) and belongs with the W4 work, where W5's `bm doctor` checks replace `schema
-validate`/`diff` in the same program — no window with zero drift detection. Until then the subsystem
-is frozen: no fixes land in it (O5's error-shape defect is recorded under O8 as class evidence and
-dies with the strip).
+validate`/`diff` in the same program — no window with zero drift detection.
+
+**The freeze clause is corrected 2026-08-03.** It read "the subsystem is frozen: no fixes land in
+it". That was already false when written: W7's output-contract work landed changes on this surface
+in `92d1b6c9` (`schema infer`'s no-pattern answer became a result, not an error) and `e9db95a3`
+(`schema validate`/`diff` conformed to `docs/OUTPUT_CONTRACT.md`) — both in
+`cli/commands/schema.py` and `mcp/tools/schema.py`, the CLI/tool skin over `picoschema/`. The
+package itself is untouched since the fork (`git log -- src/basic_memory/picoschema/` ends at
+`6e9f2fcf`, an upstream rename).
+
+**Current rule:** the subsystem is still strip-scheduled with W4, and no behavioural or feature work
+lands in it. Output-contract conformance was the one exception admitted, on the grounds that a
+command still shipping has to obey the contract every other command obeys for as long as it ships —
+a stripped command costs nothing to have conformed, an unconformed live command costs every scripted
+consumer. O5's error-shape defect is recorded under O8 as class evidence and dies with the strip.
 
 
 *(O1 was diagnosed and closed on 2026-07-26 — it was a measurement artifact, not a defect. See
 **R-O1** under RESOLVED, and the four requirements it produced under **W1**. The id is retired
 rather than reused, so O2–O6 keep their numbers.)*
 
-### O2 — `bm orphans` reports both endpoints of a frontmatter-encoded edge as orphans — **DIAGNOSED 2026-07-31: orphans is right, frontmatter edges don't exist**
+### O2 — `bm orphans` reports both endpoints of a frontmatter-encoded edge as orphans — **RESOLVED 2026-07-31: `orphans` is right, frontmatter edges don't exist; no code change owed**
 **Found:** 2026-07-26, recorded in the schema §12 comparison as a tested outcome on a 9-note corpus.
 No command output was captured, so this is a claim until reproduced.
 
@@ -1832,7 +1953,18 @@ relations and `orphans` reports them correctly. The defect is not in `orphans`; 
 frontmatter-encoded edges are invisible to the graph — the same class as O3. Consequence for the
 schema: **edges must be body relations** (`- relation_type [[Target]]`), never frontmatter fields.
 
-### O3 — frontmatter values appear not to reach full-text search — **CONFIRMED 2026-07-31**
+**Status 2026-08-03: closed, and the consequence still binds.** Nothing is owed in `orphans`. Note
+what W18 (`22008333`) did and did not change: frontmatter text is now reachable by FTS (see O3), but
+a frontmatter wikilink still produces **no relation row**, so it is still not an edge. "Edges are
+body relations" is a live schema rule, not a historical one.
+
+### O3 — frontmatter values appear not to reach full-text search — **FIXED VIA W18 `22008333`**
+> **Read this line before the diagnosis below.** As of `22008333`, **frontmatter keys and values ARE
+> reachable by plain FTS** — `SearchService._frontmatter_search_terms` (`search_service.py:682`,
+> called at `:769`) folds them into the entity's `content_stems`. Everything under
+> "Confirmed 2026-07-31" is the pre-fix diagnosis, kept because it is the evidence W18 was built on
+> and the fixture the regression test inverts. Do not read it as current behaviour.
+
 **Found:** 2026-07-26, same §12 comparison — "Full-text search for the id → 0 hits" against relations,
 which are indexed as first-class rows. Recorded as a table outcome, not captured output.
 
@@ -1873,8 +2005,8 @@ O5's inference blindness is moot once picoschema is stripped.
 DB metadata rather than frontmatter, and no working `--filter` form for it has been shown.
 
 Two load-bearing features sit on it: the gardener's staleness flag (`type == state AND updated_at <
-today - N`) and the derived headline that keeps `noah-statusline.js` alive (the most recently updated
-`state` record's title). Both are unbuildable if the field cannot be filtered and sorted.
+today - N`) and the derived headline that keeps the statusline script alive (the most recently
+updated `state` record's title). Both are unbuildable if the field cannot be filtered and sorted.
 
 **To confirm or refute:** `bm tool search-notes "**" --permalink --filter '{"updated_at":{"$lt":"2026-07-25"}}' --project <p> --json`,
 and separately whether any sort/order argument exists on that path.
