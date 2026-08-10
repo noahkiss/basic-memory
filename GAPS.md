@@ -1759,7 +1759,7 @@ which kind of problem it has before asking.
   must be corrected when this lands, or the file advertises a command that does not exist.
 - Doctor's output grows enough that grouping is now required rather than cosmetic.
 
-### W3 — local git history on the write path
+### W3 — local git history on the write path — **SHIPPED 2026-08-10 (mechanism + verbs; W5's write path wires into it)**
 Every mutation commits into a local-only store repo so pruning is recoverable. Two traps: set
 `core.excludesFile` **and** `core.hooksPath` to `/dev/null` inside that repo (a globally configured
 secret-scanning pre-commit hook will otherwise block automated commits), and never export `GIT_DIR`.
@@ -1924,6 +1924,36 @@ not exist. It survives only as a possible complement, and is unbuilt.
 
 **Still open, inherited from `local-history.md` §9:** off-machine durability (does history die with
 the directory?) — partly answered by **E**, not closed.
+
+**SHIPPED 2026-08-10 — the mechanism and the two recorded verbs.** What exists now:
+
+- `src/basic_memory/store/history.py` — DB-free, subprocess-git-only. `store_path()` derives from
+  `resolve_data_dir()`; `ensure_store_repo()` is idempotent and self-healing (re-applies
+  `core.excludesFile=/dev/null`, `core.hooksPath=/dev/null`, `commit.gpgsign=false`, and a local
+  `bm-store` identity on every call); `commit_paths()` stages exactly the named paths, writes
+  `Session:`/`Actor:` trailers (omitted when unknown), returns `dirty_others` for the nag;
+  `sweep_commit()` never writes a trailer; every invocation scrubs
+  `GIT_DIR`/`GIT_WORK_TREE`/`GIT_INDEX_FILE` and passes `-C`. index.lock: two retries with
+  backoff, then guarded removal only past 5 s age. Errors are agent-actionable
+  (`HistoryError` names the repo and the fix).
+- `bm history dirty` / `bm history commit [PATHS|--all]` — v2-contract output, registered in the
+  CLI's skip-init set (no DB touch; the verbs cost git alone).
+- Judgment calls: the `/*` info/exclude pattern recorded above was **deliberately not applied** —
+  it guarded the abandoned nested-in-worktree layout; in the central store the worktree *is* the
+  store and the pattern would exclude every note. The bare-repo trap cannot arise (`git init` in
+  the directory, not via `--git-dir`). `git status --porcelain` runs with `-uall` so an untracked
+  directory reports file paths, not one collapsed row (undo needs file paths).
+- **Owed re-measurement taken (2026-08-10):** path-scoped incremental commit through
+  `commit_paths()` on a 200-file store: **~24 ms** avg over 50; no-change check **~10 ms**
+  (includes `ensure_store_repo` config re-apply + the post-commit dirty scan). Same order as the
+  12/6 ms `add -A` figures; synchronous commit inside every mutating call stands.
+- Not wired to any write path yet, by design — the note-writing verbs arrive with W5 and call
+  `commit_paths` with their actor/session; W6's import lands as the first big revertable commit.
+
+Verified: fast-check 0; unit 3309/2 (3285 + 24 new: tests/store/test_history.py +
+tests/cli/test_history_command.py); int 329/3 unchanged; doctor skipped — nothing here touches
+the file↔DB loop. Live scratch smoke: `history dirty` empty case, per-file listing, path commit,
+`--all` sweep with trailer-free message all conform.
 
 ### W4 — closed record vocabulary enforced in the write path
 Humans extend the vocabulary; agents may only select from it. Upstream's frontmatter vocabulary is

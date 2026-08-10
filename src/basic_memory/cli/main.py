@@ -19,6 +19,7 @@ if not _version_only_invocation(sys.argv[1:]):
         brief,
         db,
         doctor,
+        history,
         import_chatgpt,
         import_claude_conversations,
         import_claude_projects,

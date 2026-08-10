@@ -77,6 +77,7 @@ def app_callback(
     # ('brief' returns above, before this point.)
     skip_init_commands = {
         "doctor",
+        "history",
         "man",
         "mcp",
         "status",
