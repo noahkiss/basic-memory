@@ -2353,6 +2353,12 @@ No alembic revision file was deleted — whole-body-Postgres revisions are no-op
 (applied outside any backend gate); `litellm` + the remaining dependency prune shipped later in
 `6f8767a3` (W17).
 
+> **Trap, rescued 2026-08-07 from `.forked/w13-postgres-inventory.md` before its deletion.**
+> `nest-asyncio` (`pyproject.toml:35`) is applied **unconditionally in `alembic/env.py`**, not behind
+> any backend gate — so it is live on the **SQLite** migration path. Removing it is a behaviour
+> change, not a leftover prune. The inventory predicted exactly this and it is the reason the
+> dependency is still there.
+
 **Residue swept 2026-07-29.** Two test fakes still carried a `get_bind()` returning a fabricated
 dialect name — `FakeProjectIndexSession` in `tests/indexing/test_project_index_maintenance.py` (plus
 its `dialect_name` field) and `FakeExecuteSession` in `tests/indexing/test_directory_delete_runner.py`.
