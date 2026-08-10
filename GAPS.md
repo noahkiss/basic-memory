@@ -1487,13 +1487,91 @@ One scope choice to make deliberately rather than by default: `-g '*.jsonl'` als
 parse fine, but a subagent turn's speaker attribution differs from a main-thread turn's — decide
 in or out, and record which.
 
-### W2 — `bm gc`: the gardener
+**DECIDED 2026-08-06 (user) — `bm mine` is a parser, not a miner; it runs on demand.**
+
+**The split.** Two jobs hide in this entry and they have opposite natures. *Turn classification*
+("who actually said this; is this a tool result") is structural, deterministic, and is the thing
+agents reliably get wrong — the four search-path constraints above plus the `role: user` trap.
+*Decision detection* ("is this passage a decision") is judgment. Same line that closed W6: **code
+where agents fail predictably, agent where judgment is needed.**
+
+So `bm mine` emits clean, correctly-attributed turns in the shape this entry already specifies
+(`{session, line, timestamp, speaker, text, context[]}`) and **makes no claim that anything is a
+decision.** An agent reads that output, judges, and writes any keeper with `bm new` — so the
+vocabulary enforcement, `source:`, and the git history all apply through the normal write path with
+no special case.
+
+**This dissolves the open question of what `mine` writes.** It writes nothing. There is no
+"auto-write records / print candidates / file as `inbox`" choice, and no class of records that
+assert a decision no person ever confirmed.
+
+**Sub-agent transcripts: out by default, `--include-subagents` to add them.** A parser whose one job
+is correct speaker attribution must not silently mix in turns that are not the user's. Note that
+**cass indexes them and does not mark them** — both hits in the 2026-08-06 probe below came from
+`subagents/agent-*.jsonl`, distinguishable only by path.
+
+**On demand, never background.** Three grounds:
+
+1. **A session-end trigger does not fire when it matters.** W3 rejected `Stop`/`SessionEnd` hooks
+   for the git history because a session that ends badly (crash, `/clear`, context blowout) never
+   fires them — and sessions worth mining skew toward exactly those. Same argument, same answer.
+2. **A parser produces nothing to act on unprompted.** The judgment step is the expensive one, and
+   backgrounding it spends model tokens on every session forever.
+3. **There is nothing to pre-compute.** Search was measured at ~20 ms, worst case 0.47 s.
+
+**Accepted exposure, with the mitigation named:** nothing gets mined unless asked, so a decision made
+in conversation and never mined stays lost. The fix is **not** a background job — it is making the
+ask cheap and habitual (user agreed 2026-08-06). Two additive candidates, neither built yet: a line
+in the W8 primer, and a `bm doctor` hygiene check that notices sessions in this project that were
+never mined.
+
+**Probed 2026-08-06 — `cass` does not solve this and is not the engine.** The user asked whether the
+`cass` transcript tool ("unified TUI search over coding agent histories", `/recall`) classifies tool
+results better. It does not. A `cass search --json` hit carries `title`, `snippet`, `content`,
+`score`, `source_path`, `agent`, `workspace`, `created_at`, `line_number`, `match_type`,
+`source_id`, `origin_kind` — and nothing else. Greps for `role`, `speaker`, `turn*`, `message_type`,
+`is_tool*` return **zero hits** across `cass search --json`, `cass introspect --json` (1,122,030
+bytes), and `cass robot-docs` (29 lines). *Positive control:* the same greps for `"agent"` and
+`search` in those files return 10 and 5 hits, so the pattern and the pipeline both work.
+
+What cass does offer: tool **calls** normalized to a readable `[Tool: Read - <path>]` form (a tool
+call was never the trap — tool *results* are), and coverage of Codex/OpenCode transcripts that
+`rg` over `~/.claude/projects` does not see. What it costs: an index, hence a staleness problem this
+entry deliberately avoided, plus an external dependency for a shipped feature. **Treat it as a
+possible later source, never the classifier.**
+
+### W2 — the gardener — **DECIDED 2026-08-05 (user): no `bm gc` command; the jobs are checks inside `bm doctor`**
 Strictly lossless — may move, index, dedupe, re-label, and flag; may never summarize, merge, or
 resolve. Ship the flag-only version first so the constraint is structural rather than aspirational.
 
 **Reduced in scope 2026-07-26:** it no longer needs to maintain a derived reverse index for
 supersession. `build-context` on a predecessor returns incoming edges natively, so the reverse is
 derived at read time by the store itself.
+
+**DECIDED 2026-08-05 (user) — `bm gc` does not ship as a command.** Its five jobs
+(`.forked/schema.md` §6) become checks inside `bm doctor`, alongside W5's schema rules.
+
+The grounds are the repo's own no-`bm check` rule, applied one step further than it was written.
+Flag-only was already the constraint, so the gardener and the doctor do the identical thing: run a
+query, print a list, change nothing. The test case that settles it: an agent gets W5's nag, runs
+`bm doctor`, is told about broken links and missing fields, and is told **nothing** about eleven
+findings that expired last month — because those live in a command nobody mentioned. That is
+precisely *"a second checking command would immediately be the one nobody runs."*
+
+**The integrity/hygiene distinction is real and survives as grouping, not as a second binary.**
+Integrity checks (DB ↔ file consistency, dangling links, permalink invariants, missing required
+fields) have right answers. Hygiene checks (expired `review-by`, `date-source: inferred`, stale
+`state`, the `inbox` pile, W4's proposed types) need a person. Doctor groups its output by category
+and takes `--only <category>`; the nag's count spans both, since an agent should not have to know
+which kind of problem it has before asking.
+
+**Consequences:**
+
+- The fifth job — *"content that is now re-derivable"* — has no query and needed human judgment even
+  in the original design. It does not become a doctor check. It is not built.
+- **`AGENTS.md` names `bm gc` twice** — in the planned-features list and in the flat-verb list. Both
+  must be corrected when this lands, or the file advertises a command that does not exist.
+- Doctor's output grows enough that grouping is now required rather than cosmetic.
 
 ### W3 — local git history on the write path
 Every mutation commits into a local-only store repo so pruning is recoverable. Two traps: set
