@@ -2529,6 +2529,180 @@ worth its own look someday. Tests replay O3's fixture inverted: the frontmatter-
 (`record_id: zq7-…`) is now reachable by plain FTS next to the body-string positive control, plus
 an absent-token negative control. `--meta`/`--filter` unchanged as the exact-match path.
 
+### W19 — the user-facing vocabulary is jargon, starting with the record type names
+**Opened 2026-08-04 (user).** Reviewing the `.forked/schema.md` type set, the user could not state
+the difference between two proposed types from their names alone: *"I honestly don't know the
+difference between procedure and finding."* That is the correct reading — the names describe the
+schema's internal axes (mutability, supersession) rather than what a person does with the record.
+
+A record type name is read by an agent choosing where to file something, at the moment it is least
+inclined to go look up a definition. A name that needs a glossary produces misfiled records, and
+per §1 of the schema draft misfiling is the expensive failure because it is invisible.
+
+Scope is wider than the type names, and the user named the wider scope in the same breath: **CLI
+help text too.** `AGENTS.md` requires nothing of the words the tool puts in front of a person, so
+the surface drifts into schema jargon by default. The house standard for this is ASD-STE100
+Simplified Technical English.
+
+**What this owes:**
+
+1. Record type names that pass a one-question test each, so an agent can classify without a
+   glossary. **Done 2026-08-04** — see the naming decision under W4: *do it / consult it / learned
+   it / refer to it / how things are / can't tell*.
+2. A pass over `--help` text for every shipped verb: one plain sentence per command, condition
+   before command, no schema-internal terms in user-facing strings.
+3. Error messages on the W4 write path specifically — a rejection must name the allowed values, in
+   the same plain vocabulary, or the agent's next guess is uninformed.
+4. **A command that explains the type set on demand** — one short paragraph per type, its picking
+   question, and its fields. Derived from the live vocabulary file, never a hardcoded copy, or it
+   drifts the first time someone declares a field.
+
+**Promoted 2026-08-04 (user) — items 2–4 are a binding acceptance condition on W4, not a follow-up.**
+The user agreed to six record types *"as long as we have good cli help docs that explain when to use
+each one, along with a good entry / primer bm command that explains all of this."* A closed
+vocabulary an agent cannot understand at the moment of filing relocates the misfiling rather than
+preventing it, and §1 of the schema draft is explicit that misfiling is the expensive failure
+because it is invisible.
+
+5. **Workflow affordances — most verbs suggest their natural next verb.** Added 2026-08-06 (user):
+   *"most of the bm tools could carry recommended follow-up tools that fit nicely into whatever
+   workflow each one does — ex. if one tool is for searching past entries, maybe it also suggests a
+   follow-up for how to edit a past entry."* This is a **different line** from W5-B's condition
+   notices: a notice says *something is wrong, run X*; an affordance says *you just did X, the next
+   step is Y*. It belongs to W19 rather than W5 because it teaches the surface at the moment the
+   agent is standing in it — the same principle as item 3, where a rejection must name the allowed
+   values instead of only refusing.
+
+   **The affordance list is static per command.** Each verb carries a fixed list of follow-up verbs,
+   each with 5–8 words naming its purpose. No conditions, no ordering logic, no memory:
+
+   ```
+   next:
+     bm show <id>   read the full entry
+     bm edit <id>   change an existing entry
+     bm new         record something worth finding again
+   ```
+
+   **Corrected 2026-08-06 (user).** An earlier draft gave affordances conditional rules — show only
+   when the next step is non-obvious, only when applicable, never twice in one session. The user
+   rejected the premise: *"wouldn't that require extra context per-session to handle something like
+   that?"* It would. "Never twice in a session" requires `bm` to know what a session is and to
+   remember what it already printed. `bm` holds no session state, and adding it to suppress three
+   lines is the wrong trade. A static list costs a fixed ~20 tokens and needs no memory.
+
+   Suppressed by `--quiet`, which is stateless. That is the only condition.
+
+**Item 4 does not go inside `bm brief`.** W8 caps brief at ~50 tokens of pointer rows,
+unconditionally, every session; per-type explanations would burn that budget on every start for a
+decision an agent makes rarely. The split: **brief names the types** (it derives its sections from
+the vocabulary anyway, so the list is free), **the write-path error teaches at the moment of
+failure** (item 3), and **the explainer command carries the full text on demand** (item 4).
+
+### W20 — `--json` may be the wrong agent-facing surface; W7's contract needs reopening
+**Opened 2026-08-04 (user)**, while deciding W5's nag format: *"I don't even know if JSON is the
+best choice for giving data to an agent, anyway — anything could work, markdown, a table, some
+smaller structured output, whatever."*
+
+This is a live question against a **SHIPPED** entry. `docs/OUTPUT_CONTRACT.md` v1 (W7) is built on
+"JSON to stdout, diagnostics to stderr," and every verb built under phase 4 consumes it. Left
+inside W7 it would be a trap of exactly the T21 shape — an open question sitting in a closed entry
+where nobody looks — so it gets its own number.
+
+**The premise.** The contract's only consumer is an agent, and JSON spends tokens on braces,
+quotes, and repeated keys to encode structure an agent reconstructs from a table or a list just as
+reliably. The cost is paid on every single response. The user has delegated the call: *"we're not
+currently using bm so it's fine to make changes on the fly if they make sense."*
+
+**What this owes:**
+
+1. A measurement, not an assertion — the same result set rendered as the v1 JSON envelope and as a
+   compact line/table form, token counts for both. `AGENTS.md`: a claim without a reproduction is
+   not a finding. The token saving is the entire argument and it has not been measured.
+2. A decision on the default rendering for agent-facing verbs, and on whether `--json` survives for
+   non-agent consumers or is dropped outright.
+3. Where notices go under whatever wins — this is the question W5-B deferred. A structured envelope
+   can carry a `notices` field; a table cannot, so the notice trails or precedes the payload.
+4. The v1 decisions that survive regardless, and must be carried forward rather than re-litigated:
+   empties are results and exit 0 (addressing vs. content), `total: int | null` with no sentinel,
+   errors exit 1 with the payload still parseable on stdout.
+
+**Not a licence to make each verb bespoke.** The value of W7 was one contract every verb obeys; if
+the rendering changes, the contract changes with it and stays single.
+
+**DECIDED 2026-08-06 (user) — JSON goes. The contract specifies rules, not a serialization.**
+
+**`--json` is removed outright, not kept as a secondary mode.** The assistant proposed keeping it
+for "anything that actually parses rather than reads"; the user rejected that as a softening of an
+already-taken decision. Nothing consumes it — every consumer is in-repo, in-process, and an agent.
+There is no compat tax in this fork.
+
+**Why the contract stops naming a format.** `bm` output is not one shape:
+
+| shape | verbs | best rendering |
+|---|---|---|
+| lists of records | `search`, `ls`, `brief` | aligned columns — genuinely tabular |
+| one record | `show` | labelled lines |
+| grouped report | `doctor` | sections with headings; a table flattens the grouping that makes it readable |
+| error | any | one message |
+
+Forcing all four into one envelope is what JSON did. So v2 specifies **rules that hold whatever the
+shape is**, which keeps the contract single — W7's actual value — without a universal envelope.
+
+**The v2 rules:**
+
+1. **One record per line** where records are listed. Fixed column order, alignment only.
+2. **Identifier first**, so an id is findable without counting columns.
+3. **A count on its own line at the end**, or nothing when the count is unknown. This preserves v1's
+   honest `total`: absent means unknown, never a sentinel.
+4. **Notices, then affordances, after the payload**, each on its own line. This answers the stream
+   question W5-B deferred — no stderr split, no `notices` field, just trailing lines.
+5. **Empties are results** — a line saying nothing matched, exit 0. Unchanged from v1.
+6. **Errors exit 1**, message on its own line. Unchanged from v1.
+7. **`--quiet` drops notices and affordances**, leaving the payload alone.
+
+**Illustrative only — the measurement this entry owes is still owed.** Two records in the v1
+envelope run about three times the tokens of the same rows as columns, and the gap widens per row
+because JSON repeats key names on every record. That is reasoning, not a measurement. Take the real
+figures on real output before calling the change done; do not let this paragraph become the
+inherited-figure problem T18 was.
+
+### W21 — the permalink normalization contract is undocumented, and permalinks are this fork's identity
+**Opened 2026-08-07**, by the `.forked/` reconciliation pass, from `.forked/pass4-5-inventory.md`
+before its deletion. That file flagged five doc deletions as *"product decisions, not strips"*. Three
+are moot; two are live and were recorded nowhere:
+
+- **`docs/character-handling.md`** (240 lines) was the only written spec for permalink
+  unicode→ASCII normalization and collision handling.
+- **`docs/metadata-search.md`** (280 lines) was the only doc for the frontmatter query surface.
+
+**Why the first one matters here specifically.** T9 makes the permalink this fork's identity — edges
+bind to it, and W4 makes it set-once and the strictest member of that list, because rewriting one
+silently orphans every relation pointing at the record. Normalization decides what a permalink *is*.
+An undocumented normalization contract is therefore an undocumented identity contract, and the
+behaviour it governs "silently changes note identity" (the deleted doc's own phrasing).
+
+`docs/NOTE-FORMAT.md` was flagged at deletion time as *maybe* covering this. **Nobody verified it.**
+That check is the first task on this entry, and it is cheap.
+
+**Verified 2026-08-10 — it does not.** `grep -n -i "permalink|normaliz|unicode|collision|slug"
+docs/NOTE-FORMAT.md` finds permalinks described only as "generated from title" / "a stable
+identifier derived from its title"; zero hits for unicode, collision, or slug rules. (Positive
+control: the same grep does hit the permalink prose, so the file was searched correctly.) Task 1 is
+answered: the contract must be recovered from the code (task 2), not from existing docs.
+
+**What this owes:**
+
+1. Verify whether `docs/NOTE-FORMAT.md` covers unicode normalization and collision rules. If it
+   does, close this half.
+2. If it does not, recover the contract **from the code** rather than from the deleted file — the
+   deleted doc may itself have drifted — and document it next to the identity rules it governs.
+3. Decide whether the frontmatter query surface needs a doc, or whether W20's contract plus
+   `--help` now covers it. W18 indexed frontmatter into FTS after that doc was deleted, so it was
+   stale on arrival either way.
+
+**Recoverable, not lost:** `git show <sha>:docs/character-handling.md` still resolves. Read history
+freely; the deletion was deliberate and only the *record* of what it removed was missing.
+
 ---
 
 ## OPEN — observed, not diagnosed
