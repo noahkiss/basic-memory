@@ -2308,12 +2308,24 @@ with nothing to stop it.
 
 Found in: sweep-schema.md:31, sweep-prior-art.md:55.
 
-### W11 — a cross-project read
+### W11 — a cross-project read — **SUBSUMED 2026-08-06 by the W5-C scope decision**
 Every BM query is project-scoped and nothing aggregates across projects. The gardener's staleness
 sweep and any "what is open everywhere" question both need one read across all stores; today a local
 projects-overview script is the only cross-project view and it reads line 2 and mtime, nothing more.
 
 Found in: sweep-inv-plan.md:25.
+
+**SUBSUMED 2026-08-06.** W5-C makes `.bm.yml` a scope *narrowing* rather than a project lookup:
+inside a marked tree a read is pinned to that project; **outside one, every read is unscoped and
+spans all projects.** That is this entry's requirement, reached without a dedicated verb or flag —
+the user's framing was that an agent must be able to review all outstanding `bm` work, or pull
+information out of another project, without `cd`-ing anywhere first.
+
+What remains is a repository-layer aggregate query, which **W5-A already requires** for the
+rolled-up notice count outside a marked tree. It is a line of W5's build, not a separate item.
+
+The gardener half of this entry is also gone: W2 folded into `bm doctor`, whose hygiene checks
+inherit the same scope rule.
 
 ### W12 — delete the cloud / multi-tenancy surface — **SHIPPED `ba2bc67e`**
 **Done 2026-07-27.** ~30,300 lines deleted across 175 files: `cli/commands/cloud/`,
