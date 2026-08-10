@@ -128,19 +128,28 @@ async def _unflushed_note_content(session_maker) -> list[tuple[str, str, str]]:
     else in the database is derivable from the files; these rows are not.
     """
     from sqlalchemy import text
+    from sqlalchemy.exc import OperationalError
 
     from basic_memory import db
 
-    async with db.scoped_session(session_maker) as session:
-        result = await session.execute(
-            text(
-                "SELECT p.name, n.file_path, n.file_write_status "
-                "FROM note_content n JOIN project p ON p.id = n.project_id "
-                "WHERE n.file_write_status IN ('pending', 'writing', 'failed') "
-                "ORDER BY p.name, n.file_path"
+    try:
+        async with db.scoped_session(session_maker) as session:
+            result = await session.execute(
+                text(
+                    "SELECT p.name, n.file_path, n.file_write_status "
+                    "FROM note_content n JOIN project p ON p.id = n.project_id "
+                    "WHERE n.file_write_status IN ('pending', 'writing', 'failed') "
+                    "ORDER BY p.name, n.file_path"
+                )
             )
-        )
-        return [(row[0], row[1], row[2]) for row in result.fetchall()]
+            return [(row[0], row[1], row[2]) for row in result.fetchall()]
+    except OperationalError as e:
+        # Reset reads run with ensure_migrations=False (T11), so a fresh DB may
+        # not have these tables — and then cannot hold unflushed notes either.
+        # Anything else (locked, I/O error) must still refuse loudly.
+        if "no such table" in str(e):
+            return []
+        raise
 
 
 async def _flush_unflushed_note_content(app_config) -> list[tuple[str, str, str]]:
@@ -154,9 +163,13 @@ async def _flush_unflushed_note_content(app_config) -> list[tuple[str, str, str]
     from basic_memory.repository import ProjectRepository
     from basic_memory.services.initialization import recover_project_materializations
 
+    # ensure_migrations=False: this DB is about to be deleted, and migrating it
+    # can be fatal — a newer build's stamp raises NewerSchemaError, whose own
+    # advertised way out is this very reset (GAPS T11).
     _, session_maker = await db.get_or_create_db(
         db_path=app_config.database_path,
         db_type=db.DatabaseType.FILESYSTEM,
+        ensure_migrations=False,
     )
     rows = await _unflushed_note_content(session_maker)
     if not rows:
@@ -258,16 +271,28 @@ async def _snapshot_registry(app_config) -> tuple[list[dict], Optional[str]]:
     project list with it. Reset is an index rebuild, not a de-registration, so
     the rows are captured here and rewritten after migrations.
     """
+    from sqlalchemy.exc import OperationalError
+
     from basic_memory import db
     from basic_memory.repository import ProjectRepository
 
     try:
+        # ensure_migrations=False: same reasoning as _flush_unflushed_note_content —
+        # never migrate (or refuse over) a database the reset is about to delete.
         _, session_maker = await db.get_or_create_db(
             db_path=app_config.database_path,
             db_type=db.DatabaseType.FILESYSTEM,
+            ensure_migrations=False,
         )
-        async with db.scoped_session(session_maker) as session:
-            projects = await ProjectRepository().get_active_projects(session)
+        try:
+            async with db.scoped_session(session_maker) as session:
+                projects = await ProjectRepository().get_active_projects(session)
+        except OperationalError as e:
+            # Fresh unmigrated DB (T11: reset reads skip migrations): no project
+            # table means no registry to snapshot. Anything else still raises.
+            if "no such table" in str(e):
+                return [], None
+            raise
         rows = [
             {
                 "name": project.name,

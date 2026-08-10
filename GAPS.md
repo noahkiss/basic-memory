@@ -597,7 +597,7 @@ a non-empty result alone. Fork fix removes the lie; the verb-level check enforce
 Upstream states a "fail-fast / no-silent-fallback" house style (see #1151) and would probably take
 this, but we do not track upstream — reporting it is a courtesy, not a dependency.
 
-### T11 — no newer-schema guard: an older build over a newer DB dies in a raw stack trace — **CONFIRMED 2026-07-31**
+### T11 — no newer-schema guard: an older build over a newer DB dies in a raw stack trace — **SHIPPED 2026-08-10**
 **Found:** 2026-07-27, in `.forked/release-design.md` §2. Code sites re-verified before recording.
 
 `run_migrations` (`src/basic_memory/db.py:401`) builds the Alembic config and calls
@@ -650,6 +650,29 @@ exit=0                               # full Rich traceback into alembic internal
 
 Neither says "this database was migrated by a newer build" nor names a way out. The fix stands as
 written above; add a non-zero exit while there.
+
+**SHIPPED 2026-08-10.** The exit-code half had already been fixed by the phase-4 exit-code work —
+re-reproduced before building: both shapes exited 1 on this tree. What shipped is the guard:
+
+- `_assert_no_newer_stamp()` (`src/basic_memory/db.py`) runs in `get_or_create_db` after the B4
+  stamp check fails and before `run_migrations`. It reads `alembic_version` and compares against
+  the revisions parsed from `alembic/versions/*.py` (shared `_scan_migration_files()`, split out
+  of `_single_alembic_head`). A stamp the shipped tree has never seen raises `NewerSchemaError`
+  with the actionable message; every doubtful case (unparseable files, no stamp table) falls
+  through to the real migration run. No alembic import — the import guard stays satisfied.
+- `run_with_cleanup` (`cli/commands/command_utils.py`) catches `NewerSchemaError`: message on its
+  own line, exit 1 (W20 rule 6). One catch covers every DB-touching CLI verb.
+- **Found while verifying: the advertised way out was circular.** `bm reset` runs two pre-delete
+  reads (`_flush_unflushed_note_content`, `_snapshot_registry`) through `get_or_create_db`, which
+  migrated — so against a newer DB, reset died telling you to run reset (and before this fix it
+  died in `command.upgrade` the same way). Both now pass `ensure_migrations=False`: never migrate
+  a database the reset is about to delete.
+
+Verified end-to-end in a scratch config stamped `zzznewer999`: `bm project list` and `bm reindex`
+each print the three-line message, exit 1, no traceback; `echo y | bm reset --reindex` exits 0,
+restamps at head (`n7i8j9k0l1m2`), and `project list` works after. Tests:
+`tests/db/test_migration_head_stamp.py` (guard raises on unknown stamp, passes on fresh and
+stale-known), `tests/cli/test_command_utils.py` (exit 1 + message + cleanup still runs).
 
 ### T12 — `bm reset` claims your markdown is safe while unflushed writes live only in the DB — **SHIPPED 2026-07-31 (guard + O6 write-through root fix)**
 **Found:** 2026-07-27, in `.forked/release-design.md` §2. Both sites re-verified before recording.

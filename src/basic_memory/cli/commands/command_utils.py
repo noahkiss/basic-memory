@@ -45,7 +45,14 @@ def run_with_cleanup(coro: Coroutine[Any, Any, T]) -> T:
             await drain_background_tasks()
             await db.shutdown_db()
 
-    return asyncio.run(_with_cleanup())
+    try:
+        return asyncio.run(_with_cleanup())
+    except db.NewerSchemaError as e:
+        # Every DB-touching CLI verb funnels through here, so one catch turns
+        # "older build over a newer DB" into the contract's error shape —
+        # message on its own line, exit 1 (GAPS T11, W20 rule 6).
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(1)
 
 
 async def run_project_index(

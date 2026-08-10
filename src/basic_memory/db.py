@@ -282,16 +282,32 @@ def _create_engine_and_session(
     return engine, session_maker
 
 
-def _single_alembic_head() -> str | None:
-    """Find the sole head revision by parsing the migration files, without importing alembic.
+class NewerSchemaError(RuntimeError):
+    """The database was migrated by a newer build than the one running.
 
-    Alembic costs ~0.17 s of import time beyond SQLAlchemy (GAPS.md B4), so the
-    already-migrated fast path must decide "is the DB at head?" without it. The
+    Alembic cannot downgrade a schema it has never seen, so the only ways out
+    are reinstalling the newer build or rebuilding the index. Raised before
+    ``command.upgrade`` so the user gets this message instead of alembic's
+    internal "Can't locate revision" error (GAPS.md T11).
+    """
+
+    def __init__(self, revision: str):
+        super().__init__(
+            f"This database was migrated by a newer Basic Memory build "
+            f"(revision '{revision}' is not in this install). "
+            f"Reinstall the newer build, or run `bm reset --reindex` to rebuild the index."
+        )
+
+
+def _scan_migration_files() -> tuple[set[str], set[str]] | None:
+    """Parse the migration files for (revisions, parents), without importing alembic.
+
+    Alembic costs ~0.17 s of import time beyond SQLAlchemy (GAPS.md B4), so
+    schema-state questions on the warm path must be answered without it. The
     version files are the same source alembic itself reads: each assigns
-    ``revision`` one quoted id and ``down_revision`` its parent id(s). A head is
-    a revision no other file names as a parent. Returns None on anything
-    unexpected (no files, several heads, unparseable) — the caller then falls
-    back to a real migration run, which is always safe.
+    ``revision`` one quoted id and ``down_revision`` its parent id(s). Returns
+    None on anything unparseable — callers then fall back to a real migration
+    run, which is always safe.
     """
     versions_dir = Path(__file__).parent / "alembic" / "versions"
     revisions: set[str] = set()
@@ -308,6 +324,19 @@ def _single_alembic_head() -> str | None:
         if revision is None:
             return None
         revisions.add(revision)
+    return revisions, parents
+
+
+def _single_alembic_head() -> str | None:
+    """Find the sole head revision: the one no other migration names as a parent.
+
+    Returns None on anything unexpected (no files, several heads, unparseable)
+    — the caller then falls back to a real migration run.
+    """
+    scanned = _scan_migration_files()
+    if scanned is None:
+        return None
+    revisions, parents = scanned
     heads = revisions - parents
     if len(heads) != 1:
         return None
@@ -333,6 +362,31 @@ async def _stamped_at_single_head(session_maker: async_sessionmaker[AsyncSession
         # No alembic_version table: a fresh database that needs the real run.
         return False
     return stamped == [head]
+
+
+async def _assert_no_newer_stamp(session_maker: async_sessionmaker[AsyncSession]) -> None:
+    """Raise NewerSchemaError if the DB is stamped with a revision this tree has never seen.
+
+    In this fork "upgrade" is `git pull` + reinstall, so rollback is a normal
+    operation (GAPS.md T11) — an older build over a newer DB must die with an
+    actionable message, not alembic's stack trace. Every doubtful case
+    (unparseable files, no stamp table) returns silently: the real migration
+    run that follows is the safe arbiter.
+    """
+    scanned = _scan_migration_files()
+    if scanned is None:
+        return
+    known_revisions, _ = scanned
+    try:
+        async with scoped_session(session_maker) as session:
+            result = await session.execute(text("SELECT version_num FROM alembic_version"))
+            stamped = [row[0] for row in result]
+    except OperationalError:
+        # No alembic_version table: a fresh database, nothing to judge.
+        return
+    for revision in stamped:
+        if revision not in known_revisions:
+            raise NewerSchemaError(revision)
 
 
 async def get_or_create_db(
@@ -363,6 +417,10 @@ async def get_or_create_db(
         # check keeps alembic (~0.17 s of import) off the already-migrated
         # path — every doubtful case falls through to the real run (GAPS B4).
         if ensure_migrations and not await _stamped_at_single_head(_session_maker):
+            # Not at head can mean behind (migrate) or *ahead* — a newer build's
+            # stamp, which command.upgrade cannot resolve. Judge that first so
+            # the user gets an actionable error, not alembic's (GAPS T11).
+            await _assert_no_newer_stamp(_session_maker)
             await run_migrations(config, db_type)
 
     # These checks should never fail since we just created the engine and session maker
