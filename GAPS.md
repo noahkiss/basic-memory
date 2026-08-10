@@ -11,8 +11,10 @@ the return visit that never happens. A gap recorded only in a local design doc i
 anyone working in this repo, which is where it has to get fixed.
 
 A gap belongs here if it is a thing **we would change in this codebase**. Design decisions about
-the record schema live in `.forked/schema.md`; findings about the work *plan* live in
-`.forked/plan.md`. Both are local and gitignored. This file is only about the code.
+the record schema live in `.forked/schema.md`, which is local and gitignored. This file is only
+about the code. (`.forked/plan.md` and `.forked/campaign.md` held the work plan until the 2026-08-07
+reconciliation deleted them — the build order now lives at the end of this file, the working rules
+in `AGENTS.md`, and the cursor in `STATUS.local.md`.)
 
 Each entry gets: what breaks, the evidence (a command and its actual output, not a description of
 it), why it matters to us, and where it was found. Evidence matters because several figures in the
@@ -3324,9 +3326,14 @@ the record schema or the work plan were deliberately left where they are — tho
 
 ## Where this connects
 
+**Build order (agreed 2026-08-10, from the reconciliation pass; replaces the deleted
+`.forked/campaign.md`):** T11 → W20 → W3 → W4 + picoschema strip + W19 → W5 → W8 → W9 → W1.
+W19 items 2–4 are a binding acceptance condition on W4, not a follow-up — W4 is not done
+without them.
+
 | | |
 |---|---|
-| Execution plan, phases, decisions | `.forked/plan.md` (local, gitignored) |
+| Phase ordering | the build order above |
 | Record schema (types, fields, supersession) | `.forked/schema.md` (local, gitignored) |
 | Settled/reversed decisions with turn cites | `.forked/decisions.md` (local, gitignored) |
 | Session-to-session state | `STATUS.local.md` (local, gitignored) |
