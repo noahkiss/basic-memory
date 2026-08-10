@@ -626,6 +626,10 @@ bites this install.
 script directory does not contain, fail with something like "this database was migrated by a newer
 Basic Memory; reinstall the newer build or run `bm reset --reindex`".
 
+**Amended 2026-08-06 — the fix must also correct the exit code.** Both captured shapes exit 0 on a
+hard failure. W20 rule 6 makes that a contract violation, not just a wart: errors exit 1 with the
+message on its own line. No design decision is open on this entry; it is a build task.
+
 **Runtime repro captured 2026-07-31** — via a git worktree at `9e3fe26a~1` (one commit before the
 newest migration, `n7i8j9k0l1m2`) with its own venv, against a config dir freshly migrated by
 current `main`. No install was touched. Two shapes, both worse than useless and both **exit 0**
