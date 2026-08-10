@@ -2224,6 +2224,56 @@ fresh — the precise silent failure the flat file was kept for.
 Found in: sweep-decisions.md:13, sweep-inv-plan.md:31, sweep-handoffs.md:19, sweep-handoffs.md:49,
 sweep-prior-art.md:13.
 
+**DECIDED 2026-08-06 (user) — *"bm will replace status probably fully."*** So no emitter ships. The
+title above is corrected: this was never really "write the file correctly", it was "decide whether
+the file survives." `.forked/decisions.md` R3 had already reached the same place from the other
+direction — *"if [the tracker] holds in-progress state, **STATUS has no durable job left**."*
+
+Rejected alternatives, both argued for by the assistant and overruled: emitting the file from `bm`
+(builds an emitter for a format that does not survive, and still leaves the file hand-written
+everywhere `bm` is not), and leaving `bm` out of it while giving the three consumer scripts a shared
+strict parser (fixes the reproduced failure, but forecloses the replacement the user wants).
+
+**What the replacement needs:**
+
+1. **A fast headline source for the statusline.** The statusline re-renders constantly and the
+   measured floor for *any* `bm` command is 0.15 s — far too slow. So **`bm` writes a small headline
+   file on every write, and the statusline reads that.**
+
+   *This is a deliberate reversal of the cache decision taken under W8 an hour earlier, and the two
+   are consistent.* W8 retired a cache because the harness hook carries **no `bm` data at all** — a
+   static string needs no cache. A statusline is the opposite case: it exists to display `bm` data,
+   at a latency `bm` cannot meet. Cache is right there and wrong in the hook.
+
+2. **A headline value.** *(Assistant call, reversible.)* Derive it from the most recently touched
+   non-terminal `task` — its title, truncated to the statusline's 30-character limit. No new field,
+   no set-once violation, and it matches what the current `headline: next: <action>` convention
+   already means. An explicit override can be added later if deriving proves wrong.
+
+3. **The other two consumers.** The projects-overview and notify scripts read line 2 today. They read
+   the same headline file. **The mtime trap survives the migration and must be carried:** the
+   overview script uses file mtime as its staleness signal, so the headline file must not be
+   rewritten when nothing changed, or every stale project reads as fresh. This is the same
+   no-op-write discipline W3 already requires for byte-stable serialization.
+
+4. **The habit has to be inherited, not just the data.** `STATUS.local.md` works today because a
+   global instruction plus a per-tool-call reminder keeps it current — the assistant updated it four
+   times unprompted during this session, which is a live positive control. That is exactly W8's
+   layer 1, so the mechanism already exists; the migration is not done until the reminder points at
+   `bm` instead.
+
+**Out of scope for this repo, and worth stating so it is not lost.** The global instruction
+requiring a `STATUS.local.md` in *every* working directory lives in the user's dotfiles, not here.
+Until it changes, both systems run side by side — `bm` in projects that have one, the flat file
+everywhere else. That transition is a dotfiles change the user makes, and `bm` must not attempt it
+(same rule as W8: `bm` never edits the user's harness config).
+
+**Consequence for the parser bug this entry was opened for.** The two reproduced failures (an HTML
+comment on line 1; `status: active` hoisted above `headline:`) stop mattering for `bm` projects once
+the headline file replaces the parsed one. They keep mattering everywhere else for as long as the
+flat file survives — but that is a dotfiles problem, not a `bm` gap, and it leaves with the
+transition.
+
 ### W10 — an exclusion mechanism on the indexing path — **SHIPPED**
 **Done 2026-08-03.** The entry's premise ("no ignore file") was stale: upstream shipped an ignore
 mechanism before the fork point (`ignore_utils.py`, from `e0d8aeb1`) — a global
