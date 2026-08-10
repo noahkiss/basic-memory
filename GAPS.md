@@ -1906,6 +1906,26 @@ the directory?) — partly answered by **E**, not closed.
 Humans extend the vocabulary; agents may only select from it. Upstream's frontmatter vocabulary is
 fully open, so enforcement is ours and cannot live in a wrapper.
 
+**DECIDED 2026-08-10 (user) — `bm edit` ships, scoped to the kept-current types.** The schema's
+enforcement sentence ("`tend` ships no verb that writes a set-once field after creation") only has
+teeth while verbs are the normal write path; with three kept-current types, hand-editing store
+files would become routine and set-once protection would degrade from write-time rejection to
+doctor-flag-after-the-fact. And a `profile` edit can touch declared fields, which need write-path
+validation — there is no write path for edits without a verb. The shape:
+
+- `bm edit <id>` replaces title/body (stdin or `--file`), plus declared fields on a `profile`.
+  Validates against the vocabulary; refuses any set-once field change.
+- On a `task`: error pointing at `bm done` / `bm mark`. On a `finding`: error pointing at
+  supersession — the error message is itself the enforcement of "findings are immutable."
+- `inbox` is editable — it is the escape hatch; refusing edits there only pushes people back to
+  hand-editing.
+- Hand edits remain possible and are not an error; W3's history keeps them visible and `bm doctor`
+  flags what they break. The verb makes the sanctioned path the easy one, not the only one.
+
+Builds in W5's phase, where the write-path validation lands. Closes `.forked/schema.md` §11 Q6;
+`bm edit` joins the flat verb list in `AGENTS.md` (this resolves the W19-example-vs-verb-list
+discrepancy in favour of the example).
+
 **Decided 2026-07-31:** W4 does not build on `picoschema/`; that subsystem is stripped as the first
 commit of this build (see O-picoschema for grounds). The vocabulary source is `.bm.yml`, validated
 by a bespoke checker that W5 wires into `bm doctor`.

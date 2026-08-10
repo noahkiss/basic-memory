@@ -88,7 +88,7 @@ Consequences, all deliberate:
   another repo's worktree.
 
 **Naming:** `tend` is a **codename for the design, not a command.** There is no `tend` binary and no
-`bm tend` namespace — the verbs ship flat under `bm` (`bm ls`, `bm new`, `bm path`,
+`bm tend` namespace — the verbs ship flat under `bm` (`bm ls`, `bm new`, `bm edit`, `bm path`,
 `bm mine`, `bm done`, `bm show`, `bm history`, `bm undo`, `bm mark`). **There is no `bm check`** —
 the schema and integrity checks land inside the existing `bm doctor` (see `GAPS.md` W5), because a
 second checking command would immediately be the one nobody runs.
