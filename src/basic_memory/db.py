@@ -1,5 +1,6 @@
 import asyncio
 import os
+import re
 import sys
 from contextlib import asynccontextmanager, suppress
 from enum import Enum, auto
@@ -7,11 +8,10 @@ from pathlib import Path
 from typing import AsyncGenerator, Optional
 
 from basic_memory.config import BasicMemoryConfig, ConfigManager
-from alembic import command
-from alembic.config import Config
 
 from loguru import logger
 from sqlalchemy import text, event
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import (
     create_async_engine,
     async_sessionmaker,
@@ -282,6 +282,59 @@ def _create_engine_and_session(
     return engine, session_maker
 
 
+def _single_alembic_head() -> str | None:
+    """Find the sole head revision by parsing the migration files, without importing alembic.
+
+    Alembic costs ~0.17 s of import time beyond SQLAlchemy (GAPS.md B4), so the
+    already-migrated fast path must decide "is the DB at head?" without it. The
+    version files are the same source alembic itself reads: each assigns
+    ``revision`` one quoted id and ``down_revision`` its parent id(s). A head is
+    a revision no other file names as a parent. Returns None on anything
+    unexpected (no files, several heads, unparseable) — the caller then falls
+    back to a real migration run, which is always safe.
+    """
+    versions_dir = Path(__file__).parent / "alembic" / "versions"
+    revisions: set[str] = set()
+    parents: set[str] = set()
+    for path in versions_dir.glob("*.py"):
+        revision = None
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if line.startswith("revision") and revision is None:
+                quoted = re.findall(r"['\"]([^'\"]+)['\"]", line.split("=", 1)[-1])
+                if quoted:
+                    revision = quoted[0]
+            elif line.startswith("down_revision"):
+                parents.update(re.findall(r"['\"]([^'\"]+)['\"]", line.split("=", 1)[-1]))
+        if revision is None:
+            return None
+        revisions.add(revision)
+    heads = revisions - parents
+    if len(heads) != 1:
+        return None
+    return heads.pop()
+
+
+async def _stamped_at_single_head(session_maker: async_sessionmaker[AsyncSession]) -> bool:
+    """True if the database's alembic stamp already equals the sole head revision.
+
+    Deciding this without importing alembic is the point (see
+    _single_alembic_head). False on a missing alembic_version table (fresh DB)
+    or any ambiguity — false only ever costs a redundant migration run, while a
+    wrong true would silently skip one, so every doubtful case answers false.
+    """
+    head = _single_alembic_head()
+    if head is None:
+        return False
+    try:
+        async with scoped_session(session_maker) as session:
+            result = await session.execute(text("SELECT version_num FROM alembic_version"))
+            stamped = [row[0] for row in result]
+    except OperationalError:
+        # No alembic_version table: a fresh database that needs the real run.
+        return False
+    return stamped == [head]
+
+
 async def get_or_create_db(
     db_path: Path,
     db_type: DatabaseType = DatabaseType.FILESYSTEM,
@@ -306,8 +359,10 @@ async def get_or_create_db(
     if _engine is None:
         _engine, _session_maker = _create_engine_and_session(db_path, db_type, config)
 
-        # Run migrations automatically unless explicitly disabled
-        if ensure_migrations:
+        # Run migrations automatically unless explicitly disabled. The stamp
+        # check keeps alembic (~0.17 s of import) off the already-migrated
+        # path — every doubtful case falls through to the real run (GAPS B4).
+        if ensure_migrations and not await _stamped_at_single_head(_session_maker):
             await run_migrations(config, db_type)
 
     # These checks should never fail since we just created the engine and session maker
@@ -406,6 +461,12 @@ async def run_migrations(
     Note: Alembic tracks which migrations have been applied via the alembic_version table,
     so it's safe to call this multiple times - it will only run pending migrations.
     """
+    # Alembic costs ~0.17 s of import time beyond SQLAlchemy and is needed only
+    # here, so it must stay off the read path (GAPS.md B4; guarded by
+    # tests/cli/test_native_command_import_guard.py).
+    from alembic import command
+    from alembic.config import Config
+
     logger.info("Running database migrations...")
     temp_engine: AsyncEngine | None = None
     try:

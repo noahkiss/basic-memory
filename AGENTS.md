@@ -97,16 +97,18 @@ second checking command would immediately be the one nobody runs.
 
 Linux/x86-64, Python 3.13. Measured 2026-07-31 on this tree, after the T18 fast path landed —
 the original fork-point table's numbers were unreproducible and one of them was wrong by an order
-of magnitude (see `GAPS.md` T18). Re-measure if the tree moves substantially.
+of magnitude (see `GAPS.md` T18). Re-measure if the tree moves substantially. The direct-path row
+was re-measured 2026-08-10 after B4's head-stamp skip took alembic off the warm read path.
 
 | Path | User CPU time | Resident memory |
 |---|---|---|
-| CLI direct-path cmd (`project list`) | 1.1–1.3 s | 115 MB |
+| CLI direct-path cmd (`project list`, warm DB) | 0.9–1.2 s | 90 MB |
 | CLI `--version` floor | 0.15 s | 40 MB |
 
 Before the T18 fix, `project list` measured 3.6–3.7 s / 214 MB on the same host and method — the
-difference is the ASGI/FastAPI/MCP import graph the direct path no longer touches. What remains of
-the 1.1 s is SQLAlchemy + pydantic + alembic, the real cost of a DB-backed command.
+difference is the ASGI/FastAPI/MCP import graph the direct path no longer touches. What remains is
+SQLAlchemy + pydantic, the real cost of a DB-backed command — alembic left the warm path 2026-08-10
+(GAPS B4: a head-stamp check skips `run_migrations` when the DB is already current).
 
 Figures are **user CPU time**, not wall clock — CPU time and RSS hold steady under host load while
 wall clock varies 2x. Treat them as a lower bound on wall time.

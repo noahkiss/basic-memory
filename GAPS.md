@@ -1411,7 +1411,34 @@ exit=0
 Valid JSON, exit 0. Either the original observation was wrong or the intervening strip fixed it;
 either way there is nothing to build. W7 can rely on this surface.
 
-### B4 — the fast path exists; `bm tool *` still pays the full MCP import graph, and the ~1.1 s direct floor stands
+### B4 — the fast path exists; `bm tool *` still pays the full MCP import graph, and the ~1.1 s direct floor stands — **CLOSED 2026-08-10: alembic made lazy; ~0.95 s accepted as the permanent floor**
+
+**Decision (user, via 2026-08-10 handoff).** The floor is accepted, not fought further:
+
+- **The alembic fix shipped — and the 2026-08-07 spec was incomplete.** Moving the two imports
+  inside `run_migrations` saved nothing on its own: `get_or_create_db` calls `run_migrations`
+  unconditionally on every process's first engine, so alembic still loaded on **every** LOCAL-mode
+  run, warm or cold (verified: two-run probe against one config dir, `ALEMBIC_LOADED: True` both
+  times). What shipped is the lazy import **plus a head-stamp skip**: `_single_alembic_head()`
+  parses `alembic/versions/*.py` with a regex (no alembic import; parity-tested against alembic's
+  own `ScriptDirectory.get_heads()`), and `get_or_create_db` skips `run_migrations` when the DB's
+  `alembic_version` stamp equals the sole head. Every doubtful case — no table, several heads,
+  unparseable file — falls through to the real migration run, which is always safe. The import
+  guard now bans `alembic` on a **warm** run only; a fresh DB legitimately migrates. Measured
+  after: warm `project list` runs with `ALEMBIC_LOADED: False`, user CPU 0.90–1.16 s, RSS ~90 MB
+  (from ~115 MB).
+- **~0.95 s user CPU is the accepted per-command floor.** The remainder is SQLAlchemy plus the
+  app's own import graph — the real cost of a DB-backed command. The design has already routed
+  around it where latency matters (W8's hook carries no `bm` data; W9's statusline reads a headline
+  file), and those routes were judged right on their own merits, not as workarounds. If a *third*
+  latency-driven route-around ever appears, reopen this: that would be evidence the floor, not the
+  callers, is the problem.
+- **`bm tool *` staying on the full MCP import graph is by design** and needs no further tracking.
+- Nothing else remains for B4 to track: new verbs are bound to the direct path by the structural
+  rule in `AGENTS.md` and enforced by the import guard, so "verbs land on the direct path" is a
+  property of each verb's build, not an open item here.
+
+*Entry as it stood before closing:*
 **Found:** fork-point baseline. **Retitled 2026-08-03** — the old heading, "no fast path: anything
 touching `mcp.tools` / `api.app` costs ~4 s", has been false since `7d3459da` shipped
 `basic_memory.cli.direct` (T18). The entry's own 2026-07-31 amendment said so and the heading did
@@ -1431,6 +1458,50 @@ if any of those four enters `sys.modules`. `project list` measures 1.1 s user / 
 
 Close B4 when the verbs land on the direct path and the 1.1 s floor is either accepted explicitly or
 reduced.
+
+**Measured 2026-08-07 — about 15% of the floor is a migration library loaded on every read.**
+
+```
+$ for m in sqlalchemy pydantic alembic; do /usr/bin/time -f "%e" uv run python -c "import $m"; done
+sqlalchemy  0.24 s
+pydantic    0.07 s
+alembic     0.41 s      # includes sqlalchemy; marginal cost over it ≈ 0.17 s
+$ /usr/bin/time -f "%e" uv run python -c "pass"        # interpreter baseline
+0.04 s
+```
+
+And `project list` — a pure read on the direct path — loads it:
+
+```
+elapsed=0.94s exit=0
+  alembic: True     sqlalchemy: True     pydantic: True
+  fastapi: False    dateparser: False
+```
+
+**Cause:** `src/basic_memory/db.py:10-11` imports `alembic.command` and `alembic.config.Config` at
+module level, and `db.py` is on the import path of everything that touches the database. Alembic is
+needed only by `run_migrations` (`db.py:401`).
+
+**Fix, unbuilt:** move those two imports inside `run_migrations`. A lazy import of a
+migration-only dependency is not speculative — it is the same structural boundary
+`tests/cli/test_native_command_import_guard.py` already enforces for `api.app` / `mcp.tools` /
+`fastapi` / `dateparser`, and **alembic should join that guard's forbidden list for read commands**
+so it cannot creep back.
+
+Expected saving ≈ 0.17 s of a ~1.1 s floor. That does not change the architecture — a fast verb
+still costs ~0.95 s, and the statusline still cannot call `bm` (W9 routes around it with a headline
+file). It is worth doing because it is small, guarded, and removes a dependency that has no business
+on a read path — not because it makes any deferred design newly possible.
+
+**Not done in the same session it was found:** the change needs `just fast-check` +
+`just test-unit-sqlite` + `just test-int-sqlite`, and a coverage run held the test machinery.
+Concurrent runs corrupt results here.
+
+**The open half of B4 is unchanged and is a judgment call, not a measurement:** whether ~0.95 s is
+accepted as the permanent floor for every verb. Two facts bear on it — the interpreter alone is
+0.04 s, so the remainder is SQLAlchemy plus the app's own import graph; and the design has already
+routed around the floor twice rather than lower it (W8's hook carries no `bm` data, W9's statusline
+reads a file). A third workaround would be evidence that the floor, not the callers, is the problem.
 
 *Original entry:*
 `bm tool search-notes` is 4.3–4.8 s; a native

@@ -24,6 +24,11 @@ BANNED_MODULES = (
     "dateparser",
 )
 
+# Banned only once the DB is migrated: a fresh database legitimately runs
+# alembic, but a warm run must skip it via the head-stamp check in db.py —
+# alembic costs ~0.17 s of import beyond SQLAlchemy (GAPS.md B4).
+WARM_ONLY_BANNED = BANNED_MODULES + ("alembic",)
+
 PROBE_SOURCE = textwrap.dedent(
     """
     import json
@@ -43,8 +48,7 @@ PROBE_SOURCE = textwrap.dedent(
 )
 
 
-def test_project_list_stays_off_api_and_mcp(tmp_path):
-    """`bm project list` must not import api.app, mcp.tools, fastapi, or dateparser."""
+def _probe(tmp_path, banned):
     env = os.environ.copy()
     env.pop("BASIC_MEMORY_ENV", None)
     env["HOME"] = str(tmp_path)
@@ -52,7 +56,7 @@ def test_project_list_stays_off_api_and_mcp(tmp_path):
     env["BASIC_MEMORY_CONFIG_DIR"] = str(tmp_path / ".basic-memory")
 
     completed = subprocess.run(
-        [sys.executable, "-c", PROBE_SOURCE, json.dumps(list(BANNED_MODULES))],
+        [sys.executable, "-c", PROBE_SOURCE, json.dumps(list(banned))],
         capture_output=True,
         text=True,
         env=env,
@@ -60,8 +64,20 @@ def test_project_list_stays_off_api_and_mcp(tmp_path):
     )
 
     assert completed.returncode == 0, completed.stderr
-    loaded = json.loads(completed.stdout.strip().splitlines()[-1])
-    assert loaded == [], f"native command imported banned modules: {loaded}"
+    return json.loads(completed.stdout.strip().splitlines()[-1])
+
+
+def test_project_list_stays_off_api_and_mcp(tmp_path):
+    """A native command must not import the banned modules — alembic included once warm.
+
+    Two runs against the same config: the first migrates a fresh database, so
+    it may load alembic; the second finds the head stamp current and must not.
+    """
+    cold = _probe(tmp_path, BANNED_MODULES)
+    assert cold == [], f"native command imported banned modules: {cold}"
+
+    warm = _probe(tmp_path, WARM_ONLY_BANNED)
+    assert warm == [], f"warm native command imported banned modules: {warm}"
 
 
 def test_guard_probe_detects_a_crossing(tmp_path):
