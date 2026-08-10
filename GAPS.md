@@ -1131,7 +1131,30 @@ shape.
 
 ---
 
-### T20 — no coverage ratchet: nothing enforces the 96% floor `AGENTS.md` now states
+### T20 — no coverage ratchet: nothing enforces the 96% floor `AGENTS.md` now states — **CLOSED 2026-08-10: `fail_under = 93.8` lands, measured with the CLI counted**
+
+**The ratchet exists now.** 2026-08-07 added `fail_under` to `[tool.coverage.report]` and removed
+the `*/cli/**` omit (this fork's verbs land in `cli/`; omitting it would hide them from coverage on
+the day they ship). The first run with the CLI counted, 2026-08-10:
+
+```
+=========== 3644 passed, 5 skipped, 6 warnings in 2110.03s (0:35:10) ===========
+TOTAL                                                            21216   1309    94%
+error: recipe `coverage` failed with exit code 2      # fail_under = 96 correctly tripped
+```
+
+Precise total 93.83% — the displayed 94% is rounding, so `fail_under = 94` would start red.
+`fail_under` is set to **93.8**, the measured floor. The old 96% (19463/866) was measured with the
+CLI omitted and is not comparable; `AGENTS.md` now quotes the honest pair. The floor is still a
+backstop, not a gate — no CI, ~35-minute run — and the ratchet rule (raise as tested code lands,
+never lower) is unchanged.
+
+Nothing else survives the close: the `*/db.py` exclusion claim below was already verified false
+(the entry's own 2026-08-07 note), and the two remaining omits (`*/watch_service.py`,
+`*/services/initialization.py`) are documented in `pyproject.toml` itself.
+
+*Entry as it stood before closing:*
+
 **Found:** 2026-07-29, running the campaign's Phase 0 `just coverage` item. **Rewritten down to its
 surviving claim 2026-08-03** — half of it shipped and the heading never said so.
 
@@ -1198,6 +1221,73 @@ go up, then raise it as the verb work adds tested code. Do **not** set it to 100
 whole suite red on the next commit and violates "never ship on top of a red suite." The floor is a
 ratchet, not an aspiration. Deferred deliberately: it is a mechanical change with no dependents, and
 it is worth setting once, after **T18**'s fast-path work settles which modules survive.
+
+**A `db.py` coverage exclusion was reported and does not exist — but checking it found a real one.**
+The reconciliation pass (2026-08-07) rescued a claim from `.forked/w13-postgres-inventory.md` that
+`pyproject.toml` omits `*/db.py` from coverage, justified by backend-dependent code that W13 then
+deleted. **Verified false:**
+
+```
+$ grep -n "db\.py" pyproject.toml
+$ echo $?
+1
+$ grep -c "watch_service.py" pyproject.toml     # positive control
+1
+```
+
+Either the exclusion was already removed or the inventory was wrong. Recorded because it is a clean
+instance of the rule it violated — *agent self-reports are leads, not records* — and this entry
+briefly carried the unchecked claim.
+
+**The real finding, from the same check.** The omit list is `*/watch_service.py`,
+`*/services/initialization.py`, and **`*/cli/**`** — the last justified as *"CLI is an interactive
+wrapper; core logic is covered via API/MCP/service tests."* That premise is being reversed by this
+fork's own roadmap: every verb in `AGENTS.md`'s flat list lands in `cli/`, `cli/direct.py` is now the
+supported route to the service layer, and W5's notice machinery is CLI-side. **The verbs will be
+invisible to coverage the day they ship**, and the 96% floor will not notice. Revisit the `cli/**`
+omit before, not after, the verb work starts.
+
+**Also rescued, from `.forked/audit-2026-08-03-test-suite.md`** — the suite-speed ceiling, so it is
+not re-derived:
+
+- **Do xdist first, re-measure, and do not delete tests for speed.** xdist shipped
+  (`justfile:7`, `-n auto --dist loadfile`; the `loadfile` choice is load-bearing — `tests/mcp`
+  mutates the module-level FastAPI app). Fixture-level speedups are capped around 30–45 s by
+  `test_graph`'s corpus fixture and the function-scoped `engine_factory` (`tests/conftest.py:173`).
+- **One unactioned recommendation with no other home:** consolidate the MCP security and identifier
+  test matrices so they stop running against the ASGI stack — roughly 40 s of a 92 s phase. Caveat
+  from the audit: it is the only cut that touches Core, and `test-int/` owns the real-filesystem
+  coverage, so it needs care.
+- The audit's baseline counts are **stale and internally contradictory** (it claimed 236 picoschema
+  tests in one place and 134 in another; 134 is correct today). Re-measure; do not inherit.
+
+### T21 — `--filter` on a DB-column date silently matches nothing and exits 0
+**Opened 2026-08-04**, promoted out of **O4**. O4 established this as its fact 1 and then shipped
+its *fix* at the repository layer only — so the entry reads as closed while the trap is still live
+on the user-facing path. A defect recorded inside a SHIPPED entry is a defect nobody will find.
+
+`--filter '{"updated_at":{"$lt":"…"}}'` compiles to
+`json_extract(entity.entity_metadata, '$."updated_at"') < ?` — it reads **frontmatter**, not the
+`entity.updated_at` column. Since notes carry no literal `updated_at:` frontmatter key, the filter
+matches nothing:
+
+```
+$ bm tool search-notes "**" --permalink --filter '{"updated_at":{"$lt":"2026-08-15"}}' --project <p> --json
+{"total": 0}                          # over a corpus where every note qualifies
+exit=0
+```
+
+**Why it matters:** this is the O8 class — a wrong answer indistinguishable from a true empty
+result, at exit 0. Any date-column name a user reasonably reaches for (`updated_at`, `created_at`)
+lands in the frontmatter store instead, so the query is not merely unsupported, it is *silently
+answered wrong*. The repository-level `before_date` + `order_by` that O4 shipped is unreachable
+from the MCP filter grammar and does not mitigate this.
+
+**Fix, one of two:** either reject DB-column names in the frontmatter filter grammar with an error
+naming `before_date`/`order_by` as the supported path, or route them to the column. **Rejecting is
+the smaller, safer change** and matches the fail-fast rule — routing means the grammar has to know
+which names are columns, and gets it wrong the moment a note legitimately carries an
+`updated_at:` frontmatter key.
 
 ---
 

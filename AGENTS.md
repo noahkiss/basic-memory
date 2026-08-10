@@ -386,12 +386,19 @@ Flow: MCP Tool → Typed Client → HTTP API → Router → Service → Reposito
 - Each test runs in a standalone environment with isolated database and tmp_path directory
 - Performance benchmarks are in `test-int/test_search_performance_benchmark.py`
 - Use pytest markers: `@pytest.mark.benchmark` for benchmarks, `@pytest.mark.slow` for slow tests
-- **Coverage is 96%, measured, and must not go down**: `just coverage` reported `19463` statements
-  with `866` missed on 2026-07-29. Upstream's rule here read "must stay at 100%", which has been
-  false in this tree for an unknown length of time and is enforced by nothing — there is no
-  `fail_under` and no CI. Write tests for new code and leave the number no worse than you found it.
-  Use `# pragma: no cover` only where a test would demand excessive mocking (TYPE_CHECKING blocks,
-  error handlers needing failure injection, runtime-mode-dependent paths). See `GAPS.md` T20.
+- **Coverage is 93.8% and must not go down.** `just coverage` reported `21216` statements with
+  `1309` missed (93.83%) on 2026-08-10 — the first run with `*/cli/**` counted; the old "96%"
+  figure was measured with the CLI omitted and is not comparable. `fail_under = 93.8` enforces the
+  floor (`pyproject.toml`) — **but only when a coverage run happens.** There is no CI, and the run
+  takes ~35 minutes, so this catches a regression at the next run, not at the commit that caused
+  it. Treat it as a backstop, not a gate: write tests for new code and leave the number no worse
+  than you found it. Raise the floor as tested code lands; never lower it to make a run pass.
+  Upstream's rule here read "must stay at 100%", which was false in this tree for an unknown length
+  of time and enforced by nothing. Use `# pragma: no cover` only where a test would demand
+  excessive mocking (TYPE_CHECKING blocks, error handlers needing failure injection,
+  runtime-mode-dependent paths). **`*/cli/**` is no longer omitted** (removed 2026-08-07): this
+  fork's verbs land in `cli/`, and omitting it would make them invisible to coverage on the day
+  they ship. See `GAPS.md` T20.
 
 ### Async Client Pattern
 
