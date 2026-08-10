@@ -9,7 +9,6 @@ from . import (
     project,
     config,
     format,
-    schema,
 )
 
 __all__ = [
@@ -26,6 +25,5 @@ __all__ = [
     "project",
     "config",
     "format",
-    "schema",
     "man",
 ]

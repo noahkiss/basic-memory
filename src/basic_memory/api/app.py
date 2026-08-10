@@ -17,7 +17,6 @@ from basic_memory.api.v2.routers import (
     directory_router as v2_directory,
     prompt_router as v2_prompt,
     importer_router as v2_importer,
-    schema_router as v2_schema,
 )
 from basic_memory.config import init_api_logging
 from basic_memory.index.local_schedulers import drain_background_tasks
@@ -84,7 +83,6 @@ app.include_router(v2_resource, prefix="/v2/projects/{project_id}")
 app.include_router(v2_directory, prefix="/v2/projects/{project_id}")
 app.include_router(v2_prompt, prefix="/v2/projects/{project_id}")
 app.include_router(v2_importer, prefix="/v2/projects/{project_id}")
-app.include_router(v2_schema, prefix="/v2/projects/{project_id}")
 app.include_router(v2_project, prefix="/v2")
 
 # Legacy web app proxy paths (compat with /proxy/projects/projects)

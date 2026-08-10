@@ -135,16 +135,10 @@ Two rules make the manual trustworthy:
    against pages. The `verified:` field records the version and which path
    proved the page: `mcp` (live service), `cli` (dev checkout), or both.
 
-2. **The schema is the linter.** Validate the whole manual any time:
-
-   ```bash
-   bm tool schema-validate manpage --project manual
-   # → one line per note, then: 38/38 valid, 0 warnings, 0 errors
-   ```
-
-   `bm orphans --project manual` confirms every page is connected to the
-   graph, and `schema_diff`/`schema_infer` report drift between the schema
-   and how pages are actually written.
+2. **Lint by graph checks.** `bm orphans --project manual` confirms every
+   page is connected to the graph. (The `schema-validate` linter this section
+   used to name was stripped with the picoschema subsystem — GAPS
+   O-picoschema; the fork's own vocabulary checks land in `bm doctor`.)
 
 Because verification exercises real tool calls against the live service,
 building the manual doubles as an end-to-end smoke test. The initial build
@@ -169,7 +163,7 @@ catching a test that asserted a bug as expected output (#958).
 3. Link related pages in `SEE ALSO` with `see_also [[other-page(3)]]`.
    Forward references to pages that don't exist yet are fine — they resolve
    automatically when the target is written.
-4. Validate: `bm tool schema-validate manpage --project manual`.
+4. Check connectivity: `bm orphans --project manual`.
 
 For mechanical updates to generated sections, prefer `edit_note` with
 `replace_section` / `insert_after_section` so curated content (EXAMPLES,

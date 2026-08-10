@@ -29,7 +29,6 @@ from basic_memory.mcp.tools.project_management import (
 from basic_memory.mcp.tools.chatgpt_tools import search, fetch
 
 # Schema tools
-from basic_memory.mcp.tools.schema import schema_validate, schema_infer, schema_diff
 
 __all__ = [
     "basic_memory_diagnostics",
@@ -45,9 +44,6 @@ __all__ = [
     "read_content",
     "read_note",
     "recent_activity",
-    "schema_diff",
-    "schema_infer",
-    "schema_validate",
     "search",
     "search_notes",
     "view_note",

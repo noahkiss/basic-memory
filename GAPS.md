@@ -2987,7 +2987,7 @@ freely; the deletion was deliberate and only the *record* of what it removed was
 
 ## OPEN — observed, not diagnosed
 
-### O-picoschema — `picoschema/` is un-stripped upstream surface, now with no design doc — **DECIDED 2026-07-31: W4 does not build on it; strip lands with W4**
+### O-picoschema — `picoschema/` is un-stripped upstream surface, now with no design doc — **STRIPPED 2026-08-10 (first commit of the W4 build, as scheduled)**
 **Found 2026-07-28** in pass 5, while checking the handoff's precondition for deleting
 `docs/specs/SPEC-SCHEMA*.md`. That precondition was "check `.forked/schema.md` supersedes them" —
 **it does not.** `.forked/schema.md` is this fork's *record-vocabulary* proposal (the closed
@@ -3045,6 +3045,27 @@ lands in it. Output-contract conformance was the one exception admitted, on the 
 command still shipping has to obey the contract every other command obeys for as long as it ships —
 a stripped command costs nothing to have conformed, an unconformed live command costs every scripted
 consumer. O5's error-shape defect is recorded under O8 as class evidence and dies with the strip.
+
+**STRIPPED 2026-08-10.** Deleted: `src/basic_memory/picoschema/`, `api/v2/routers/schema_router.py`,
+`cli/commands/schema.py`, `mcp/tools/schema.py`, `mcp/clients/schema.py`, `schemas/schema.py`, the
+three `bm tool schema-*` commands in `tool.py`, all registrations (api/app.py, routers/__init__,
+tools/__init__, clients/__init__, cli main + commands/__init__), the test files
+(`tests/picoschema/`, `test-int/test_picoschema/`, `test_cli_schema.py`, `test_tool_schema.py`,
+`test_client_schema.py`, `test_schema_router.py`, the schema sections of
+`test_cli_tool_json_output.py` and `test_tool_contracts.py`), the orphaned
+`test-int/fixtures/schema/` corpus, and the `docs/manual-pages.md` "schema is the linter" workflow
+(now points at `bm orphans` + the coming doctor checks).
+
+**Deletion-pass lesson, new instance of the T17 class:** the content grep
+(`picoschema|schema_validate|schema_router|…`) missed `tests/api/v2/test_schema_router.py` — 22
+tests that exercise the router through HTTP paths and never name a stripped symbol. A **filename**
+sweep (`find tests test-int -name "*schema*"`) caught it, plus the orphaned fixture corpus. Grep
+the test tree by content AND by filename.
+
+Verified: fast-check 0; unit 3091/2 (3113 − 22 for the missed router file; the 3309 → 3113 drop
+is the 196 deleted `def test_` lines, zero parametrize changes); int 284/3 (329 − 45), re-run
+after the fixture deletion with a positive control on the grep. W20's schema-render work dies with
+the strip as priced in.
 
 
 *(O1 was diagnosed and closed on 2026-07-26 — it was a measurement artifact, not a defect. See
