@@ -1,6 +1,8 @@
-"""Integration test for `bm status --wait` against a real local project."""
+"""Integration test for `bm status --wait` against a real local project.
 
-import json
+`--json` is gone under output contract v2: status renders labelled summary
+lines, and `--verbose` adds one row per observed file.
+"""
 
 from typer.testing import CliRunner
 
@@ -28,10 +30,10 @@ def test_status_wait_returns_once_indexed(app, app_config, test_project, config_
     assert write_result.exit_code == 0, write_result.output
 
     # --wait is a compatibility flag in the event-index flow and returns immediately.
-    result = runner.invoke(cli_app, ["status", "--wait", "--json"])
+    result = runner.invoke(cli_app, ["status", "--wait", "--verbose"])
 
     assert result.exit_code == 0, result.output
-    start = result.output.index("{")
-    data = json.loads(result.output[start:])
-    assert data["total_files"] == 1
-    assert data["observed_files"][0]["path"] == "test-notes/Wait Test Note.md"
+    lines = [line for line in result.stdout.splitlines() if line.strip()]
+    assert "total files: 1" in lines
+    # --verbose lists each observed file, path first.
+    assert any(line.split("  ")[0] == "test-notes/Wait Test Note.md" for line in lines), lines

@@ -51,7 +51,7 @@ def run_with_cleanup(coro: Coroutine[Any, Any, T]) -> T:
         # Every DB-touching CLI verb funnels through here, so one catch turns
         # "older build over a newer DB" into the contract's error shape —
         # message on its own line, exit 1 (GAPS T11, W20 rule 6).
-        console.print(f"[red]{e}[/red]")
+        typer.echo(str(e), err=True)
         raise typer.Exit(1)
 
 

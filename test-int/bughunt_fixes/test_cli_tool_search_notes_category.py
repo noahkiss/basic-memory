@@ -4,9 +4,14 @@ The MCP search_notes tool exposes a `categories` parameter for exact-match
 observation-category filtering. The CLI wrapper had no equivalent flag. This
 integration test asserts the CLI now exposes `--category` and that it filters
 observation results to the requested category exactly.
+
+Under output contract v2 each row leads with the permalink, and an
+observation's permalink embeds its category as
+`{entity-permalink}/observations/{category}/{slug}` — that is where the filter
+is checked.
 """
 
-import json
+import re
 
 from typer.testing import CliRunner
 
@@ -14,8 +19,19 @@ from basic_memory.cli.main import app as cli_app
 
 runner = CliRunner()
 
+COUNT_LINE = re.compile(r"^\d+ results$")
 
-def _write_note(title: str, folder: str, content: str) -> dict:
+
+def _permalinks(stdout: str) -> list[str]:
+    """Collect the leading permalink column from search-notes rows."""
+    lines = [line for line in stdout.splitlines() if line.strip()]
+    rows = [
+        line for line in lines if not COUNT_LINE.match(line) and line != "more results available"
+    ]
+    return [line.split()[0] for line in rows]
+
+
+def _write_note(title: str, folder: str, content: str) -> None:
     result = runner.invoke(
         cli_app,
         [
@@ -30,7 +46,6 @@ def _write_note(title: str, folder: str, content: str) -> dict:
         ],
     )
     assert result.exit_code == 0, result.output
-    return json.loads(result.stdout)
 
 
 def test_search_notes_exposes_category_filter(app, app_config, test_project, config_manager):
@@ -65,9 +80,10 @@ def test_search_notes_exposes_category_filter(app, app_config, test_project, con
         f"exit_code={result.exit_code} output={result.output}"
     )
 
-    payload = json.loads(result.stdout)
-    categories = {r.get("category") for r in payload.get("results", []) if r.get("category")}
-    assert categories == {"requirement"}, (
+    permalinks = _permalinks(result.stdout)
+    assert permalinks, f"expected the requirement observation, got:\n{result.stdout}"
+    assert all("/observations/requirement/" in permalink for permalink in permalinks), (
         "--category requirement should return only requirement observations, "
-        f"got categories={categories}"
+        f"got permalinks={permalinks}"
     )
+    assert not any("/observations/decision/" in permalink for permalink in permalinks)

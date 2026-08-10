@@ -1,6 +1,7 @@
 """Tests for the `bm config` command group (issue #991)."""
 
 import json
+import re
 from enum import Enum
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -41,6 +42,20 @@ def write_config(tmp_path, monkeypatch):
     return _write
 
 
+def _list_rows(output: str) -> dict[str, tuple[str, str]]:
+    """Parse `config list` column output into {key: (value, source)}.
+
+    Columns are padded with at least two spaces, and the final line is the count.
+    """
+    lines = output.strip().splitlines()
+    assert lines[-1].endswith(" settings"), lines[-1]
+    rows = {}
+    for line in lines[:-1]:
+        key, value, source = (field.strip() for field in re.split(r"\s{2,}", line.strip()))
+        rows[key] = (value, source)
+    return rows
+
+
 def _base_config(**overrides) -> dict:
     data = {
         "env": "dev",
@@ -67,7 +82,7 @@ def test_configurable_fields_excludes_structured_types():
 
 def test_configurable_fields_includes_scalar_settings():
     """Scalar settings (str/bool/int/float/Literal/Enum) are derived from the model."""
-    for expected in ("cli_output_style", "log_level", "kebab_filenames", "sqlite_synchronous"):
+    for expected in ("log_level", "kebab_filenames", "sqlite_synchronous"):
         assert expected in config_cmd.CONFIGURABLE_FIELDS
 
 
@@ -84,10 +99,10 @@ def test_configurable_fields_matches_model_field_count():
 def test_config_get_default_value(runner, write_config):
     write_config(_base_config())
 
-    result = runner.invoke(app, ["config", "get", "cli_output_style"])
+    result = runner.invoke(app, ["config", "get", "log_level"])
 
     assert result.exit_code == 0, result.output
-    assert "cli_output_style = rich" in result.output
+    assert "log_level = INFO" in result.output
 
 
 def test_config_get_unknown_key(runner, write_config):
@@ -96,7 +111,10 @@ def test_config_get_unknown_key(runner, write_config):
     result = runner.invoke(app, ["config", "get", "not_a_real_setting"])
 
     assert result.exit_code == 1
-    assert "not a recognized setting" in result.output
+    # The error and the affordance that resolves it both belong on stderr.
+    assert result.stdout == ""
+    assert "not a recognized setting" in result.stderr
+    assert "bm config list" in result.stderr
 
 
 def test_render_value_renders_enum_value_not_repr():
@@ -114,29 +132,29 @@ def test_config_list_shows_default_source(runner, write_config):
     result = runner.invoke(app, ["config", "list"])
 
     assert result.exit_code == 0, result.output
-    assert "cli_output_style" in result.output
+    assert "kebab_filenames" in result.output
     assert "default" in result.output
 
 
 def test_config_list_shows_file_source_for_set_field(runner, write_config):
     write_config(_base_config(log_level="DEBUG"))
 
-    result = runner.invoke(app, ["config", "list", "--json"])
+    result = runner.invoke(app, ["config", "list"])
 
     assert result.exit_code == 0, result.output
-    rows = {row["key"]: row for row in json.loads(result.output)}
-    assert rows["log_level"]["value"] == "DEBUG"
-    assert rows["log_level"]["source"] == "file"
+    assert _list_rows(result.stdout)["log_level"] == ("DEBUG", "file")
 
 
-def test_config_list_json_output_is_valid_json(runner, write_config):
+def test_config_list_counts_every_setting(runner, write_config):
+    """The count line closes the listing and matches the rows above it."""
     write_config(_base_config())
 
-    result = runner.invoke(app, ["config", "list", "--json"])
+    result = runner.invoke(app, ["config", "list"])
 
     assert result.exit_code == 0, result.output
-    rows = json.loads(result.output)
-    assert any(row["key"] == "cli_output_style" for row in rows)
+    rows = _list_rows(result.stdout)
+    assert "log_level" in rows
+    assert result.stdout.strip().splitlines()[-1] == f"{len(rows)} settings"
 
 
 # ---------------------------------------------------------------------------
@@ -147,29 +165,31 @@ def test_config_list_json_output_is_valid_json(runner, write_config):
 def test_config_set_valid_value_round_trips(runner, write_config):
     config_file = write_config(_base_config())
 
-    result = runner.invoke(app, ["config", "set", "cli_output_style", "plain"])
+    result = runner.invoke(app, ["config", "set", "log_level", "DEBUG"])
     assert result.exit_code == 0, result.output
-    assert "cli_output_style = plain" in result.output
+    assert "log_level = DEBUG" in result.output
 
     on_disk = json.loads(config_file.read_text())
-    assert on_disk["cli_output_style"] == "plain"
+    assert on_disk["log_level"] == "DEBUG"
 
-    get_result = runner.invoke(app, ["config", "get", "cli_output_style"])
-    assert "cli_output_style = plain" in get_result.output
+    get_result = runner.invoke(app, ["config", "get", "log_level"])
+    assert "log_level = DEBUG" in get_result.output
 
 
 def test_config_set_invalid_value_fails_with_pydantic_error(runner, write_config):
     config_file = write_config(_base_config())
 
-    result = runner.invoke(app, ["config", "set", "cli_output_style", "bogus"])
+    result = runner.invoke(app, ["config", "set", "kebab_filenames", "bogus"])
 
     assert result.exit_code == 1
-    assert "invalid value" in result.output.lower()
-    assert "cli_output_style" in result.output
+    assert result.stdout == ""
+    # One line on stderr, not pydantic's multi-line block with its docs URL.
+    assert len(result.stderr.strip().splitlines()) == 1
+    assert result.stderr.startswith("invalid value for kebab_filenames: ")
 
     # Config file must be untouched by a failed validation.
     on_disk = json.loads(config_file.read_text())
-    assert "cli_output_style" not in on_disk
+    assert "kebab_filenames" not in on_disk
 
 
 def test_config_set_coerces_bool_from_string(runner, write_config):
@@ -187,7 +207,7 @@ def test_config_set_rejects_structured_field(runner, write_config):
     result = runner.invoke(app, ["config", "set", "projects", '{"x": "/tmp/x"}'])
 
     assert result.exit_code == 1
-    assert "not a recognized setting" in result.output
+    assert "not a recognized setting" in result.stderr
 
 
 def test_config_set_unknown_key(runner, write_config):
@@ -196,7 +216,7 @@ def test_config_set_unknown_key(runner, write_config):
     result = runner.invoke(app, ["config", "set", "not_a_real_setting", "value"])
 
     assert result.exit_code == 1
-    assert "not a recognized setting" in result.output
+    assert "not a recognized setting" in result.stderr
 
 
 # ---------------------------------------------------------------------------
@@ -205,15 +225,15 @@ def test_config_set_unknown_key(runner, write_config):
 
 
 def test_config_unset_reverts_to_default(runner, write_config):
-    write_config(_base_config(cli_output_style="plain"))
+    write_config(_base_config(log_level="DEBUG"))
 
-    result = runner.invoke(app, ["config", "unset", "cli_output_style"])
+    result = runner.invoke(app, ["config", "unset", "log_level"])
 
     assert result.exit_code == 0, result.output
-    assert "reverted to default: rich" in result.output
+    assert "reverted to default: INFO" in result.output
 
-    get_result = runner.invoke(app, ["config", "get", "cli_output_style"])
-    assert "cli_output_style = rich" in get_result.output
+    get_result = runner.invoke(app, ["config", "get", "log_level"])
+    assert "log_level = INFO" in get_result.output
 
 
 def test_config_unset_unknown_key(runner, write_config):
@@ -222,7 +242,7 @@ def test_config_unset_unknown_key(runner, write_config):
     result = runner.invoke(app, ["config", "unset", "not_a_real_setting"])
 
     assert result.exit_code == 1
-    assert "not a recognized setting" in result.output
+    assert "not a recognized setting" in result.stderr
 
 
 # ---------------------------------------------------------------------------
@@ -243,12 +263,11 @@ def test_config_get_never_prints_secret_field(runner, write_config):
 def test_config_list_never_prints_secret_field(runner, write_config):
     write_config(_base_config(semantic_embedding_api_key="sk_super_secret_token"))
 
-    result = runner.invoke(app, ["config", "list", "--json"])
+    result = runner.invoke(app, ["config", "list"])
 
     assert result.exit_code == 0, result.output
     assert "sk_super_secret_token" not in result.output
-    rows = {row["key"]: row for row in json.loads(result.output)}
-    assert rows["semantic_embedding_api_key"]["value"] == "********"
+    assert _list_rows(result.stdout)["semantic_embedding_api_key"][0] == "********"
 
 
 def test_config_get_masks_url_field_credentials(runner, write_config):
@@ -283,13 +302,13 @@ def test_config_get_shows_not_set_for_unset_secret(runner, write_config):
 
 def test_config_get_shows_env_override(runner, write_config, monkeypatch):
     write_config(_base_config())
-    monkeypatch.setenv("BASIC_MEMORY_CLI_OUTPUT_STYLE", "plain")
+    monkeypatch.setenv("BASIC_MEMORY_LOG_LEVEL", "DEBUG")
 
-    result = runner.invoke(app, ["config", "get", "cli_output_style"])
+    result = runner.invoke(app, ["config", "get", "log_level"])
 
     assert result.exit_code == 0, result.output
-    assert "cli_output_style = plain" in result.output
-    assert "BASIC_MEMORY_CLI_OUTPUT_STYLE" in result.output
+    assert "log_level = DEBUG" in result.output
+    assert "BASIC_MEMORY_LOG_LEVEL" in result.output
 
 
 def test_config_get_masks_secret_env_override(runner, write_config, monkeypatch):
@@ -305,22 +324,35 @@ def test_config_get_masks_secret_env_override(runner, write_config, monkeypatch)
 
 def test_config_list_shows_env_source(runner, write_config, monkeypatch):
     write_config(_base_config())
-    monkeypatch.setenv("BASIC_MEMORY_CLI_OUTPUT_STYLE", "plain")
+    monkeypatch.setenv("BASIC_MEMORY_LOG_LEVEL", "DEBUG")
 
-    result = runner.invoke(app, ["config", "list", "--json"])
+    result = runner.invoke(app, ["config", "list"])
 
     assert result.exit_code == 0, result.output
-    rows = {row["key"]: row for row in json.loads(result.output)}
-    assert rows["cli_output_style"]["value"] == "plain"
-    assert "env" in rows["cli_output_style"]["source"]
-    assert "BASIC_MEMORY_CLI_OUTPUT_STYLE" in rows["cli_output_style"]["source"]
+    value, source = _list_rows(result.stdout)["log_level"]
+    assert value == "DEBUG"
+    assert source == "env (BASIC_MEMORY_LOG_LEVEL)"
 
 
 def test_config_set_warns_when_env_var_overrides(runner, write_config, monkeypatch):
     write_config(_base_config())
-    monkeypatch.setenv("BASIC_MEMORY_CLI_OUTPUT_STYLE", "plain")
+    monkeypatch.setenv("BASIC_MEMORY_LOG_LEVEL", "DEBUG")
 
-    result = runner.invoke(app, ["config", "set", "cli_output_style", "rich"])
+    result = runner.invoke(app, ["config", "set", "log_level", "INFO"])
 
     assert result.exit_code == 0, result.output
-    assert "BASIC_MEMORY_CLI_OUTPUT_STYLE is set" in result.output
+    assert "BASIC_MEMORY_LOG_LEVEL is set" in result.output
+
+
+def test_config_quiet_drops_the_env_override_notice(runner, write_config, monkeypatch):
+    """--quiet leaves the payload line and nothing else."""
+    write_config(_base_config())
+    monkeypatch.setenv("BASIC_MEMORY_LOG_LEVEL", "DEBUG")
+
+    get_result = runner.invoke(app, ["config", "get", "log_level", "--quiet"])
+    assert get_result.exit_code == 0, get_result.output
+    assert get_result.stdout.splitlines() == ["log_level = DEBUG"]
+
+    set_result = runner.invoke(app, ["config", "set", "log_level", "INFO", "--quiet"])
+    assert set_result.exit_code == 0, set_result.output
+    assert set_result.stdout.splitlines() == ["log_level = INFO"]

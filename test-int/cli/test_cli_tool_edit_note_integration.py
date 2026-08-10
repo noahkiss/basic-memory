@@ -1,6 +1,8 @@
-"""Integration tests for `basic-memory tool edit-note`."""
+"""Integration tests for `basic-memory tool edit-note` (output contract v2).
 
-import json
+edit-note renders one labelled `key: value` line per field, identifier first,
+and reports failures on stderr with exit 1.
+"""
 
 from typer.testing import CliRunner
 
@@ -9,7 +11,19 @@ from basic_memory.cli.main import app as cli_app
 runner = CliRunner()
 
 
-def _write_note(title: str, folder: str, content: str, project: str | None = None) -> dict:
+def _record(stdout: str) -> dict[str, str]:
+    """Parse labelled `key: value` lines into a dict."""
+    fields: dict[str, str] = {}
+    for line in stdout.splitlines():
+        if ": " in line:
+            key, value = line.split(": ", 1)
+            fields[key] = value
+    return fields
+
+
+def _write_note(
+    title: str, folder: str, content: str, project: str | None = None
+) -> dict[str, str]:
     args = [
         "tool",
         "write-note",
@@ -25,17 +39,18 @@ def _write_note(title: str, folder: str, content: str, project: str | None = Non
 
     result = runner.invoke(cli_app, args)
     assert result.exit_code == 0, result.output
-    return json.loads(result.stdout)
+    return _record(result.stdout)
 
 
-def _read_note(identifier: str, project: str | None = None) -> dict:
+def _read_note(identifier: str, project: str | None = None) -> str:
+    """Return read-note's payload — the note body, written verbatim."""
     args = ["tool", "read-note", identifier]
     if project:
         args.extend(["--project", project])
 
     result = runner.invoke(cli_app, args)
     assert result.exit_code == 0, result.output
-    return json.loads(result.stdout)
+    return result.stdout
 
 
 def test_edit_note_append_success(app, app_config, test_project, config_manager):
@@ -61,9 +76,7 @@ def test_edit_note_append_success(app, app_config, test_project, config_manager)
 
     assert result.exit_code == 0, result.output
     updated = _read_note(note["permalink"])
-    assert updated["content"].index("APPENDED_MARKER") > updated["content"].index(
-        "BASE_APPEND_MARKER"
-    )
+    assert updated.index("APPENDED_MARKER") > updated.index("BASE_APPEND_MARKER")
 
 
 def test_edit_note_prepend_success(app, app_config, test_project, config_manager):
@@ -89,9 +102,7 @@ def test_edit_note_prepend_success(app, app_config, test_project, config_manager
 
     assert result.exit_code == 0, result.output
     updated = _read_note(note["permalink"])
-    assert updated["content"].index("PREPENDED_MARKER") < updated["content"].index(
-        "BASE_PREPEND_MARKER"
-    )
+    assert updated.index("PREPENDED_MARKER") < updated.index("BASE_PREPEND_MARKER")
 
 
 def test_edit_note_find_replace_success_with_expected_count(
@@ -123,14 +134,14 @@ def test_edit_note_find_replace_success_with_expected_count(
 
     assert result.exit_code == 0, result.output
     updated = _read_note(note["permalink"])
-    assert "FIND_ME_MARKER" not in updated["content"]
-    assert updated["content"].count("REPLACED_MARKER") == 2
+    assert "FIND_ME_MARKER" not in updated
+    assert updated.count("REPLACED_MARKER") == 2
 
 
 def test_edit_note_find_replace_fails_without_find_text(
     app, app_config, test_project, config_manager
 ):
-    """find_replace requires --find-text."""
+    """find_replace requires --find-text; the complaint goes to stderr, exit 1."""
     note = _write_note(
         "Edit Missing Find Note",
         "edit-tests",
@@ -150,8 +161,9 @@ def test_edit_note_find_replace_fails_without_find_text(
         ],
     )
 
-    assert result.exit_code != 0
-    assert "find_text parameter is required for find_replace operation" in result.output
+    assert result.exit_code == 1, result.output
+    assert "find_text parameter is required for find_replace operation" in result.stderr
+    assert "permalink: " not in result.stdout
 
 
 def test_edit_note_replace_section_success(app, app_config, test_project, config_manager):
@@ -179,15 +191,15 @@ def test_edit_note_replace_section_success(app, app_config, test_project, config
 
     assert result.exit_code == 0, result.output
     updated = _read_note(note["permalink"])
-    assert "New section body" in updated["content"]
-    assert "Old section body" not in updated["content"]
-    assert "## After" in updated["content"]
+    assert "New section body" in updated
+    assert "Old section body" not in updated
+    assert "## After" in updated
 
 
 def test_edit_note_replace_section_fails_without_section(
     app, app_config, test_project, config_manager
 ):
-    """replace_section requires --section."""
+    """replace_section requires --section; the complaint goes to stderr, exit 1."""
     note = _write_note(
         "Edit Missing Section Note",
         "edit-tests",
@@ -207,14 +219,15 @@ def test_edit_note_replace_section_fails_without_section(
         ],
     )
 
-    assert result.exit_code != 0
-    assert "section parameter is required for section-based operations" in result.output
+    assert result.exit_code == 1, result.output
+    assert "section parameter is required for section-based operations" in result.stderr
+    assert "permalink: " not in result.stdout
 
 
 def test_edit_note_append_creates_nonexistent_note_cli(
     app, app_config, test_project, config_manager
 ):
-    """append to a non-existent note via CLI should auto-create and include fileCreated."""
+    """append to a non-existent note via CLI should auto-create and say so."""
     result = runner.invoke(
         cli_app,
         [
@@ -229,18 +242,17 @@ def test_edit_note_append_creates_nonexistent_note_cli(
     )
 
     assert result.exit_code == 0, result.output
-    data = json.loads(result.stdout)
-    assert data["fileCreated"] is True
-    assert data["operation"] == "append"
-    assert data["title"] is not None
+    record = _record(result.stdout)
+    assert record["file_created"] == "true"
+    assert record["operation"] == "append"
+    assert record["title"]
 
     # Verify the note is readable
-    read_data = _read_note(data["permalink"])
-    assert "Auto Created" in read_data["content"]
+    assert "Auto Created" in _read_note(record["permalink"])
 
 
-def test_edit_note_json_format_contract(app, app_config, test_project, config_manager):
-    """JSON output returns metadata keys required by contract."""
+def test_edit_note_record_line_contract(app, app_config, test_project, config_manager):
+    """The record carries exactly the fields a caller acts on, identifier first."""
     note = _write_note(
         "Edit JSON Note",
         "edit-tests",
@@ -256,27 +268,24 @@ def test_edit_note_json_format_contract(app, app_config, test_project, config_ma
             "--operation",
             "append",
             "--content",
-            "\nJSON_MARKER",
+            "\nEDIT_MARKER",
         ],
     )
 
     assert result.exit_code == 0, result.output
-    data = json.loads(result.stdout)
-    assert set(data.keys()) == {
-        "title",
-        "permalink",
-        "file_path",
-        "operation",
-        "checksum",
-        "fileCreated",
-    }
-    assert data["operation"] == "append"
-    assert data["fileCreated"] is False
-    assert data["title"] == "Edit JSON Note"
+    lines = result.stdout.splitlines()
+    assert lines[0].startswith("permalink: ")
+
+    record = _record(result.stdout)
+    # checksum carries no meaning for a CLI caller and is deliberately absent.
+    assert set(record) == {"permalink", "file_path", "title", "operation", "file_created"}
+    assert record["operation"] == "append"
+    assert record["file_created"] == "false"
+    assert record["title"] == "Edit JSON Note"
 
 
 def test_edit_note_backend_failure_returns_nonzero(app, app_config, test_project, config_manager):
-    """Edit should return non-zero when backend edit operation fails."""
+    """Edit should fail on stderr when the backend edit operation fails."""
     note = _write_note(
         "Edit Backend Failure Note",
         "edit-tests",
@@ -300,7 +309,9 @@ def test_edit_note_backend_failure_returns_nonzero(app, app_config, test_project
         ],
     )
 
-    assert result.exit_code != 0
+    assert result.exit_code == 1, result.output
+    assert result.stderr.strip()
+    assert "permalink: " not in result.stdout
 
 
 def test_edit_note_project_flag(app, app_config, test_project, config_manager):
@@ -329,5 +340,4 @@ def test_edit_note_project_flag(app, app_config, test_project, config_manager):
     assert success.exit_code == 0, success.output
     assert "No such option" not in success.output
 
-    updated = _read_note(note["permalink"], project=test_project.name)
-    assert "PROJECT_UPDATE_MARKER" in updated["content"]
+    assert "PROJECT_UPDATE_MARKER" in _read_note(note["permalink"], project=test_project.name)

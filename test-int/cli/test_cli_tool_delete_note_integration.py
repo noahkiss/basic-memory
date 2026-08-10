@@ -1,14 +1,31 @@
-"""Integration tests for `basic-memory tool delete-note`."""
+"""Integration tests for `basic-memory tool delete-note` (output contract v2).
 
-import json
+delete-note renders a single record as labelled `key: value` lines, identifier
+first. The v2 rendering carries the fields a caller acts on; the per-file list
+a directory delete used to emit in JSON is not part of it, so the tests check
+the filesystem for that instead.
+"""
+
+import re
 from pathlib import Path
-from typing import Any
 
 from typer.testing import CliRunner
 
 from basic_memory.cli.main import app as cli_app
 
 runner = CliRunner()
+
+COUNT_LINE = re.compile(r"^\d+ results$")
+
+
+def _record(stdout: str) -> dict[str, str]:
+    """Parse labelled `key: value` lines into a dict."""
+    fields: dict[str, str] = {}
+    for line in stdout.splitlines():
+        if ": " in line:
+            key, value = line.split(": ", 1)
+            fields[key] = value
+    return fields
 
 
 def _write_note(
@@ -17,7 +34,7 @@ def _write_note(
     content: str,
     *,
     project: str | None = None,
-) -> dict[str, Any]:
+) -> dict[str, str]:
     args = [
         "tool",
         "write-note",
@@ -33,17 +50,18 @@ def _write_note(
 
     result = runner.invoke(cli_app, args)
     assert result.exit_code == 0, result.output
-    return json.loads(result.stdout)
+    return _record(result.stdout)
 
 
-def _read_note(identifier: str, *, project: str | None = None) -> dict[str, Any]:
+def _read_note(identifier: str, *, project: str | None = None) -> str:
+    """Return read-note's payload — the note body, written verbatim."""
     args = ["tool", "read-note", identifier]
     if project is not None:
         args.extend(["--project", project])
 
     result = runner.invoke(cli_app, args)
     assert result.exit_code == 0, result.output
-    return json.loads(result.stdout)
+    return result.stdout
 
 
 def _delete_note(
@@ -52,7 +70,7 @@ def _delete_note(
     is_directory: bool = False,
     project: str | None = None,
     project_id: str | None = None,
-) -> tuple[int, dict[str, Any], str]:
+) -> tuple[int, dict[str, str], str]:
     args = ["tool", "delete-note", identifier]
     if is_directory:
         args.append("--is-directory")
@@ -62,26 +80,26 @@ def _delete_note(
         args.extend(["--project-id", project_id])
 
     result = runner.invoke(cli_app, args)
-    payload = json.loads(result.stdout) if result.stdout else {}
-    return result.exit_code, payload, result.output
+    return result.exit_code, _record(result.stdout), result.output
 
 
-def _search_notes(
+def _search_rows(
     query: str,
     *,
     mode_flag: str | None = None,
     page_size: int = 20,
-) -> dict[str, Any]:
+) -> tuple[list[str], str]:
+    """Return search-notes payload rows and its trailing count line."""
     args = ["tool", "search-notes", query, "--page-size", str(page_size)]
     if mode_flag is not None:
         args.append(mode_flag)
 
-    result = runner.invoke(
-        cli_app,
-        args,
-    )
+    result = runner.invoke(cli_app, args)
     assert result.exit_code == 0, result.output
-    return json.loads(result.stdout)
+    lines = [line for line in result.stdout.splitlines() if line.strip()]
+    assert lines, "search-notes wrote nothing to stdout"
+    count_line = next(line for line in lines if COUNT_LINE.match(line))
+    return lines[: lines.index(count_line)], count_line
 
 
 def _project_file(test_project, file_path: str) -> Path:
@@ -100,40 +118,33 @@ def test_delete_note_removes_file_database_record_and_search_result(
     note_path = _project_file(test_project, note["file_path"])
     assert note_path.exists()
 
-    exit_code, payload, output = _delete_note(note["permalink"])
+    exit_code, record, output = _delete_note(note["permalink"])
 
     assert exit_code == 0, output
-    assert payload == {
-        "deleted": True,
-        "title": "CLI Delete Single Note",
+    assert record == {
         "permalink": note["permalink"],
         "file_path": note["file_path"],
+        "title": "CLI Delete Single Note",
+        "deleted": "true",
     }
     assert not note_path.exists()
 
-    missing = _read_note(note["permalink"])
-    assert missing["title"] is None
-    assert missing["permalink"] is None
-    assert missing["content"] is None
+    assert "Note not found." in _read_note(note["permalink"])
 
-    search = _search_notes("CLI Delete Single Note", mode_flag="--title")
-    assert search["total"] == 0
-    assert search["results"] == []
+    rows, count_line = _search_rows("CLI Delete Single Note", mode_flag="--title")
+    assert rows == []
+    assert count_line == "0 results"
 
 
-def test_delete_note_not_found_returns_json_without_error(
+def test_delete_note_not_found_is_a_result_not_a_failure(
     app, app_config, test_project, config_manager
 ) -> None:
-    """A missing note is machine-readable and does not produce a CLI failure."""
-    exit_code, payload, output = _delete_note("delete-cli/missing-note")
+    """A missing note reports `deleted: false` and does not produce a CLI failure."""
+    exit_code, record, output = _delete_note("delete-cli/missing-note")
 
     assert exit_code == 0, output
-    assert payload == {
-        "deleted": False,
-        "title": None,
-        "permalink": None,
-        "file_path": None,
-    }
+    # Absent fields are skipped by the renderer, so nothing survives but the verdict.
+    assert record == {"deleted": "false"}
 
 
 def test_delete_note_case_mismatch_does_not_delete_exact_note(
@@ -146,13 +157,12 @@ def test_delete_note_case_mismatch_does_not_delete_exact_note(
         "# CLI CamelCase Delete Note\n\nCaseSensitiveDeleteToken",
     )
 
-    exit_code, payload, output = _delete_note("cli camelcase delete note")
+    exit_code, record, output = _delete_note("cli camelcase delete note")
 
     assert exit_code == 0, output
-    assert payload["deleted"] is False
+    assert record["deleted"] == "false"
     still_there = _read_note(note["permalink"])
-    assert still_there["title"] == "CLI CamelCase Delete Note"
-    assert "CaseSensitiveDeleteToken" in still_there["content"]
+    assert "CaseSensitiveDeleteToken" in still_there
 
 
 def test_delete_note_project_id_takes_precedence_over_wrong_project_name(
@@ -165,16 +175,16 @@ def test_delete_note_project_id_takes_precedence_over_wrong_project_name(
         "# CLI Delete By Project ID\n\nProjectIdDeleteToken",
     )
 
-    exit_code, payload, output = _delete_note(
+    exit_code, record, output = _delete_note(
         note["file_path"],
         project="not-the-test-project",
         project_id=test_project.external_id,
     )
 
     assert exit_code == 0, output
-    assert payload["deleted"] is True
-    assert payload["title"] == "CLI Delete By Project ID"
-    assert _read_note(note["permalink"])["title"] is None
+    assert record["deleted"] == "true"
+    assert record["title"] == "CLI Delete By Project ID"
+    assert "Note not found." in _read_note(note["permalink"])
 
 
 def test_delete_note_memory_url_detects_project_from_identifier(
@@ -189,18 +199,18 @@ def test_delete_note_memory_url_detects_project_from_identifier(
     )
     memory_url = f"memory://{test_project.name}/{note['permalink']}"
 
-    exit_code, payload, output = _delete_note(memory_url)
+    exit_code, record, output = _delete_note(memory_url)
 
     assert exit_code == 0, output
-    assert payload["deleted"] is True
-    assert payload["permalink"] == note["permalink"]
-    assert _read_note(note["permalink"], project=test_project.name)["title"] is None
+    assert record["deleted"] == "true"
+    assert record["permalink"] == note["permalink"]
+    assert "Note not found." in _read_note(note["permalink"], project=test_project.name)
 
 
 def test_delete_directory_removes_nested_files_database_records_and_search_results(
     app, app_config, test_project, config_manager
 ) -> None:
-    """Directory deletion removes nested notes and reports a complete JSON summary."""
+    """Directory deletion removes nested notes and reports a complete summary record."""
     notes = [
         _write_note(
             "CLI Delete Directory Root",
@@ -221,25 +231,26 @@ def test_delete_directory_removes_nested_files_database_records_and_search_resul
     note_paths = [_project_file(test_project, note["file_path"]) for note in notes]
     assert all(path.exists() for path in note_paths)
 
-    exit_code, payload, output = _delete_note("delete-cli-dir", is_directory=True)
+    exit_code, record, output = _delete_note("delete-cli-dir", is_directory=True)
 
     assert exit_code == 0, output
-    assert payload["deleted"] is True
-    assert payload["is_directory"] is True
-    assert payload["identifier"] == "delete-cli-dir"
-    assert payload["total_files"] == 3
-    assert payload["successful_deletes"] == 3
-    assert payload["failed_deletes"] == 0
-    assert payload["errors"] == []
-    assert set(payload["deleted_files"]) == {note["file_path"] for note in notes}
+    assert record["identifier"] == "delete-cli-dir"
+    assert record["is_directory"] == "true"
+    assert record["deleted"] == "true"
+    assert record["total_files"] == "3"
+    assert record["successful_deletes"] == "3"
+    assert record["failed_deletes"] == "0"
+
+    # The per-file list is not part of the v2 record, so the filesystem is the
+    # evidence that every nested note went away.
     assert not any(path.exists() for path in note_paths)
 
     for note in notes:
-        assert _read_note(note["permalink"])["title"] is None
+        assert "Note not found." in _read_note(note["permalink"])
 
-    search = _search_notes("CLI Delete Directory", mode_flag="--title")
-    assert search["total"] == 0
-    assert search["results"] == []
+    rows, count_line = _search_rows("CLI Delete Directory", mode_flag="--title")
+    assert rows == []
+    assert count_line == "0 results"
 
 
 def test_delete_directory_without_flag_does_not_delete_child_notes(
@@ -252,10 +263,9 @@ def test_delete_directory_without_flag_does_not_delete_child_notes(
         "# CLI Delete Directory Safety\n\nDirectorySafetyToken",
     )
 
-    exit_code, payload, output = _delete_note("delete-cli-safety")
+    exit_code, record, output = _delete_note("delete-cli-safety")
 
     assert exit_code == 0, output
-    assert payload["deleted"] is False
-    still_there = _read_note(note["permalink"])
-    assert still_there["title"] == "CLI Delete Directory Safety"
+    assert record["deleted"] == "false"
+    assert "DirectorySafetyToken" in _read_note(note["permalink"])
     assert _project_file(test_project, note["file_path"]).exists()

@@ -1,12 +1,38 @@
-"""Integration coverage for tool search-notes with metadata filters."""
+"""Integration coverage for tool search-notes with metadata filters.
 
-import json
+Under output contract v2 search-notes emits one row per result,
+`{permalink}  {score}  {title}  {snippet}`, then a count line — so the
+filter is checked against the leading permalink column.
+"""
+
+import re
 
 from typer.testing import CliRunner
 
 from basic_memory.cli.main import app as cli_app
 
 runner = CliRunner()
+
+COUNT_LINE = re.compile(r"^\d+ results$")
+
+
+def _record(stdout: str) -> dict[str, str]:
+    """Parse labelled `key: value` lines into a dict."""
+    fields: dict[str, str] = {}
+    for line in stdout.splitlines():
+        if ": " in line:
+            key, value = line.split(": ", 1)
+            fields[key] = value
+    return fields
+
+
+def _permalinks(stdout: str) -> set[str]:
+    """Collect the leading permalink column from search-notes rows."""
+    lines = [line for line in stdout.splitlines() if line.strip()]
+    rows = [
+        line for line in lines if not COUNT_LINE.match(line) and line != "more results available"
+    ]
+    return {line.split()[0] for line in rows}
 
 
 def test_search_notes_query_plus_meta_filter(app, app_config, test_project, config_manager):
@@ -28,7 +54,7 @@ def test_search_notes_query_plus_meta_filter(app, app_config, test_project, conf
         ],
     )
     assert active_write.exit_code == 0, active_write.output
-    active_data = json.loads(active_write.stdout)
+    active_permalink = _record(active_write.stdout)["permalink"]
 
     inactive_write = runner.invoke(
         cli_app,
@@ -44,7 +70,7 @@ def test_search_notes_query_plus_meta_filter(app, app_config, test_project, conf
         ],
     )
     assert inactive_write.exit_code == 0, inactive_write.output
-    inactive_data = json.loads(inactive_write.stdout)
+    inactive_permalink = _record(inactive_write.stdout)["permalink"]
 
     search = runner.invoke(
         cli_app,
@@ -60,7 +86,6 @@ def test_search_notes_query_plus_meta_filter(app, app_config, test_project, conf
     )
     assert search.exit_code == 0, search.output
 
-    payload = json.loads(search.stdout)
-    permalinks = {item["permalink"] for item in payload["results"]}
-    assert active_data["permalink"] in permalinks
-    assert inactive_data["permalink"] not in permalinks
+    permalinks = _permalinks(search.stdout)
+    assert active_permalink in permalinks
+    assert inactive_permalink not in permalinks

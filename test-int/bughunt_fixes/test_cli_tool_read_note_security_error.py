@@ -5,6 +5,8 @@ The MCP read_note tool detects path-traversal identifiers and returns
 {"error": "SECURITY_VALIDATION_ERROR", ...}. Every other wrapped tool command
 exits non-zero on an error payload; read-note used to print the payload and
 exit 0. These integration tests assert read-note now matches its siblings.
+
+Under output contract v2 the message lands on stderr and stdout stays empty.
 """
 
 import pytest
@@ -41,10 +43,11 @@ def test_read_note_security_error_cli_exit_code_matches_other_tools(
         ["tool", "read-note", TRAVERSAL_IDENTIFIER, "--project", test_project.name],
     )
 
-    combined = result.stdout
-    assert "SECURITY_VALIDATION_ERROR" in combined, combined
+    # Contract rule 6: the message is on stderr, and nothing lands on stdout.
+    assert "SECURITY_VALIDATION_ERROR" in result.stderr, result.output
+    assert "SECURITY_VALIDATION_ERROR" not in result.stdout, result.stdout
 
-    assert result.exit_code != 0, (
+    assert result.exit_code == 1, (
         f"read-note exited {result.exit_code} on a SECURITY_VALIDATION_ERROR; "
         "other tool commands exit non-zero on error payloads"
     )

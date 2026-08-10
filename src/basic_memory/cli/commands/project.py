@@ -1,15 +1,9 @@
 """Command module for basic-memory project management."""
 
-import json
 import os
-from datetime import datetime
 from pathlib import Path
 
 import typer
-from rich.console import Console, Group
-from rich.panel import Panel
-from rich.table import Table
-from rich.text import Text
 
 from basic_memory.cli.app import app
 from basic_memory.cli.commands.command_utils import get_project_info, run_with_cleanup
@@ -18,8 +12,6 @@ from basic_memory.mcp.async_client import get_client
 from basic_memory.mcp.clients import ProjectClient
 from basic_memory.schemas.project_info import ProjectItem, ProjectList
 from basic_memory.utils import generate_permalink
-
-console = Console()
 
 # Create a project subcommand
 project_app = typer.Typer(help="Manage multiple Basic Memory projects")
@@ -34,15 +26,14 @@ def format_path(path: str) -> str:
     return path
 
 
-def make_bar(value: int, max_value: int, width: int = 40) -> Text:
-    """Create a horizontal bar chart element using Unicode blocks."""
-    if max_value == 0:
-        return Text("░" * width, style="dim")
-    filled = max(1, round(value / max_value * width)) if value > 0 else 0
-    bar = Text()
-    bar.append("█" * filled, style="cyan")
-    bar.append("░" * (width - filled), style="dim")
-    return bar
+def fail(message: str) -> typer.Exit:
+    """Write one error line to stderr and return the exit the caller raises.
+
+    Output contract rule 6: errors are a single line on stderr, exit 1, and
+    nothing lands on stdout on the error path.
+    """
+    typer.echo(message, err=True)
+    return typer.Exit(1)
 
 
 async def fetch_project_list() -> ProjectList:
@@ -71,53 +62,24 @@ async def fetch_project_list() -> ProjectList:
 
 
 @project_app.command("list")
-def list_projects(
-    json_output: bool = typer.Option(False, "--json", help="Output in JSON format"),
-) -> None:
+def list_projects() -> None:
     """List Basic Memory projects."""
 
     try:
         result = run_with_cleanup(fetch_project_list())
-
-        project_rows: list[dict] = [
-            {
-                "name": project.name,
-                "permalink": generate_permalink(project.name),
-                "path": format_path(project.path),
-                "is_default": project.is_default,
-            }
-            for project in sorted(result.projects, key=lambda project: project.name)
-        ]
-
-        # --- JSON output ---
-        if json_output:
-            print(json.dumps({"projects": project_rows}, indent=2, default=str))
-            return
-
-        # --- Rich table output ---
-        table = Table(title="Basic Memory Projects")
-        # Name must never lose its width: it is the identifier the user passes to
-        # --project, and a row that renders as a bare path cannot be acted on.
-        # Path used to be no_wrap, which let one long path claim the whole line and
-        # squeeze every other column — Name included — to zero width in a
-        # default-width terminal. "fold" alone wraps the path and leaves room.
-        table.add_column("Name", style="cyan", no_wrap=True)
-        table.add_column("Path", style="yellow", overflow="fold")
-        table.add_column("Default", style="magenta")
-
-        for row_data in project_rows:
-            table.add_row(
-                row_data["name"],
-                row_data["path"],
-                "[X]" if row_data["is_default"] else "",
-            )
-
-        console.print(table)
     except typer.Exit:
         raise
     except Exception as e:
-        console.print(f"[red]Error listing projects: {str(e)}[/red]")
-        raise typer.Exit(1)
+        raise fail(f"Error listing projects: {e}")
+
+    projects = sorted(result.projects, key=lambda project: project.name)
+    # Name is the identifier callers pass to --project, so it leads the row and
+    # keeps a fixed width; nothing else may push it out of column one.
+    name_width = max((len(project.name) for project in projects), default=0)
+    for project in projects:
+        marker = "  (default)" if project.is_default else ""
+        typer.echo(f"{project.name:<{name_width}}  {format_path(project.path)}{marker}")
+    typer.echo(f"{len(projects)} projects")
 
 
 @project_app.command("add")
@@ -125,6 +87,7 @@ def add_project(
     name: str = typer.Argument(..., help="Name of the project"),
     path: str = typer.Argument(..., help="Path to the project directory"),
     set_default: bool = typer.Option(False, "--default", help="Set as default project"),
+    quiet: bool = typer.Option(False, "--quiet", help="Suppress notices and affordances"),
 ) -> None:
     """Add a new project.
 
@@ -141,20 +104,22 @@ def add_project(
 
     try:
         result = run_with_cleanup(_add_project())
-        console.print(f"[green]{result.message}[/green]")
-
-        # Trigger: the service made the new project the default without being
-        #     asked — it is the first project in an empty registry.
-        # Why: the default is what every unqualified command targets, and a silent
-        #     move means the next `bm` invocation writes somewhere the user did not
-        #     choose. `bm project remove` then refuses, citing a default nobody set.
-        # Outcome: the move is stated, with the command to put it back.
-        if result.default and not set_default:
-            console.print(f"[yellow]'{name}' is now the default project.[/yellow]")
-            console.print("[dim]Change it with: bm project default <name>[/dim]")
+    except typer.Exit:
+        raise
     except Exception as e:
-        console.print(f"[red]Error adding project: {str(e)}[/red]")
-        raise typer.Exit(1)
+        raise fail(f"Error adding project: {e}")
+
+    typer.echo(result.message)
+
+    # Trigger: the service made the new project the default without being
+    #     asked — it is the first project in an empty registry.
+    # Why: the default is what every unqualified command targets, and a silent
+    #     move means the next `bm` invocation writes somewhere the user did not
+    #     choose. `bm project remove` then refuses, citing a default nobody set.
+    # Outcome: the move is stated, with the command to put it back.
+    if result.default and not set_default and not quiet:
+        typer.echo(f"'{name}' is now the default project.")
+        typer.echo("Change it with: bm project default <name>")
 
 
 @project_app.command("remove")
@@ -178,11 +143,13 @@ def remove_project(
 
     try:
         result = run_with_cleanup(_remove_project())
-        console.print(f"[green]{result.message}[/green]")
+    except typer.Exit:
+        raise
     except Exception as e:
         # str() of httpx transport errors is often empty (#1034) — never print a blank error.
-        console.print(f"[red]Error removing project: {str(e) or repr(e)}[/red]")
-        raise typer.Exit(1)
+        raise fail(f"Error removing project: {str(e) or repr(e)}")
+
+    typer.echo(result.message)
 
 
 @project_app.command("default")
@@ -201,16 +168,19 @@ def set_default_project(
 
     try:
         result = run_with_cleanup(_set_default())
-        console.print(f"[green]{result.message}[/green]")
+    except typer.Exit:
+        raise
     except Exception as e:
-        console.print(f"[red]Error setting default project: {str(e)}[/red]")
-        raise typer.Exit(1)
+        raise fail(f"Error setting default project: {e}")
+
+    typer.echo(result.message)
 
 
 @project_app.command("move")
 def move_project(
     name: str = typer.Argument(..., help="Name of the project to move"),
     new_path: str = typer.Argument(..., help="New absolute path for the project"),
+    quiet: bool = typer.Option(False, "--quiet", help="Suppress notices and affordances"),
 ) -> None:
     """Move a project to a new filesystem location.
 
@@ -229,25 +199,19 @@ def move_project(
 
     try:
         result = run_with_cleanup(_move_project())
-        console.print(f"[green]{result.message}[/green]")
-
-        # Show important file movement reminder
-        console.print()  # Empty line for spacing
-        console.print(
-            Panel(
-                "[bold red]IMPORTANT:[/bold red] Project configuration updated successfully.\n\n"
-                "[yellow]You must manually move your project files from the old location to:[/yellow]\n"
-                f"[cyan]{resolved_path}[/cyan]\n\n"
-                "[dim]Basic Memory has only updated the configuration - your files remain in their original location.[/dim]",
-                title="Manual File Movement Required",
-                border_style="yellow",
-                expand=False,
-            )
-        )
-
+    except typer.Exit:
+        raise
     except Exception as e:
-        console.print(f"[red]Error moving project: {str(e)}[/red]")
-        raise typer.Exit(1)
+        raise fail(f"Error moving project: {e}")
+
+    typer.echo(result.message)
+
+    # The command moves configuration only; the files stay where they were, so
+    # a caller that stops reading here would leave the project pointing at an
+    # empty directory.
+    if not quiet:
+        typer.echo("Only the configuration moved — the files are still in the old location.")
+        typer.echo(f"Move the project files to: {resolved_path}")
 
 
 @project_app.command("ls")
@@ -262,7 +226,7 @@ def ls_project_command(
       bm project ls --name research subfolder
     """
 
-    def _list_local_files(project_path: str, subpath: str | None = None) -> list[str]:
+    def _list_local_files(project_path: str, subpath: str | None = None) -> list[tuple[str, int]]:
         project_root = Path(project_path).expanduser().resolve()
         target_dir = project_root
 
@@ -279,172 +243,94 @@ def ls_project_command(
         if not target_dir.is_dir():
             raise ValueError(f"Path is not a directory: {target_dir}")
 
-        files: list[str] = []
-        for file_path in sorted(target_dir.rglob("*")):
-            if file_path.is_file():
-                size = file_path.stat().st_size
-                relative = file_path.relative_to(project_root).as_posix()
-                files.append(f"{size:10d} {relative}")
+        return [
+            (file_path.relative_to(project_root).as_posix(), file_path.stat().st_size)
+            for file_path in sorted(target_dir.rglob("*"))
+            if file_path.is_file()
+        ]
 
-        return files
+    async def _get_project():
+        projects_list = await fetch_project_list()
+        for proj in projects_list.projects:
+            if generate_permalink(proj.name) == generate_permalink(name):
+                return proj
+        return None
 
     try:
-        # Get project info
-        async def _get_project():
-            projects_list = await fetch_project_list()
-            for proj in projects_list.projects:
-                if generate_permalink(proj.name) == generate_permalink(name):
-                    return proj
-            return None
-
         project_data = run_with_cleanup(_get_project())
         if not project_data:
-            console.print(f"[red]Error: Project '{name}' not found[/red]")
-            raise typer.Exit(1)
-
+            raise fail(f"Error: Project '{name}' not found")
         files = _list_local_files(project_data.path, path)
-
-        if files:
-            heading = f"\n[bold]Files in {name}"
-            if path:
-                heading += f"/{path}"
-            heading += ":[/bold]"
-            console.print(heading)
-            for file in files:
-                console.print(f"  {file}")
-            console.print(f"\n[dim]Total: {len(files)} files[/dim]")
-        else:
-            prefix = f"[yellow]No files found in {name}"
-            console.print(prefix + (f"/{path}" if path else "") + "[/yellow]")
-
+    except typer.Exit:
+        raise
     except Exception as e:
-        console.print(f"[red]Error: {e}[/red]")
-        raise typer.Exit(1)
+        raise fail(f"Error: {e}")
+
+    path_width = max((len(relative) for relative, _ in files), default=0)
+    for relative, size in files:
+        typer.echo(f"{relative:<{path_width}}  {size}")
+    typer.echo(f"{len(files)} files")
 
 
 @project_app.command("info")
 def display_project_info(
     name: str = typer.Argument(..., help="Name of the project"),
-    json_output: bool = typer.Option(False, "--json", help="Output in JSON format"),
+    quiet: bool = typer.Option(False, "--quiet", help="Suppress notices and affordances"),
 ):
     """Display detailed information and statistics about the current project."""
     try:
-        # Get project info
         info = run_with_cleanup(get_project_info(name))
-
-        if json_output:
-            print(json.dumps(info.model_dump(), indent=2, default=str))
-        else:
-            # --- Left column: Knowledge Graph stats ---
-            left = Table.grid(padding=(0, 2))
-            left.add_column("metric", style="cyan")
-            left.add_column("value", style="green", justify="right")
-
-            left.add_row("[bold]Knowledge Graph[/bold]", "")
-            left.add_row("Entities", str(info.statistics.total_entities))
-            left.add_row("Observations", str(info.statistics.total_observations))
-            left.add_row("Relations", str(info.statistics.total_relations))
-            left.add_row("Unresolved", str(info.statistics.total_unresolved_relations))
-            left.add_row("Isolated", str(info.statistics.isolated_entities))
-
-            # --- Right column: Embeddings ---
-            right = Table.grid(padding=(0, 2))
-            right.add_column("property", style="cyan")
-            right.add_column("value", style="green")
-
-            right.add_row("[bold]Embeddings[/bold]", "")
-            if info.embedding_status:
-                es = info.embedding_status
-                if not es.semantic_search_enabled:
-                    right.add_row("[green]●[/green] Semantic Search", "Disabled")
-                else:
-                    right.add_row("[green]●[/green] Semantic Search", "Enabled")
-                    if es.embedding_provider:
-                        right.add_row("  Provider", es.embedding_provider)
-                    if es.embedding_model:
-                        right.add_row("  Model", es.embedding_model)
-                    # Embedding coverage bar
-                    if es.total_indexed_entities > 0:
-                        coverage_bar = make_bar(
-                            es.total_entities_with_chunks,
-                            es.total_indexed_entities,
-                            width=20,
-                        )
-                        count_text = Text(
-                            f" {es.total_entities_with_chunks}/{es.total_indexed_entities}",
-                            style="green",
-                        )
-                        bar_with_count = Text.assemble("  Indexed  ", coverage_bar, count_text)
-                        right.add_row(bar_with_count, "")
-                    right.add_row("  Chunks", str(es.total_chunks))
-                    if es.reindex_recommended:
-                        right.add_row(
-                            "[yellow]●[/yellow] Status",
-                            "[yellow]Reindex recommended[/yellow]",
-                        )
-                        if es.reindex_reason:
-                            right.add_row("  Reason", f"[yellow]{es.reindex_reason}[/yellow]")
-                    else:
-                        right.add_row("[green]●[/green] Status", "[green]Up to date[/green]")
-
-            # --- Compose two-column layout (content-sized, NOT Layout) ---
-            columns = Table.grid(padding=(0, 4), expand=False)
-            columns.add_row(left, right)
-
-            # --- Note Types bar chart (top 5 by count) ---
-            bars_section = None
-            if info.statistics.note_types:
-                sorted_types = sorted(
-                    info.statistics.note_types.items(), key=lambda x: x[1], reverse=True
-                )
-                top_types = sorted_types[:5]
-                max_count = top_types[0][1] if top_types else 1
-
-                bars = Table.grid(padding=(0, 2), expand=False)
-                bars.add_column("type", style="cyan", width=16, justify="right")
-                bars.add_column("bar")
-                bars.add_column("count", style="green", justify="right")
-
-                for note_type, count in top_types:
-                    bars.add_row(note_type, make_bar(count, max_count), str(count))
-
-                remaining = len(sorted_types) - len(top_types)
-                bars_section = Group(
-                    "[bold]Note Types[/bold]",
-                    bars,
-                    f"[dim]+{remaining} more types[/dim]" if remaining > 0 else "",
-                )
-
-            # --- Footer ---
-            current_time = (
-                datetime.fromisoformat(str(info.system.timestamp))
-                if isinstance(info.system.timestamp, str)
-                else info.system.timestamp
-            )
-            footer = (
-                f"[dim]{format_path(info.project_path)}  "
-                f"default: {info.default_project}  "
-                f"{current_time.strftime('%Y-%m-%d %H:%M')}[/dim]"
-            )
-
-            # --- Assemble dashboard ---
-            parts: list = [columns, ""]
-            if bars_section:
-                parts.extend([bars_section, ""])
-            parts.append(footer)
-            body = Group(*parts)
-
-            console.print(
-                Panel(
-                    body,
-                    title=f"[bold]{info.project_name}[/bold]",
-                    subtitle=f"Basic Memory {info.system.version}",
-                    expand=False,
-                )
-            )
-
     except typer.Exit:
         raise
     except Exception as e:  # pragma: no cover
-        typer.echo(f"Error getting project info: {e}", err=True)
-        raise typer.Exit(1)
+        raise fail(f"Error getting project info: {e}")
+
+    statistics = info.statistics
+    system = info.system
+
+    typer.echo("Project")
+    typer.echo(f"name: {info.project_name}")
+    typer.echo(f"path: {format_path(info.project_path)}")
+    typer.echo(f"default project: {info.default_project}")
+
+    typer.echo("")
+    typer.echo("Statistics")
+    typer.echo(f"entities: {statistics.total_entities}")
+    typer.echo(f"observations: {statistics.total_observations}")
+    typer.echo(f"relations: {statistics.total_relations}")
+    typer.echo(f"unresolved relations: {statistics.total_unresolved_relations}")
+    typer.echo(f"isolated entities: {statistics.isolated_entities}")
+    for note_type, count in sorted(
+        statistics.note_types.items(), key=lambda item: (-item[1], item[0])
+    ):
+        typer.echo(f"note type {note_type}: {count}")
+
+    embeddings = info.embedding_status
+    if embeddings:
+        typer.echo("")
+        typer.echo("Embeddings")
+        typer.echo(
+            f"semantic search: {'enabled' if embeddings.semantic_search_enabled else 'disabled'}"
+        )
+        if embeddings.semantic_search_enabled:
+            typer.echo(f"provider: {embeddings.embedding_provider or ''}")
+            typer.echo(f"model: {embeddings.embedding_model or ''}")
+            typer.echo(
+                f"indexed entities: {embeddings.total_entities_with_chunks}"
+                f"/{embeddings.total_indexed_entities}"
+            )
+            typer.echo(f"chunks: {embeddings.total_chunks}")
+
+    typer.echo("")
+    typer.echo("System")
+    typer.echo(f"version: {system.version}")
+    typer.echo(f"database: {system.database_path}")
+    typer.echo(f"database size: {system.database_size}")
+    typer.echo(f"timestamp: {system.timestamp}")
+
+    # A stale vector index answers semantic queries from content that no longer
+    # exists, so the recommendation is a notice with the command that clears it.
+    if embeddings and embeddings.reindex_recommended and not quiet:
+        reason = f" — {embeddings.reindex_reason}" if embeddings.reindex_reason else ""
+        typer.echo(f"Reindex recommended{reason}")
+        typer.echo(f"Run 'bm reindex --project {info.project_name}' to rebuild the index.")

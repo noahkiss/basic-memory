@@ -76,9 +76,9 @@ def test_project_remove_blank_transport_error_renders_repr(runner, mock_config, 
     result = runner.invoke(app, ["project", "remove", "big-project"])
 
     assert result.exit_code == 1
-    assert "Error removing project:" in result.stdout
+    assert "Error removing project:" in result.stderr
     # repr fallback: the exception type must be visible instead of a blank message
-    assert "ReadTimeout" in result.stdout
+    assert "ReadTimeout" in result.stderr
 
 
 def test_project_remove_error_with_message_renders_str(runner, mock_config, failing_resolve):
@@ -88,4 +88,4 @@ def test_project_remove_error_with_message_renders_str(runner, mock_config, fail
     result = runner.invoke(app, ["project", "remove", "big-project"])
 
     assert result.exit_code == 1
-    assert "Error removing project: project is busy" in result.stdout
+    assert "Error removing project: project is busy" in result.stderr

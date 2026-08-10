@@ -55,7 +55,7 @@ def test_run_with_cleanup_turns_newer_schema_error_into_exit_1(monkeypatch, caps
 
     assert exc_info.value.exit_code == 1
     assert calls == ["drain-background", "shutdown"]
-    output = capsys.readouterr().out
+    output = capsys.readouterr().err
     assert "newer Basic Memory build" in output
     assert "zzznewer999" in output
     assert "bm reset --reindex" in output

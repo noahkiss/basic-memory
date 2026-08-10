@@ -1,6 +1,6 @@
 """Bug hunt regression tests: `bm tool write-note` CLI/MCP parity.
 
-Covers three confirmed bugs found by the integration-test bug hunt:
+Covers two confirmed bugs found by the integration-test bug hunt:
 
 - #1 / #5: write-note exits 0 on a conflict/error JSON result (silent failure,
   inconsistent with delete-note/edit-note/search-notes which exit non-zero).
@@ -9,10 +9,14 @@ Covers three confirmed bugs found by the integration-test bug hunt:
 
 These are integration tests: real CliRunner -> CLI command -> MCP tool ->
 in-process ASGI API -> real SQLite DB and filesystem. No mocks.
+
+Under output contract v2 a conflict is an error: the message goes to stderr,
+the exit code is 1, and no record lands on stdout. The `action: conflict` field
+the MCP layer reports is pinned by the MCP-level test below, which is where it
+is still observable.
 """
 
 import asyncio
-import json
 
 from typer.testing import CliRunner
 
@@ -22,46 +26,14 @@ from basic_memory.mcp.tools import write_note as mcp_write_note
 runner = CliRunner()
 
 
-# --- #1: write-note exits non-zero on a conflict/error result ---
-
-
-def _write_conflict(content_token: str):
-    return runner.invoke(
-        cli_app,
-        [
-            "tool",
-            "write-note",
-            "--title",
-            "Conflict Exit Note",
-            "--folder",
-            "parity-conflict",
-            "--content",
-            f"# Conflict Exit Note\n\n{content_token}",
-            "--project",
-            "test-project",
-        ],
-    )
-
-
-def test_write_note_nonzero_exit_on_conflict_error(app, app_config, test_project, config_manager):
-    """write-note should exit non-zero when the MCP result carries an error."""
-    first = _write_conflict("FIRST")
-    assert first.exit_code == 0, first.output
-
-    second = _write_conflict("SECOND")
-    payload = json.loads(second.stdout)
-
-    # Confirm the MCP layer reported a conflict error in the JSON.
-    assert payload.get("error") == "NOTE_ALREADY_EXISTS", payload
-    assert payload.get("action") == "conflict", payload
-
-    # Parity with delete-note / edit-note / search-notes: an error result
-    # must drive a non-zero exit code so scripts can detect failure.
-    assert second.exit_code != 0, (
-        "write-note returned an error JSON payload "
-        f"({payload.get('error')}) but exited 0. Sibling tool commands "
-        "(delete-note, edit-note, search-notes) exit non-zero on error."
-    )
+def _record(stdout: str) -> dict[str, str]:
+    """Parse labelled `key: value` lines into a dict."""
+    fields: dict[str, str] = {}
+    for line in stdout.splitlines():
+        if ": " in line:
+            key, value = line.split(": ", 1)
+            fields[key] = value
+    return fields
 
 
 # --- #5: blocked NOTE_ALREADY_EXISTS write must not report success ---
@@ -121,14 +93,15 @@ def test_cli_write_note_conflict_should_exit_nonzero(app, app_config, test_proje
     """CLI write-note must NOT exit 0 when the write was blocked by a conflict."""
     first = _cli_write(test_project.name)
     assert first.exit_code == 0, first.output
-    first_payload = json.loads(first.stdout)
-    assert first_payload["action"] == "created"
+    assert _record(first.stdout)["action"] == "created"
 
     second = _cli_write(test_project.name)
 
-    assert "NOTE_ALREADY_EXISTS" in second.stdout, second.output
+    assert "NOTE_ALREADY_EXISTS" in second.stderr, second.output
+    # Nothing was written, so no record may appear on stdout.
+    assert "permalink: " not in second.stdout
 
-    assert second.exit_code != 0, (
+    assert second.exit_code == 1, (
         f"write-note exited {second.exit_code} after a blocked NOTE_ALREADY_EXISTS "
         "write; the note was NOT written but the CLI reported success"
     )
@@ -158,8 +131,7 @@ def test_write_note_cli_can_overwrite_like_mcp(app, app_config, test_project, co
     """CLI write-note must be able to overwrite an existing note (MCP overwrite=True)."""
     first = _write_overwrite(["--project", test_project.name])
     assert first.exit_code == 0, first.output
-    first_data = json.loads(first.stdout)
-    permalink = first_data["permalink"]
+    permalink = _record(first.stdout)["permalink"]
 
     second = runner.invoke(
         cli_app,
@@ -189,5 +161,4 @@ def test_write_note_cli_can_overwrite_like_mcp(app, app_config, test_project, co
         ["tool", "read-note", permalink, "--project", test_project.name],
     )
     assert read.exit_code == 0, read.output
-    read_data = json.loads(read.stdout)
-    assert "NEW_VERSION_BODY" in (read_data.get("content") or "")
+    assert "NEW_VERSION_BODY" in read.stdout

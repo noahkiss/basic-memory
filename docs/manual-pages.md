@@ -139,7 +139,7 @@ Two rules make the manual trustworthy:
 
    ```bash
    bm tool schema-validate manpage --project manual
-   # → {"total_notes": 38, "valid_count": 38, "warning_count": 0, ...}
+   # → one line per note, then: 38/38 valid, 0 warnings, 0 errors
    ```
 
    `bm orphans --project manual` confirms every page is connected to the

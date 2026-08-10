@@ -8,15 +8,27 @@ receives the bare string 'a,b' and parse_tags('a,b') returns ['a','b'].
 
 Result: the SAME comma-string input yields different tags on CLI vs MCP, even
 though write_note's docstring promises comma-separated-string support.
+
+Under output contract v2 the CLI's frontmatter check reads
+`read-note --include-frontmatter`, whose payload is the file byte-exactly.
 """
 
-import json
 import pytest
 from fastmcp import Client
 from typer.testing import CliRunner
 from basic_memory.cli.main import app as cli_app
 
 runner = CliRunner()
+
+
+def _record(stdout: str) -> dict[str, str]:
+    """Parse labelled `key: value` lines into a dict."""
+    fields: dict[str, str] = {}
+    for line in stdout.splitlines():
+        if ": " in line:
+            key, value = line.split(": ", 1)
+            fields[key] = value
+    return fields
 
 
 def test_cli_write_note_comma_tags_split_matches_mcp(app, app_config, test_project, config_manager):
@@ -37,14 +49,14 @@ def test_cli_write_note_comma_tags_split_matches_mcp(app, app_config, test_proje
         ],
     )
     assert write.exit_code == 0, write.output
-    permalink = json.loads(write.stdout)["permalink"]
+    permalink = _record(write.stdout)["permalink"]
 
     read = runner.invoke(
         cli_app,
         ["tool", "read-note", permalink, "--include-frontmatter"],
     )
     assert read.exit_code == 0, read.output
-    content = json.loads(read.stdout)["content"]
+    content = read.stdout
 
     # Correct behavior: two distinct tags (matching MCP write_note semantics).
     # splitlines() is line-ending agnostic (Windows CRLF vs POSIX LF).

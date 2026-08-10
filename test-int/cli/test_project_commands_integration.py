@@ -1,4 +1,9 @@
-"""Integration tests for project CLI commands."""
+"""Integration tests for project CLI commands (output contract v2).
+
+`bm project list` renders `{name}  {path}` per line with a `(default)` marker
+column and a trailing `N projects` count. `bm project info` renders plain
+labelled sections — there is no `--json` and no panel.
+"""
 
 import tempfile
 from pathlib import Path
@@ -23,7 +28,7 @@ def _project_names() -> set[str]:
 
 
 def test_project_list(app, app_config, test_project, config_manager):
-    """Test 'bm project list' command shows projects."""
+    """`bm project list` shows one row per project and marks the default."""
     runner = CliRunner()
     result = runner.invoke(cli_app, ["project", "list"], env=WIDE_TERMINAL_ENV)
 
@@ -32,12 +37,18 @@ def test_project_list(app, app_config, test_project, config_manager):
         print(f"STDERR: {result.stderr}")
         print(f"Exception: {result.exception}")
     assert result.exit_code == 0
-    assert "test-project" in result.stdout
-    assert "[X]" in result.stdout  # default marker
+
+    lines = [line for line in result.stdout.splitlines() if line.strip()]
+    assert lines[-1].endswith(" projects")
+
+    rows = lines[:-1]
+    # Contract rule 2: the name a caller passes to --project leads the row.
+    assert any(row.split()[0] == "test-project" for row in rows)
+    assert any("(default)" in row for row in rows)
 
 
 def test_project_info(app, app_config, test_project, config_manager):
-    """Test 'bm project info' command shows project details."""
+    """`bm project info` names the project and reports its statistics."""
     runner = CliRunner()
     result = runner.invoke(cli_app, ["project", "info", "test-project"])
 
@@ -45,27 +56,30 @@ def test_project_info(app, app_config, test_project, config_manager):
         print(f"STDOUT: {result.stdout}")
         print(f"STDERR: {result.stderr}")
     assert result.exit_code == 0
-    assert "test-project" in result.stdout
-    assert "Knowledge Graph" in result.stdout
+    assert "name: test-project" in result.stdout
+    assert "entities: " in result.stdout
 
 
-def test_project_info_json(app, app_config, test_project, config_manager):
-    """Test 'bm project info --json' command outputs valid JSON."""
-    import json
-
+def test_project_info_renders_labelled_sections(app, app_config, test_project, config_manager):
+    """Every info line is a plain heading or a `key: value` pair — no JSON, no panel."""
     runner = CliRunner()
-    result = runner.invoke(cli_app, ["project", "info", "test-project", "--json"])
+    result = runner.invoke(cli_app, ["project", "info", "test-project"])
 
     if result.exit_code != 0:
         print(f"STDOUT: {result.stdout}")
         print(f"STDERR: {result.stderr}")
     assert result.exit_code == 0
 
-    # Parse JSON to verify it's valid
-    data = json.loads(result.stdout)
-    assert data["project_name"] == "test-project"
-    assert "statistics" in data
-    assert "system" in data
+    lines = [line for line in result.stdout.splitlines() if line.strip()]
+    headings = [line for line in lines if ": " not in line]
+    assert "Project" in headings
+    assert "Statistics" in headings
+    assert "System" in headings
+
+    # Box-drawing and JSON braces are both out of contract.
+    assert "{" not in result.stdout
+    assert "─" not in result.stdout
+    assert "│" not in result.stdout
 
 
 def test_project_add_and_remove(app, app_config, config_manager):
@@ -129,11 +143,10 @@ def test_project_set_default(app, app_config, config_manager):
         # Verify in list
         result = runner.invoke(cli_app, ["project", "list"], env=WIDE_TERMINAL_ENV)
         assert result.exit_code == 0
-        # The new project should have the [X] marker now
-        lines = result.stdout.split("\n")
-        for line in lines:
-            if "another-project" in line:
-                assert "[X]" in line
+        # The new project should carry the (default) marker now
+        for line in result.stdout.splitlines():
+            if line.split()[:1] == ["another-project"]:
+                assert "(default)" in line
 
 
 def test_remove_main_project(app, app_config, config_manager):

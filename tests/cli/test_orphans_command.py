@@ -1,6 +1,5 @@
 """Tests for the 'basic-memory orphans' CLI command."""
 
-import json
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -34,12 +33,6 @@ _ORPHAN_ENTITIES = [
 ]
 
 
-def _mock_config_manager():
-    mock_config = MagicMock()
-    mock_config.default_project = "test-project"
-    return mock_config
-
-
 @asynccontextmanager
 async def _fake_get_client(project_name=None):
     yield MagicMock()
@@ -49,35 +42,10 @@ async def _fake_get_client(project_name=None):
 @patch("basic_memory.cli.commands.orphans.get_active_project", new_callable=AsyncMock)
 @patch("basic_memory.cli.commands.orphans.get_client")
 @patch("basic_memory.cli.commands.orphans.KnowledgeClient")
-def test_orphans_json_output(mock_knowledge_cls, mock_get_client, mock_get_active, mock_config_cls):
-    """basic-memory orphans --json outputs a JSON array of orphan entity objects."""
-    mock_config_cls.return_value = "test-project"
-    mock_get_active.return_value = _MOCK_PROJECT_ITEM
-    mock_get_client.side_effect = _fake_get_client
-    mock_knowledge = AsyncMock()
-    mock_knowledge.get_orphans.return_value = _ORPHAN_ENTITIES
-    mock_knowledge_cls.return_value = mock_knowledge
-
-    result = runner.invoke(cli_app, ["orphans", "--json"])
-
-    assert result.exit_code == 0, f"CLI failed: {result.output}"
-    json_start = result.output.rfind("[\n")
-    data = json.loads(result.output[json_start:])
-    titles = {entity["title"] for entity in data}
-    assert titles == {"Isolated Note", "Dangling Spec"}
-    mock_get_client.assert_called_once_with()
-    # No --project was passed, so the command must resolve the configured default.
-    assert mock_get_active.await_args.args[1] == "test-project"
-
-
-@patch("basic_memory.cli.commands.orphans.resolve_cli_project")
-@patch("basic_memory.cli.commands.orphans.get_active_project", new_callable=AsyncMock)
-@patch("basic_memory.cli.commands.orphans.get_client")
-@patch("basic_memory.cli.commands.orphans.KnowledgeClient")
-def test_orphans_table_output(
+def test_orphans_lists_title_path_and_type(
     mock_knowledge_cls, mock_get_client, mock_get_active, mock_config_cls
 ):
-    """basic-memory orphans renders a table with orphan titles and paths."""
+    """One line per orphan — title first, then file path, then note type."""
     mock_config_cls.return_value = "test-project"
     mock_get_active.return_value = _MOCK_PROJECT_ITEM
     mock_get_client.side_effect = _fake_get_client
@@ -88,9 +56,14 @@ def test_orphans_table_output(
     result = runner.invoke(cli_app, ["orphans"])
 
     assert result.exit_code == 0, f"CLI failed: {result.output}"
-    assert "Isolated Note" in result.output
-    assert "Dangling Spec" in result.output
-    assert "notes/isolated.md" in result.output
+    assert result.stdout.splitlines() == [
+        "Isolated Note  notes/isolated.md  note",
+        "Dangling Spec  specs/dangling.md  spec",
+        "2 orphans",
+    ]
+    mock_get_client.assert_called_once_with()
+    # No --project was passed, so the command must resolve the configured default.
+    assert mock_get_active.await_args.args[1] == "test-project"
 
 
 @patch("basic_memory.cli.commands.orphans.resolve_cli_project")
@@ -98,7 +71,7 @@ def test_orphans_table_output(
 @patch("basic_memory.cli.commands.orphans.get_client")
 @patch("basic_memory.cli.commands.orphans.KnowledgeClient")
 def test_orphans_no_results(mock_knowledge_cls, mock_get_client, mock_get_active, mock_config_cls):
-    """basic-memory orphans prints a success message when no orphans are found."""
+    """A graph with no orphans is a result — '0 orphans', exit 0."""
     mock_config_cls.return_value = "test-project"
     mock_get_active.return_value = _MOCK_PROJECT_ITEM
     mock_get_client.side_effect = _fake_get_client
@@ -109,27 +82,28 @@ def test_orphans_no_results(mock_knowledge_cls, mock_get_client, mock_get_active
     result = runner.invoke(cli_app, ["orphans"])
 
     assert result.exit_code == 0, f"CLI failed: {result.output}"
-    assert "No orphan entities" in result.output
+    assert result.stdout.splitlines() == ["0 orphans"]
 
 
 @patch("basic_memory.cli.commands.orphans.run_orphans", new_callable=AsyncMock)
 def test_orphans_value_error(mock_run_orphans):
-    """User-facing command errors are printed and exit with failure."""
+    """User-facing command errors go to stderr, leaving stdout empty."""
     mock_run_orphans.side_effect = ValueError("project not found")
 
     result = runner.invoke(cli_app, ["orphans"])
 
     assert result.exit_code == 1
-    assert "Error: project not found" in result.output
+    assert result.stdout == ""
+    assert "Error: project not found" in result.stderr
 
 
 @patch("basic_memory.cli.commands.orphans.run_orphans", new_callable=AsyncMock)
-def test_orphans_tool_error_json_output(mock_run_orphans):
-    """User-facing command errors are JSON formatted when requested."""
+def test_orphans_tool_error(mock_run_orphans):
+    """A ToolError from the client layer takes the same stderr path."""
     mock_run_orphans.side_effect = ToolError("orphan lookup failed")
 
-    result = runner.invoke(cli_app, ["orphans", "--json"])
+    result = runner.invoke(cli_app, ["orphans"])
 
     assert result.exit_code == 1
-    json_start = result.output.rfind("{\n")
-    assert json.loads(result.output[json_start:]) == {"error": "orphan lookup failed"}
+    assert result.stdout == ""
+    assert "Error: orphan lookup failed" in result.stderr

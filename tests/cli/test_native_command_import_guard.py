@@ -38,9 +38,11 @@ PROBE_SOURCE = textwrap.dedent(
 
     from basic_memory.cli.main import app
 
-    result = CliRunner().invoke(app, ["project", "list", "--json"])
+    result = CliRunner().invoke(app, ["project", "list"])
     assert result.exit_code == 0, result.output
-    json.loads(result.output)
+    # The count line closes every record listing, so its presence proves the
+    # command rendered a payload rather than exiting early on a swallowed error.
+    assert result.stdout.strip().splitlines()[-1].endswith(" projects"), result.stdout
 
     banned = json.loads(sys.argv[1])
     print(json.dumps([name for name in banned if name in sys.modules]))

@@ -39,8 +39,28 @@ def write_config(tmp_path, monkeypatch):
     return _write
 
 
+def _stub_project_list(monkeypatch, name: str, path: str) -> None:
+    async def fake_fetch_project_list():
+        return ProjectList.model_validate(
+            {
+                "projects": [
+                    {
+                        "id": 1,
+                        "external_id": "11111111-1111-1111-1111-111111111111",
+                        "name": name,
+                        "path": path,
+                        "is_default": True,
+                    }
+                ],
+                "default_project": name,
+            }
+        )
+
+    monkeypatch.setattr(project_cmd, "fetch_project_list", fake_fetch_project_list)
+
+
 def test_project_list_shows_indexed_project(runner: CliRunner, write_config, tmp_path, monkeypatch):
-    """The table and the JSON rows both describe the indexed project."""
+    """The row carries the name a caller passes to --project, then its path."""
     alpha_path = (tmp_path / "alpha-local").as_posix()
 
     write_config(
@@ -50,97 +70,19 @@ def test_project_list_shows_indexed_project(runner: CliRunner, write_config, tmp
             "default_project": "alpha",
         }
     )
+    _stub_project_list(monkeypatch, "alpha", alpha_path)
 
-    async def fake_fetch_project_list():
-        return ProjectList.model_validate(
-            {
-                "projects": [
-                    {
-                        "id": 1,
-                        "external_id": "11111111-1111-1111-1111-111111111111",
-                        "name": "alpha",
-                        "path": alpha_path,
-                        "is_default": True,
-                    }
-                ],
-                "default_project": "alpha",
-            }
-        )
+    result = runner.invoke(app, ["project", "list"])
 
-    monkeypatch.setattr(project_cmd, "fetch_project_list", fake_fetch_project_list)
-
-    result = runner.invoke(app, ["project", "list"], env={"COLUMNS": "240"})
-
-    assert result.exit_code == 0, f"Exit code: {result.exit_code}, output: {result.stdout}"
-    assert "Name" in result.stdout
-    assert "Path" in result.stdout
-    assert "Default" in result.stdout
-    assert "alpha-local" in result.stdout
-    # A fully indexed project must not be reported as drifting.
-    assert "not indexed" not in result.stdout
-
-    json_result = runner.invoke(app, ["project", "list", "--json"], env={"COLUMNS": "240"})
-
-    assert json_result.exit_code == 0
-    assert json.loads(json_result.stdout) == {
-        "projects": [
-            {
-                "name": "alpha",
-                "permalink": "alpha",
-                "path": project_cmd.format_path(alpha_path),
-                "is_default": True,
-            }
-        ]
-    }
-
-
-def test_project_list_shows_name_in_narrow_terminal(
-    runner: CliRunner, write_config, tmp_path, monkeypatch
-):
-    """The Name column must survive a default-width terminal (B2).
-
-    Regression: Path was declared ``no_wrap=True``, so a long project path
-    claimed the whole line and Rich squeezed every other column — Name included —
-    to zero width. The table then rendered projects by path only, and the name a
-    user has to pass to ``--project`` was not recoverable from the output.
-    """
-    long_path = (tmp_path / ("nested/" * 12) / "alpha-notes").as_posix()
-
-    write_config(
-        {
-            "env": "dev",
-            "projects": {"alpha": {"path": long_path}},
-            "default_project": "alpha",
-        }
-    )
-
-    async def fake_fetch_project_list():
-        return ProjectList.model_validate(
-            {
-                "projects": [
-                    {
-                        "id": 1,
-                        "external_id": "11111111-1111-1111-1111-111111111111",
-                        "name": "alpha",
-                        "path": long_path,
-                        "is_default": True,
-                    }
-                ],
-                "default_project": "alpha",
-            }
-        )
-
-    monkeypatch.setattr(project_cmd, "fetch_project_list", fake_fetch_project_list)
-
-    result = runner.invoke(app, ["project", "list"], env={"COLUMNS": "80"})
-
-    assert result.exit_code == 0, f"Exit code: {result.exit_code}, output: {result.stdout}"
-    assert "Name" in result.stdout
-    assert "alpha" in result.stdout
+    assert result.exit_code == 0, f"Exit code: {result.exit_code}, output: {result.output}"
+    assert result.stdout.splitlines() == [
+        f"alpha  {project_cmd.format_path(alpha_path)}  (default)",
+        "1 projects",
+    ]
 
 
 def test_project_ls_lists_local_files(runner: CliRunner, write_config, tmp_path, monkeypatch):
-    """project ls walks the project directory on disk."""
+    """project ls walks the project directory on disk, relative path first."""
     project_dir = tmp_path / "alpha-files"
     (project_dir / "docs").mkdir(parents=True, exist_ok=True)
     (project_dir / "notes.md").write_text("# local note")
@@ -153,31 +95,16 @@ def test_project_ls_lists_local_files(runner: CliRunner, write_config, tmp_path,
             "default_project": "alpha",
         }
     )
+    _stub_project_list(monkeypatch, "alpha", project_dir.as_posix())
 
-    async def fake_fetch_project_list():
-        return ProjectList.model_validate(
-            {
-                "projects": [
-                    {
-                        "id": 1,
-                        "external_id": "11111111-1111-1111-1111-111111111111",
-                        "name": "alpha",
-                        "path": project_dir.as_posix(),
-                        "is_default": True,
-                    }
-                ],
-                "default_project": "alpha",
-            }
-        )
+    result = runner.invoke(app, ["project", "ls", "--name", "alpha"])
 
-    monkeypatch.setattr(project_cmd, "fetch_project_list", fake_fetch_project_list)
-
-    result = runner.invoke(app, ["project", "ls", "--name", "alpha"], env={"COLUMNS": "200"})
-
-    assert result.exit_code == 0, f"Exit code: {result.exit_code}, output: {result.stdout}"
-    assert "Files in alpha:" in result.stdout
-    assert "notes.md" in result.stdout
-    assert "docs/spec.md" in result.stdout
+    assert result.exit_code == 0, f"Exit code: {result.exit_code}, output: {result.output}"
+    assert result.stdout.splitlines() == [
+        "docs/spec.md  6",
+        "notes.md      12",
+        "2 files",
+    ]
 
 
 def test_project_ls_scopes_to_a_subpath(runner: CliRunner, write_config, tmp_path, monkeypatch):
@@ -194,33 +121,48 @@ def test_project_ls_scopes_to_a_subpath(runner: CliRunner, write_config, tmp_pat
             "default_project": "alpha",
         }
     )
+    _stub_project_list(monkeypatch, "alpha", project_dir.as_posix())
 
-    async def fake_fetch_project_list():
-        return ProjectList.model_validate(
-            {
-                "projects": [
-                    {
-                        "id": 1,
-                        "external_id": "11111111-1111-1111-1111-111111111111",
-                        "name": "alpha",
-                        "path": project_dir.as_posix(),
-                        "is_default": True,
-                    }
-                ],
-                "default_project": "alpha",
-            }
-        )
+    result = runner.invoke(app, ["project", "ls", "--name", "alpha", "docs"])
 
-    monkeypatch.setattr(project_cmd, "fetch_project_list", fake_fetch_project_list)
+    assert result.exit_code == 0, f"Exit code: {result.exit_code}, output: {result.output}"
+    assert result.stdout.splitlines() == ["docs/spec.md  6", "1 files"]
 
-    result = runner.invoke(
-        app, ["project", "ls", "--name", "alpha", "docs"], env={"COLUMNS": "200"}
+
+def test_project_ls_empty_directory_is_a_result(
+    runner: CliRunner, write_config, tmp_path, monkeypatch
+):
+    """A well-scoped listing with nothing in it is a result, not a failure."""
+    project_dir = tmp_path / "alpha-empty"
+    project_dir.mkdir()
+
+    write_config(
+        {
+            "env": "dev",
+            "projects": {"alpha": {"path": project_dir.as_posix()}},
+            "default_project": "alpha",
+        }
     )
+    _stub_project_list(monkeypatch, "alpha", project_dir.as_posix())
 
-    assert result.exit_code == 0, f"Exit code: {result.exit_code}, output: {result.stdout}"
-    assert "Files in alpha/docs:" in result.stdout
-    assert "docs/spec.md" in result.stdout
-    assert "notes.md" not in result.stdout.replace("docs/spec.md", "")
+    result = runner.invoke(app, ["project", "ls", "--name", "alpha"])
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout.splitlines() == ["0 files"]
+
+
+def test_project_ls_unknown_project_fails_on_stderr(
+    runner: CliRunner, write_config, tmp_path, monkeypatch
+):
+    """An unscopeable request is a failure: one line on stderr, nothing on stdout."""
+    write_config({"env": "dev", "projects": {}, "default_project": "alpha"})
+    _stub_project_list(monkeypatch, "alpha", (tmp_path / "alpha").as_posix())
+
+    result = runner.invoke(app, ["project", "ls", "--name", "missing"])
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert "Project 'missing' not found" in result.stderr
 
 
 def test_project_add_requires_a_path(runner: CliRunner):

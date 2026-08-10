@@ -1,42 +1,22 @@
 """CLI tool commands for Basic Memory.
 
-Every command calls its MCP tool with output_format="json" and prints the result.
-Commands that benefit from human-readable output (search-notes, read-note,
-build-context, recent-activity) support three output modes:
-
-- **JSON** — raw machine-readable JSON.  Used when ``--json`` is passed, or
-  automatically when stdout is not a TTY (piped/redirected), so scripts stay
-  parseable.  This follows the same bm status / bm project list precedent.
-- **Rich** — colored Panel/Table/Tree/Markdown output.  The default interactive
-  experience when stdout is a TTY.
-- **Plain** — undecorated, greppable text (no ANSI colors, no box-drawing, no
-  markup).  Forced with ``--plain`` even when piped.
-
-Precedence, highest first: ``--json`` > ``--plain`` > non-TTY (JSON) > TTY
-(config ``cli_output_style``, ``rich`` by default).  Passing both ``--json`` and
-``--plain`` is an error.  The interactive default for a TTY is controlled by the
-``cli_output_style`` config option (``rich``/``plain``; env
-``BASIC_MEMORY_CLI_OUTPUT_STYLE``).
+Every command calls its MCP tool with output_format="json" and renders the
+result as plain, one-record-per-line text.  Each verb has exactly one
+rendering: there is no --json, no --plain, no TTY detection, and no output
+style config.  See docs/OUTPUT_CONTRACT.md (version 2) for the binding rules —
+payload on stdout, notices and affordances after it, errors on stderr with
+exit 1 and nothing on stdout.
 """
 
 import json
 import sys
-from typing import Annotated, Any, Dict, List, Literal, Optional
+from typing import Annotated, Any, Dict, List, NoReturn, Optional, Sequence, cast
 
 import typer
 from loguru import logger
-from rich.console import Console
-from rich.markdown import Markdown
-from rich.markup import escape as markup_escape
-from rich.panel import Panel
-from rich.table import Table
-from rich.text import Text
-from rich.tree import Tree
 
 from basic_memory.cli.app import app
 from basic_memory.cli.commands.command_utils import run_with_cleanup
-from basic_memory.config import ConfigManager
-from basic_memory.file_utils import has_frontmatter, remove_frontmatter
 from basic_memory.project_marker import resolve_cli_project
 
 # MCP tool functions are imported inside each command: importing
@@ -48,409 +28,130 @@ app.add_typer(tool_app, name="tool", help="Access to MCP tools via CLI")
 
 VALID_EDIT_OPERATIONS = ["append", "prepend", "find_replace", "replace_section"]
 
-# Shared Rich console (stderr=False so output goes to stdout, matching _print_json).
-console = Console()
+# One record per line means a value may never carry a newline, and a long value
+# may never push the columns that follow it off screen.
+LINE_VALUE_LIMIT = 120
+
+# Single-record field order per verb: identifier first (contract rule 2), then
+# the fields an agent acts on.  Internal ids and checksums are omitted — they
+# carry no meaning for a caller of the CLI.
+WRITE_NOTE_FIELDS: tuple[tuple[str, str], ...] = (
+    ("permalink", "permalink"),
+    ("file_path", "file_path"),
+    ("title", "title"),
+    ("action", "action"),
+)
+
+EDIT_NOTE_FIELDS: tuple[tuple[str, str], ...] = (
+    ("permalink", "permalink"),
+    ("file_path", "file_path"),
+    ("title", "title"),
+    ("operation", "operation"),
+    ("fileCreated", "file_created"),
+)
+
+DELETE_NOTE_FIELDS: tuple[tuple[str, str], ...] = (
+    ("permalink", "permalink"),
+    ("file_path", "file_path"),
+    ("identifier", "identifier"),
+    ("title", "title"),
+    ("deleted", "deleted"),
+)
+
+DELETE_DIRECTORY_FIELDS: tuple[tuple[str, str], ...] = (
+    ("identifier", "identifier"),
+    ("is_directory", "is_directory"),
+    ("deleted", "deleted"),
+    ("total_files", "total_files"),
+    ("successful_deletes", "successful_deletes"),
+    ("failed_deletes", "failed_deletes"),
+)
 
 
 # --- Shared helpers ---
 
-OutputMode = Literal["json", "rich", "plain"]
+
+def _one_line(text: str, limit: int = LINE_VALUE_LIMIT) -> str:
+    """Flatten a value onto a single line, truncated to ``limit`` characters."""
+    flat = text.replace("\r\n", " ").replace("\n", " ").replace("\r", " ")
+    return flat if len(flat) <= limit else flat[: limit - 3] + "..."
 
 
-def _use_rich() -> bool:
-    """Return True when stdout is an interactive TTY.
+def _field_value(value: Any) -> str:
+    """Render a scalar field value plainly — no Python reprs (contract rule)."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return _one_line(str(value))
 
-    Why: piped output (scripts, jq, etc.) must stay machine-parseable; the
-         interactive (Rich/plain) renderers are only the default in a terminal.
-    Outcome: a formatted renderer in a terminal; raw JSON when piped or redirected.
 
-    Note: tests patch this to simulate a TTY, so the precedence logic in
-    ``_resolve_output_mode`` routes its terminal check through here.
+def _print_record(result: dict[str, Any], fields: Sequence[tuple[str, str]]) -> None:
+    """Print a single record as labelled lines in the given field order.
+
+    Absent and null fields are skipped: a missing value is not a value, and an
+    agent reading the output should not have to distinguish "" from null.
     """
-    return sys.stdout.isatty()
+    for key, label in fields:
+        value = result.get(key)
+        if value is None:
+            continue
+        print(f"{label}: {_field_value(value)}")
 
 
-def _validate_output_flags(json_output: bool, plain: bool) -> None:
-    """Reject the contradictory --json/--plain combination.
+def _fail(message: str) -> NoReturn:
+    """Report a failure on stderr and exit 1, leaving stdout untouched."""
+    typer.echo(message, err=True)
+    raise typer.Exit(1)
 
-    Trigger: both --json and --plain were passed.
-    Why: they request mutually exclusive output modes (raw JSON vs undecorated
-         human text); silently picking one would hide a user mistake.
-    Outcome: a clear typer error with a non-zero exit.
+
+def _require_record(result: object) -> dict[str, Any]:
+    """Narrow an MCP JSON payload to a record.
+
+    Trigger: output_format="json" returned text instead of a record.
+    Why: the text shape is the MCP tool's own error/guidance rendering, which
+         carries no fields to lay out in columns.
+    Outcome: the text becomes the CLI's error message, and stdout stays empty.
     """
-    if json_output and plain:
-        typer.echo("Error: --json and --plain are mutually exclusive.", err=True)
-        raise typer.Exit(1)
+    if not isinstance(result, dict):
+        _fail(f"Error: {result}")
+    return cast(dict[str, Any], result)
 
 
-def _resolve_output_mode(json_output: bool, plain: bool) -> OutputMode:
-    """Resolve the effective output mode from flags, TTY state, and config.
-
-    Precedence, highest first:
-      1. --json            → raw JSON (wins over everything else)
-      2. --plain           → undecorated plain text (even when piped)
-      3. non-TTY stdout    → raw JSON (script compatibility, unchanged)
-      4. TTY               → config ``cli_output_style`` (rich by default)
-
-    Callers must invoke ``_validate_output_flags`` first; this helper assumes the
-    --json/--plain combination has already been rejected.
-    """
-    if json_output:
-        return "json"
-    if plain:
-        return "plain"
-    if not _use_rich():
-        return "json"
-    # Trigger: interactive TTY with no explicit mode flag.
-    # Why: let users choose their default terminal experience without a flag.
-    # Outcome: honor cli_output_style (rich out of the box, plain if configured).
-    return ConfigManager().config.cli_output_style
-
-
-def _print_json(result: Any) -> None:
-    """Print a result as formatted JSON."""
-    print(json.dumps(result, indent=2, ensure_ascii=True, default=str))
-
-
-def _search_result_summary(result: dict[str, Any]) -> str:
-    """Describe search count and pagination without inventing a final page."""
-    results = result.get("results", [])
-    raw_total = result.get("total")
-    # total is int when the count is known, null/absent when unknown — never a
-    # sentinel (docs/OUTPUT_CONTRACT.md).
-    total_is_known = isinstance(raw_total, int)
-    total = raw_total if total_is_known else len(results)
-    page = result.get("current_page") or result.get("page", 1)
-    page_size = result.get("page_size", len(results)) or 1
-
-    summary = f"{total} result(s)  •  page {page}"
-    if total_is_known:
-        summary += f" of {max(1, -(-total // page_size))}"
-    if result.get("has_more") is True:
-        summary += "  •  more results available"
-    return summary
-
-
-# --- Rich formatters ---
-
-
-def _display_search_results(result: dict[str, Any], query: str = "") -> None:
-    """Render search-notes results as a Rich table.
-
-    Real SearchResponse.model_dump() shape:
-      results: list of SearchResult dicts (title, type, permalink, score, matched_chunk, content)
-      current_page: int   (NOT "page")
-      page_size: int
-      total: int | None   (null/absent when the count is unknown)
-      has_more: bool
-    """
-    results = result.get("results", [])
-    # Trigger: query is user-supplied text that may contain Rich markup characters.
-    # Why: interpolating it directly into a markup string causes brackets to be
-    #      parsed as style tags, swallowing or restyling bracketed content.
-    # Outcome: escape the query so its literal characters are always displayed.
-    escaped_query = markup_escape(query) if query else query
-    title = f"Search: [bold cyan]{escaped_query}[/bold cyan]" if query else "Search results"
-    subtitle = _search_result_summary(result)
-
-    if not results:
-        console.print(Panel(Text("No results found.", style="dim"), title=title, expand=False))
-        return
-
-    table = Table(show_header=True, header_style="bold", expand=False)
-    table.add_column("Type", style="dim", width=12)
-    table.add_column("Title", style="bold cyan")
-    table.add_column("Score", style="yellow", width=7)
-    table.add_column("Permalink", style="green")
-    table.add_column("Snippet", style="dim", max_width=60)
+def _render_search_results(result: dict[str, Any], *, quiet: bool) -> None:
+    """Render search results one per line: permalink, score, title, snippet."""
+    results: list[dict[str, Any]] = list(result.get("results", []))
 
     for item in results:
-        item_type = item.get("type", "")
-        # Trigger: user-sourced title/permalink may contain bracketed text.
-        # Why: Rich table cells with a style column interpret markup in cell values,
-        #      swallowing brackets (e.g. "Spec [draft] v2" → "Spec  v2").
-        # Outcome: escape every user-sourced cell value before adding to the table.
-        item_title = markup_escape(item.get("title") or item.get("permalink", ""))
-        permalink = markup_escape(item.get("permalink", ""))
+        permalink = str(item.get("permalink") or "")
         score = item.get("score")
-        score_str = f"{score:.2f}" if score is not None else ""
-        # Prefer matched_chunk as the most relevant snippet; fall back to content.
+        # An absent score renders empty rather than as a sentinel value: the
+        # column position still identifies it.
+        score_str = f"{score:.2f}" if isinstance(score, (int, float)) else ""
+        title = str(item.get("title") or "")
+        # matched_chunk is the most relevant snippet; content is the fallback.
         raw_snippet = item.get("matched_chunk") or item.get("content") or ""
-        # Truncate to ~200 chars so the table stays readable.
-        snippet = markup_escape(raw_snippet[:200].replace("\n", " ")) if raw_snippet else ""
-        table.add_row(item_type, item_title, score_str, permalink, snippet)
+        snippet = _one_line(str(raw_snippet))
+        print(f"{permalink}  {score_str}  {title}  {snippet}".rstrip())
 
-    console.print(Panel(table, title=title, subtitle=subtitle, expand=False))
-
-
-def _display_read_note(result: dict[str, Any], *, include_frontmatter: bool = False) -> None:
-    """Render read-note result: header panel + optional frontmatter + rendered Markdown content."""
-    title = str(result.get("title") or "")
-    permalink = str(result.get("permalink") or "")
-    raw_content = result.get("content")
-    content = raw_content if isinstance(raw_content, str) else ""
-    raw_frontmatter = result.get("frontmatter")
-    frontmatter: dict[str, Any] = raw_frontmatter if isinstance(raw_frontmatter, dict) else {}
-
-    # Trigger: read_note returns an explicit all-None payload when no note resolves.
-    # Why: treating those values as strings crashes Rich and hides any related-note
-    #      suggestions that the MCP fallback already found.
-    # Outcome: render a stable not-found panel, including safe, copyable suggestions.
-    if raw_content is None and not title and not permalink:
-        raw_related = result.get("related_results")
-        related_results: list[dict[str, Any]] = (
-            [item for item in raw_related if isinstance(item, dict)]
-            if isinstance(raw_related, list)
-            else []
-        )
-        if related_results:
-            table = Table(show_header=True, header_style="bold", expand=False)
-            table.add_column("Title", style="bold cyan")
-            table.add_column("Permalink", style="green")
-            table.add_column("File", style="dim")
-            for item in related_results:
-                table.add_row(
-                    markup_escape(str(item.get("title") or "")),
-                    markup_escape(str(item.get("permalink") or "")),
-                    markup_escape(str(item.get("file_path") or "")),
-                )
-            console.print(
-                Panel(
-                    table,
-                    title="Note not found",
-                    subtitle=f"{len(related_results)} related result(s)",
-                    expand=False,
-                )
-            )
-        else:
-            message = str(result.get("error") or "No note or related content found.")
-            console.print(Panel(Text(message, style="dim"), title="Note not found", expand=False))
-        return
-
-    # The header already uses Text.append so title is never markup-interpreted.
-    header = Text()
-    header.append(title, style="bold cyan")
-    if permalink:
-        header.append(f"  [{permalink}]", style="dim green")
-
-    console.print(Panel(header, expand=False))
-
-    # Trigger: --frontmatter was passed; the MCP tool populates "frontmatter".
-    # Why: the JSON payload always carries a "frontmatter" key regardless of the flag,
-    #      so checking non-empty alone would render it even without the flag.  The flag
-    #      must be threaded in to gate the panel.
-    # Outcome: print a dim key/value block above the content only when the flag is set.
-    if include_frontmatter and frontmatter:
-        fm_table = Table(show_header=False, box=None, padding=(0, 1), expand=False)
-        fm_table.add_column("key", style="dim")
-        fm_table.add_column("value", style="dim")
-        for key, value in frontmatter.items():
-            # Trigger: frontmatter keys/values are user-sourced and may contain markup.
-            # Why: Rich table cells with a style column parse markup, so bracketed
-            #      keys or values would be silently consumed or restyled.
-            # Outcome: escape both key and value before adding them to the table.
-            fm_table.add_row(markup_escape(str(key)), markup_escape(str(value)))
-        console.print(Panel(fm_table, title="[dim]frontmatter[/dim]", expand=False))
-
-    # Trigger: --frontmatter makes the API return the literal file, so
-    # content starts with the frontmatter block the panel above already shows.
-    # Why: rendering it again through Markdown duplicates the frontmatter (and
-    #      Markdown mangles the --- fences into rules/headings).
-    # Outcome: strip the block from the body; the panel is the frontmatter view.
-    body = content
-    if include_frontmatter and content and has_frontmatter(content):
-        body = remove_frontmatter(content)
-    if body and body.strip():
-        console.print(Markdown(body))
-    else:
-        console.print(Text("(no content)", style="dim"))
-
-
-def _display_build_context(result: dict[str, Any]) -> None:
-    """Render build-context result as a Rich tree.
-
-    Real GraphContext.model_dump() shape:
-      results: list of ContextResult dicts, each with:
-        primary_result: EntitySummary | RelationSummary | ObservationSummary
-        observations:   list of ObservationSummary
-        related_results: list of EntitySummary | RelationSummary | ObservationSummary
-      metadata: {"uri": ..., ...}
-      page/page_size/has_more
-
-    Each summary has: type, title (EntitySummary/RelationSummary), permalink,
-    and relation_type (RelationSummary only).
-    """
-    metadata = result.get("metadata", {})
-    uri = metadata.get("uri", "")
-    context_items: list[dict[str, Any]] = list(result.get("results", []))
-
-    # Trigger: uri is user-sourced and may contain Rich markup characters.
-    # Why: interpolating it directly into a markup string causes brackets to be
-    #      parsed as style tags, swallowing or restyling bracketed content.
-    # Outcome: escape the uri so its literal characters are always displayed.
-    label = f"[bold cyan]{markup_escape(uri)}[/bold cyan]" if uri else "Context"
-    tree = Tree(f"[bold]Context:[/bold] {label}")
-
-    if not context_items:
-        tree.add("[dim]No related content found.[/dim]")
-    else:
-        for context_result in context_items:
-            # --- Primary result node ---
-            primary = context_result.get("primary_result", {})
-            # Trigger: p_title and p_type are user-sourced values from the knowledge graph.
-            # Why: embedding them in markup strings without escaping would cause any
-            #      bracketed text (e.g. an entity titled "Spec [draft]") to be consumed
-            #      by the Rich markup parser and silently dropped from output.
-            # Outcome: escape all user values before interpolating into markup strings.
-            p_title = markup_escape(primary.get("title") or primary.get("permalink", ""))
-            p_type = markup_escape(primary.get("type", ""))
-            primary_label = f"[cyan]{p_title}[/cyan]"
-            if p_type:
-                primary_label = f"[dim]{p_type}[/dim]  {primary_label}"
-            primary_node = tree.add(primary_label)
-
-            # Entity summaries can carry the note body independently of observations.
-            # Preserve it so human-readable output contains the same primary context
-            # as JSON, even for prose-heavy notes with no structured observations.
-            raw_primary_content = primary.get("content")
-            primary_content = (
-                raw_primary_content.strip()
-                if isinstance(raw_primary_content, str) and raw_primary_content.strip()
-                else ""
-            )
-            if primary_content:
-                primary_node.add(Text(primary_content, style="dim"))
-
-            # --- Observations as children (category + truncated content) ---
-            # Trigger: ContextResult.observations exists in the JSON output but was
-            #          never rendered in the Rich path.
-            # Why: users running interactively lost core entity facts (observations)
-            #      that the --json path exposes; the TTY view must be at least as
-            #      informative as the JSON view for the primary entity.
-            # Outcome: each observation appears as a dim "[category] content" leaf
-            #          under its primary node, truncated at 120 chars.
-            observations: list[dict[str, Any]] = list(context_result.get("observations", []))
-            for obs in observations:
-                category = obs.get("category", "")
-                obs_content = obs.get("content", "")
-                # Truncate long observations so the tree stays readable.
-                if len(obs_content) > 120:
-                    obs_content = obs_content[:117] + "..."
-                # Trigger: category and obs_content are user-sourced strings that may
-                #          contain Rich markup characters.  The category is also wrapped
-                #          in literal "[" "]" brackets in the label, which must be
-                #          escaped too so Rich does not treat "[fact]" as a style tag.
-                # Why: embedding "[fact]" in a markup string causes Rich to parse it as
-                #      an unknown tag and silently drop the text.
-                # Outcome: escape the full "[category] content" fragment including the
-                #          surrounding brackets before embedding it in a styled label.
-                obs_label = f"[dim]{markup_escape(f'[{category}] {obs_content}')}[/dim]"
-                primary_node.add(obs_label)
-
-            # --- Related items as children ---
-            related: list[dict[str, Any]] = list(context_result.get("related_results", []))
-            for rel_item in related:
-                rel_title = markup_escape(rel_item.get("title") or rel_item.get("permalink", ""))
-                rel_type = markup_escape(rel_item.get("type", ""))
-                relation = markup_escape(rel_item.get("relation_type", ""))
-
-                parts = []
-                if relation:
-                    parts.append(f"[yellow]{relation}[/yellow]")
-                if rel_type:
-                    parts.append(f"[dim]{rel_type}[/dim]")
-                parts.append(f"[cyan]{rel_title}[/cyan]")
-                primary_node.add(" ".join(parts))
-
-    # Count total related items across all primary results.
-    total_related = sum(len(cr.get("related_results", [])) for cr in context_items)
-    total_observations = sum(len(cr.get("observations", [])) for cr in context_items)
-    subtitle = f"{len(context_items)} primary  •  {total_observations} observations  •  {total_related} related"
-    console.print(Panel(tree, subtitle=subtitle, expand=False))
-
-
-def _display_recent_activity(result: list[dict[str, Any]]) -> None:
-    """Render recent-activity results as a Rich table."""
-    if not result:
-        console.print(
-            Panel(Text("No recent activity.", style="dim"), title="Recent Activity", expand=False)
-        )
-        return
-
-    table = Table(show_header=True, header_style="bold", expand=False)
-    table.add_column("Type", style="dim", width=12)
-    table.add_column("Title", style="bold cyan")
-    show_project = any(item.get("project") for item in result)
-    if show_project:
-        table.add_column("Project", style="magenta")
-    table.add_column("Permalink", style="green")
-    table.add_column("Updated", style="dim")
-
-    for item in result:
-        item_type = item.get("type", "")
-        # Trigger: title, permalink, and timestamps are user-sourced strings from the
-        #          knowledge graph and may contain Rich markup characters.
-        # Why: Rich table cells with a style column parse markup in cell values, so
-        #      bracketed content would be silently consumed or restyled.
-        # Outcome: escape all user-sourced cell values before adding to the table.
-        item_title = markup_escape(item.get("title") or item.get("permalink", ""))
-        project = markup_escape(str(item.get("project") or ""))
-        permalink = markup_escape(item.get("permalink", ""))
-        updated = str(item.get("updated_at") or item.get("created_at") or "")
-        row = [item_type, item_title]
-        if show_project:
-            row.append(project)
-        row.extend((permalink, updated))
-        table.add_row(*row)
-
-    console.print(Panel(table, title="Recent Activity", expand=False))
-
-
-# --- Plain formatters ---
-#
-# Plain output is NOT Rich markup: it is undecorated, greppable text printed via
-# the builtin print().  Literal brackets ([draft], [fact]) must survive verbatim,
-# so we deliberately do NOT call rich.markup.escape here -- escaping is only for
-# the Rich path and would corrupt literal brackets in plain text.
-
-
-def _plain_search_results(result: dict[str, Any], query: str = "") -> None:
-    """Render search-notes results as numbered plain-text entries.
-
-    Mirrors the Rich table content: a header line, then one numbered block per
-    result (title / score / permalink) with an indented snippet line.
-    """
-    results = result.get("results", [])
-    header = f"Search: {query}" if query else "Search results"
-    print(header)
-    print(_search_result_summary(result).replace("  •  ", " | "))
-
+    raw_total = result.get("total")
+    # total is an int when the count is known and null/absent when it is not —
+    # never a sentinel (docs/OUTPUT_CONTRACT.md).  An empty page is a knowable
+    # zero, so it always gets a count line.
     if not results:
-        print("No results found.")
-        return
+        print("0 results")
+    elif isinstance(raw_total, int):
+        print(f"{raw_total} results")
 
-    for index, item in enumerate(results, start=1):
-        item_title = item.get("title") or item.get("permalink", "")
-        permalink = item.get("permalink", "")
-        score = item.get("score")
-        score_str = f"{score:.2f}" if score is not None else ""
-        print(f"{index}. {item_title}  (score: {score_str})  {permalink}")
-        raw_snippet = item.get("matched_chunk") or item.get("content") or ""
-        if raw_snippet:
-            snippet = raw_snippet[:200].replace("\n", " ")
-            print(f"    {snippet}")
+    if result.get("has_more") is True and not quiet:
+        print("more results available")
 
 
-def _plain_read_note(result: dict[str, Any], *, include_frontmatter: bool = False) -> None:
-    """Render the note body for humans or the literal file for round-tripping.
+def _render_read_note(result: dict[str, Any], *, include_frontmatter: bool) -> None:
+    """Write the note content byte-exactly, or report the miss.
 
-    Plain mode adds NO decoration: no header line, no synthesized frontmatter
-    block, no placeholder for empty notes. A missing note still reports the miss
-    and any related results so it cannot be confused with an empty note. Without
-    --frontmatter, trim the surrounding newline artifacts left by the API's
-    frontmatter removal. With --frontmatter, write the literal file exactly so
-    redirection round-trips every boundary newline (e.g.
-    ``read-note X --plain --frontmatter > note.md``).
+    Round-tripping is part of the contract, so the content is written with no
+    decoration and no added or trimmed newline.  With --frontmatter the payload
+    is the literal file; without it the API has already stripped the block and
+    left the boundary newlines it created, which are not part of the body.
     """
     raw_content = result.get("content")
     content = raw_content if isinstance(raw_content, str) else ""
@@ -458,25 +159,25 @@ def _plain_read_note(result: dict[str, Any], *, include_frontmatter: bool = Fals
         sys.stdout.write(content)
         return
 
-    # Trigger: the MCP fallback returns null note fields when no note resolves.
-    # Why: silence makes a miss indistinguishable from a real empty note in plain mode.
-    # Outcome: report the miss and preserve any related-note suggestions.
+    # Trigger: read_note returns an all-null payload when no note resolves.
+    # Why: silence would make a miss indistinguishable from an empty note.
+    # Outcome: report the miss and keep any related-note suggestions.
     if raw_content is None and not result.get("title") and not result.get("permalink"):
         print("Note not found.")
         raw_related = result.get("related_results")
-        related_results = (
+        related = (
             [item for item in raw_related if isinstance(item, dict)]
             if isinstance(raw_related, list)
             else []
         )
-        if related_results:
-            print("Related results:")
-            for item in related_results:
-                title = str(item.get("title") or item.get("permalink") or "")
-                permalink = str(item.get("permalink") or "")
-                print(f"- {title}  {permalink}".rstrip())
-        else:
+        if not related:
             print("No note or related content found.")
+            return
+        print("Related results:")
+        for item in related:
+            permalink = str(item.get("permalink") or "")
+            title = str(item.get("title") or "")
+            print(f"{permalink}  {title}".rstrip())
         return
 
     body = content.strip("\n") if content else ""
@@ -484,72 +185,66 @@ def _plain_read_note(result: dict[str, Any], *, include_frontmatter: bool = Fals
         print(body)
 
 
-def _plain_build_context(result: dict[str, Any]) -> None:
-    """Render build-context as an ASCII-indented outline.
-
-    Each primary result is a top-level line; its observations and related items
-    are two-space indented beneath it, mirroring the Rich tree content.
-    """
+def _render_build_context(result: dict[str, Any]) -> None:
+    """Render context as one line per primary record with indented children."""
     metadata = result.get("metadata", {})
-    uri = metadata.get("uri", "")
+    print(f"Context: {metadata.get('uri', '')}".rstrip())
+
     context_items: list[dict[str, Any]] = list(result.get("results", []))
-
-    print(f"Context: {uri}" if uri else "Context")
-
-    if not context_items:
-        print("No related content found.")
-        return
+    total_observations = 0
+    total_related = 0
 
     for context_result in context_items:
         primary = context_result.get("primary_result", {})
-        p_title = primary.get("title") or primary.get("permalink", "")
-        p_type = primary.get("type", "")
-        primary_line = f"{p_type}  {p_title}" if p_type else p_title
-        print(primary_line)
+        permalink = str(primary.get("permalink") or "")
+        p_type = str(primary.get("type") or "")
+        p_title = str(primary.get("title") or "")
+        print(f"{permalink}  {p_type}  {p_title}".rstrip())
 
+        # An entity summary can carry the note body independently of its
+        # observations, so a prose-heavy note would otherwise render as a bare
+        # identifier line with no content at all.
         raw_primary_content = primary.get("content")
-        primary_content = (
-            raw_primary_content.strip()
-            if isinstance(raw_primary_content, str) and raw_primary_content.strip()
-            else ""
-        )
-        if primary_content:
-            for line in primary_content.splitlines():
+        if isinstance(raw_primary_content, str) and raw_primary_content.strip():
+            for line in raw_primary_content.strip().splitlines():
                 print(f"  {line}")
 
         observations: list[dict[str, Any]] = list(context_result.get("observations", []))
+        total_observations += len(observations)
         for obs in observations:
-            category = obs.get("category", "")
-            obs_content = obs.get("content", "")
-            if len(obs_content) > 120:
-                obs_content = obs_content[:117] + "..."
-            print(f"  [{category}] {obs_content}")
+            content = _one_line(str(obs.get("content") or ""))
+            print(f"  [{obs.get('category', '')}] {content}")
 
         related: list[dict[str, Any]] = list(context_result.get("related_results", []))
+        total_related += len(related)
         for rel_item in related:
-            rel_title = rel_item.get("title") or rel_item.get("permalink", "")
-            rel_type = rel_item.get("type", "")
-            relation = rel_item.get("relation_type", "")
-            parts = [part for part in (relation, rel_type, rel_title) if part]
-            print(f"  {'  '.join(parts)}")
+            relation = str(rel_item.get("relation_type") or "")
+            rel_type = str(rel_item.get("type") or "")
+            rel_title = str(rel_item.get("title") or rel_item.get("permalink") or "")
+            print(f"  {relation} {rel_type} {rel_title}".rstrip())
+
+    print(
+        f"{len(context_items)} primary, {total_observations} observations, {total_related} related"
+    )
 
 
-def _plain_recent_activity(result: list[dict[str, Any]]) -> None:
-    """Render recent-activity as plain "- title (type) permalink updated" lines."""
-    if not result:
-        print("No recent activity.")
-        return
-
-    print("Recent Activity")
+def _render_recent_activity(result: list[dict[str, Any]]) -> None:
+    """Render recent activity one item per line, project column when present."""
+    # The project column only exists when the rows are cross-project; a constant
+    # empty trailing column would be noise on the common single-project run.
     show_project = any(item.get("project") for item in result)
+
     for item in result:
-        item_type = item.get("type", "")
-        item_title = item.get("title") or item.get("permalink", "")
-        project = str(item.get("project") or "")
-        permalink = item.get("permalink", "")
+        permalink = str(item.get("permalink") or "")
+        item_type = str(item.get("type") or "")
+        title = str(item.get("title") or "")
         updated = str(item.get("updated_at") or item.get("created_at") or "")
-        project_label = f" [project: {project}]" if show_project and project else ""
-        print(f"- {item_title} ({item_type}){project_label} {permalink} {updated}".rstrip())
+        line = f"{permalink}  {item_type}  {title}  {updated}"
+        if show_project:
+            line += f"  {item.get('project') or ''}"
+        print(line.rstrip())
+
+    print(f"{len(result)} results")
 
 
 def _delete_note_failure_message(result: dict[str, Any]) -> str | None:
@@ -635,15 +330,13 @@ def write_note(
             if not sys.stdin.isatty():
                 content = sys.stdin.read()
             else:  # pragma: no cover
-                typer.echo(
-                    "No content provided. Please provide content via --content or by piping to stdin.",
-                    err=True,
+                _fail(
+                    "No content provided. Please provide content via --content "
+                    "or by piping to stdin."
                 )
-                raise typer.Exit(1)
 
         if content is not None and not content.strip():
-            typer.echo("Empty content provided. Please provide non-empty content.", err=True)
-            raise typer.Exit(1)
+            _fail("Empty content provided. Please provide non-empty content.")
 
         assert content is not None
 
@@ -663,23 +356,16 @@ def write_note(
 
         # MCP tool returns an error field on failure in JSON mode (e.g.
         # NOTE_ALREADY_EXISTS on a blocked overwrite, SECURITY_VALIDATION_ERROR).
-        # Trigger: result carries a non-empty `error`.
-        # Why: parity with delete-note/edit-note/search-notes so exit-code-driven
-        #      scripts detect a failed/blocked write instead of seeing exit 0.
-        # Outcome: print the error to stderr and exit non-zero.
-        if isinstance(result, dict) and result.get("error"):
-            typer.echo(f"Error: {result['error']}", err=True)
-            _print_json(result)
-            raise typer.Exit(1)
+        record = _require_record(result)
+        if record.get("error"):
+            _fail(f"Error: {record['error']}")
 
-        _print_json(result)
+        _print_record(record, WRITE_NOTE_FIELDS)
     except ValueError as e:
-        typer.echo(f"Error: {e}", err=True)
-        raise typer.Exit(1)
+        _fail(f"Error: {e}")
     except Exception as e:  # pragma: no cover
         if not isinstance(e, typer.Exit):
-            typer.echo(f"Error during write_note: {e}", err=True)
-            raise typer.Exit(1)
+            _fail(f"Error during write_note: {e}")
         raise
 
 
@@ -691,12 +377,6 @@ def read_note(
         "--frontmatter",
         "--include-frontmatter",
         help="Include YAML frontmatter in output (--include-frontmatter is a deprecated alias)",
-    ),
-    json_output: bool = typer.Option(
-        False, "--json", help="Output raw JSON instead of formatted display"
-    ),
-    plain: bool = typer.Option(
-        False, "--plain", help="Output undecorated plain text (no colors/markup), even when piped"
     ),
     project: Annotated[
         Optional[str],
@@ -712,24 +392,17 @@ def read_note(
 ):
     """Read a markdown note from the knowledge base.
 
-    Three output modes: Rich formatted Markdown (default in a terminal), plain
-    undecorated text (--plain), and raw JSON (--json, or automatically when
-    piped). The interactive default is set by the cli_output_style config option
-    (rich/plain). --json and --plain are mutually exclusive.
+    The note content is written verbatim, so redirection round-trips the file.
 
     Examples:
 
     bm tool read-note my-note
-    bm tool read-note my-note --frontmatter
-    bm tool read-note my-note --plain
-    bm tool read-note my-note --json
+    bm tool read-note my-note --frontmatter > note.md
     """
     # Deferred: loading the MCP tool stack at module import slows CLI startup (#886).
     from basic_memory.mcp.tools import read_note as mcp_read_note
 
     try:
-        _validate_output_flags(json_output, plain)
-
         result = run_with_cleanup(
             mcp_read_note(
                 identifier=identifier,
@@ -740,34 +413,24 @@ def read_note(
             )
         )
 
+        # A string result is already note-shaped text (the MCP fallback), so it
+        # is the payload; only a structured error is a failure.
+        if isinstance(result, str):
+            sys.stdout.write(result)
+            return
+
         # MCP tool returns an error field on failure in JSON mode (e.g.
         # SECURITY_VALIDATION_ERROR on a path-traversal identifier). A genuine
         # not-found returns null fields with no `error` key, so it still exits 0.
-        # Trigger: result carries a non-empty `error`.
-        # Why: parity with edit-note/delete-note/search-notes so a blocked read
-        #      surfaces a non-zero exit instead of looking like success.
-        # Outcome: print the error to stderr and exit non-zero.
-        if isinstance(result, dict) and result.get("error"):
-            typer.echo(f"Error: {result['error']}", err=True)
-            _print_json(result)
-            raise typer.Exit(1)
+        if result.get("error"):
+            _fail(f"Error: {result['error']}")
 
-        # A string result (e.g. a not-found message) has no structured shape to
-        # format, so always fall back to JSON regardless of the resolved mode.
-        mode = _resolve_output_mode(json_output, plain)
-        if mode == "json" or isinstance(result, str):
-            _print_json(result)
-        elif mode == "plain":
-            _plain_read_note(result, include_frontmatter=include_frontmatter)
-        else:
-            _display_read_note(result, include_frontmatter=include_frontmatter)
+        _render_read_note(result, include_frontmatter=include_frontmatter)
     except ValueError as e:
-        typer.echo(f"Error: {e}", err=True)
-        raise typer.Exit(1)
+        _fail(f"Error: {e}")
     except Exception as e:  # pragma: no cover
         if not isinstance(e, typer.Exit):
-            typer.echo(f"Error during read_note: {e}", err=True)
-            raise typer.Exit(1)
+            _fail(f"Error during read_note: {e}")
         raise
 
 
@@ -810,20 +473,18 @@ def delete_note(
             )
         )
 
-        if isinstance(result, dict):
-            failure_message = _delete_note_failure_message(result)
-            if failure_message:
-                typer.echo(f"Error: {failure_message}", err=True)
-                raise typer.Exit(1)
+        record = _require_record(result)
+        failure_message = _delete_note_failure_message(record)
+        if failure_message:
+            _fail(f"Error: {failure_message}")
 
-        _print_json(result)
+        fields = DELETE_DIRECTORY_FIELDS if record.get("is_directory") else DELETE_NOTE_FIELDS
+        _print_record(record, fields)
     except ValueError as e:
-        typer.echo(f"Error: {e}", err=True)
-        raise typer.Exit(1)
+        _fail(f"Error: {e}")
     except Exception as e:  # pragma: no cover
         if not isinstance(e, typer.Exit):
-            typer.echo(f"Error during delete_note: {e}", err=True)
-            raise typer.Exit(1)
+            _fail(f"Error during delete_note: {e}")
         raise
 
 
@@ -895,18 +556,16 @@ def edit_note(
         )
 
         # MCP tool returns error field on failure in JSON mode
-        if isinstance(result, dict) and result.get("error"):
-            typer.echo(f"Error: {result['error']}", err=True)
-            raise typer.Exit(1)
+        record = _require_record(result)
+        if record.get("error"):
+            _fail(f"Error: {record['error']}")
 
-        _print_json(result)
+        _print_record(record, EDIT_NOTE_FIELDS)
     except ValueError as e:
-        typer.echo(f"Error: {e}", err=True)
-        raise typer.Exit(1)
+        _fail(f"Error: {e}")
     except Exception as e:  # pragma: no cover
         if not isinstance(e, typer.Exit):
-            typer.echo(f"Error during edit_note: {e}", err=True)
-            raise typer.Exit(1)
+            _fail(f"Error during edit_note: {e}")
         raise
 
 
@@ -920,12 +579,6 @@ def build_context(
     page: int = typer.Option(1, "--page", help="Page number for pagination"),
     page_size: int = typer.Option(10, "--page-size", help="Number of results per page"),
     max_related: int = typer.Option(10, "--max-related", help="Maximum related items to return"),
-    json_output: bool = typer.Option(
-        False, "--json", help="Output raw JSON instead of formatted display"
-    ),
-    plain: bool = typer.Option(
-        False, "--plain", help="Output undecorated plain text (no colors/markup), even when piped"
-    ),
     project: Annotated[
         Optional[str],
         typer.Option(help="The project to use. If not provided, the default project will be used."),
@@ -940,24 +593,15 @@ def build_context(
 ):
     """Get context needed to continue a discussion.
 
-    Three output modes: a Rich tree view (default in a terminal), a plain
-    ASCII-indented outline (--plain), and raw JSON (--json, or automatically when
-    piped). The interactive default is set by the cli_output_style config option
-    (rich/plain). --json and --plain are mutually exclusive.
-
     Examples:
 
     bm tool build-context memory://specs/search
     bm tool build-context specs/search --depth 2 --timeframe 30d
-    bm tool build-context memory://specs/search --plain
-    bm tool build-context memory://specs/search --json
     """
     # Deferred: loading the MCP tool stack at module import slows CLI startup (#886).
     from basic_memory.mcp.tools import build_context as mcp_build_context
 
     try:
-        _validate_output_flags(json_output, plain)
-
         result = run_with_cleanup(
             mcp_build_context(
                 url=url,
@@ -972,21 +616,16 @@ def build_context(
             )
         )
 
-        # A string result has no structured shape to format, so fall back to JSON.
-        mode = _resolve_output_mode(json_output, plain)
-        if mode == "json" or isinstance(result, str):
-            _print_json(result)
-        elif mode == "plain":
-            _plain_build_context(result)
-        else:
-            _display_build_context(result)
+        # A string result carries an MCP error message, not a context graph.
+        if isinstance(result, str):
+            _fail(result)
+
+        _render_build_context(result)
     except ValueError as e:
-        typer.echo(f"Error: {e}", err=True)
-        raise typer.Exit(1)
+        _fail(f"Error: {e}")
     except Exception as e:  # pragma: no cover
         if not isinstance(e, typer.Exit):
-            typer.echo(f"Error during build_context: {e}", err=True)
-            raise typer.Exit(1)
+            _fail(f"Error during build_context: {e}")
         raise
 
 
@@ -1001,12 +640,6 @@ def recent_activity(
     # Match the MCP recent_activity default (page_size=10) so identical default
     # invocations return the same number of rows from CLI and MCP.
     page_size: int = typer.Option(10, "--page-size", help="Number of results per page"),
-    json_output: bool = typer.Option(
-        False, "--json", help="Output raw JSON instead of formatted display"
-    ),
-    plain: bool = typer.Option(
-        False, "--plain", help="Output undecorated plain text (no colors/markup), even when piped"
-    ),
     project: Annotated[
         Optional[str],
         typer.Option(help="The project to use. If not provided, the default project will be used."),
@@ -1021,25 +654,16 @@ def recent_activity(
 ):
     """Get recent activity across the knowledge base.
 
-    Three output modes: a formatted Rich table (default in a terminal), plain
-    undecorated lines (--plain), and raw JSON (--json, or automatically when
-    piped). The interactive default is set by the cli_output_style config option
-    (rich/plain). --json and --plain are mutually exclusive.
-
     Examples:
 
     bm tool recent-activity
     bm tool recent-activity --timeframe 30d --page-size 20
     bm tool recent-activity --type entity --type observation
-    bm tool recent-activity --plain
-    bm tool recent-activity --json
     """
     # Deferred: loading the MCP tool stack at module import slows CLI startup (#886).
     from basic_memory.mcp.tools import recent_activity as mcp_recent_activity
 
     try:
-        _validate_output_flags(json_output, plain)
-
         result = run_with_cleanup(
             mcp_recent_activity(
                 type=type or "",
@@ -1053,21 +677,16 @@ def recent_activity(
             )
         )
 
-        # A string result has no structured shape to format, so fall back to JSON.
-        mode = _resolve_output_mode(json_output, plain)
-        if mode == "json" or isinstance(result, str):
-            _print_json(result)
-        elif mode == "plain":
-            _plain_recent_activity(result)
-        else:
-            _display_recent_activity(result)
+        # A string result carries an MCP error message, not an activity list.
+        if isinstance(result, str):
+            _fail(result)
+
+        _render_recent_activity(result)
     except ValueError as e:
-        typer.echo(f"Error: {e}", err=True)
-        raise typer.Exit(1)
+        _fail(f"Error: {e}")
     except Exception as e:  # pragma: no cover
         if not isinstance(e, typer.Exit):
-            typer.echo(f"Error during recent_activity: {e}", err=True)
-            raise typer.Exit(1)
+            _fail(f"Error during recent_activity: {e}")
         raise
 
 
@@ -1124,12 +743,7 @@ def search_notes(
     ] = None,
     page: int = typer.Option(1, "--page", help="Page number for pagination"),
     page_size: int = typer.Option(10, "--page-size", help="Number of results per page"),
-    json_output: bool = typer.Option(
-        False, "--json", help="Output raw JSON instead of formatted display"
-    ),
-    plain: bool = typer.Option(
-        False, "--plain", help="Output undecorated plain text (no colors/markup), even when piped"
-    ),
+    quiet: bool = typer.Option(False, "--quiet", help="Drop notices, leaving the results alone"),
     project: Annotated[
         Optional[str],
         typer.Option(help="The project to use. If not provided, the default project will be used."),
@@ -1144,11 +758,6 @@ def search_notes(
 ):
     """Search across all content in the knowledge base.
 
-    Three output modes: a formatted Rich table (default in a terminal), plain
-    numbered text results (--plain), and raw JSON (--json, or automatically when
-    piped). The interactive default is set by the cli_output_style config option
-    (rich/plain). --json and --plain are mutually exclusive.
-
     Examples:
 
     bm tool search-notes "my query"
@@ -1156,22 +765,14 @@ def search_notes(
     bm tool search-notes --tag python --tag async
     bm tool search-notes --meta status=draft
     bm tool search-notes "auth" --entity-type observation --category requirement
-    bm tool search-notes "my query" --plain
-    bm tool search-notes "my query" --json
     """
     # Deferred: loading the MCP tool stack at module import slows CLI startup (#886).
     from basic_memory.mcp.tools import search_notes as mcp_search
 
     try:
-        _validate_output_flags(json_output, plain)
-
         mode_flags = [permalink, title, vector, hybrid]
-        if sum(1 for enabled in mode_flags if enabled) > 1:  # pragma: no cover
-            typer.echo(
-                "Use only one mode flag: --permalink, --title, --vector, or --hybrid. Exiting.",
-                err=True,
-            )
-            raise typer.Exit(1)
+        if sum(1 for enabled in mode_flags if enabled) > 1:
+            _fail("Use only one mode flag: --permalink, --title, --vector, or --hybrid. Exiting.")
 
         # --- Build metadata filters from --filter and --meta ---
         metadata_filters: Dict[str, Any] | None = {}
@@ -1181,22 +782,16 @@ def search_notes(
                 if not isinstance(metadata_filters, dict):
                     raise ValueError("Metadata filter JSON must be an object")
             except json.JSONDecodeError as e:
-                typer.echo(f"Invalid JSON for --filter: {e}", err=True)
-                raise typer.Exit(1)
+                _fail(f"Invalid JSON for --filter: {e}")
 
         if meta:
             for item in meta:
                 if "=" not in item:
-                    typer.echo(
-                        f"Invalid --meta entry '{item}'. Use key=value format.",
-                        err=True,
-                    )
-                    raise typer.Exit(1)
+                    _fail(f"Invalid --meta entry '{item}'. Use key=value format.")
                 key, value = item.split("=", 1)
                 key = key.strip()
                 if not key:
-                    typer.echo(f"Invalid --meta entry '{item}'.", err=True)
-                    raise typer.Exit(1)
+                    _fail(f"Invalid --meta entry '{item}'.")
                 metadata_filters[key] = value
 
         if not metadata_filters:
@@ -1234,24 +829,15 @@ def search_notes(
 
         # MCP tool may return a string error message
         if isinstance(result, str):
-            typer.echo(result, err=True)
-            raise typer.Exit(1)
+            _fail(result)
 
-        mode = _resolve_output_mode(json_output, plain)
-        if mode == "json":
-            _print_json(result)
-        elif mode == "plain":
-            _plain_search_results(result, query=query or "")
-        else:
-            _display_search_results(result, query=query or "")
+        _render_search_results(result, quiet=quiet)
     except ValueError as e:
-        typer.echo(f"Error: {e}", err=True)
-        raise typer.Exit(1)
+        _fail(f"Error: {e}")
     except Exception as e:  # pragma: no cover
         if not isinstance(e, typer.Exit):
             logger.exception("Error during search", e)
-            typer.echo(f"Error during search: {e}", err=True)
-            raise typer.Exit(1)
+            _fail(f"Error during search: {e}")
         raise
 
 
@@ -1259,37 +845,30 @@ def search_notes(
 
 
 @tool_app.command("list-projects")
-def list_projects(
-    json_output: bool = typer.Option(
-        False, "--json", help="Output in JSON format (this command always emits JSON)"
-    ),
-):
-    """List all available projects with their status (JSON output).
+def list_projects():
+    """List all available projects with their paths.
 
     Examples:
 
     bm tool list-projects
-    bm tool list-projects --json
     """
-    # --json is accepted but unused: this command has only ever emitted JSON, while
-    # every other `bm tool` subcommand gates JSON behind the flag. Scripts reaching
-    # for the documented machine-readable path passed --json and died in Click
-    # argument parsing with exit 2 and no output at all. Accepting the flag makes
-    # the documented invocation work without inventing a second output format.
-    del json_output
     # Deferred: loading the MCP tool stack at module import slows CLI startup (#886).
     from basic_memory.mcp.tools import list_memory_projects as mcp_list_projects
 
     try:
-        result = run_with_cleanup(mcp_list_projects(output_format="json"))
-        _print_json(result)
+        result = _require_record(run_with_cleanup(mcp_list_projects(output_format="json")))
+        projects: list[dict[str, Any]] = list(result.get("projects", []))
+        for item in projects:
+            # The default marker is a column, not a prefix, so the identifier
+            # stays first on every line.
+            marker = "  (default)" if item.get("is_default") else ""
+            print(f"{item.get('name', '')}  {item.get('path', '')}{marker}")
+        print(f"{len(projects)} projects")
     except ValueError as e:
-        typer.echo(f"Error: {e}", err=True)
-        raise typer.Exit(1)
+        _fail(f"Error: {e}")
     except Exception as e:  # pragma: no cover
         if not isinstance(e, typer.Exit):
-            typer.echo(f"Error during list_projects: {e}", err=True)
-            raise typer.Exit(1)
+            _fail(f"Error during list_projects: {e}")
         raise
 
 
@@ -1302,6 +881,8 @@ def schema_validate(
         Optional[str],
         typer.Argument(help="Note path or note type to validate"),
     ] = None,
+    strict: bool = typer.Option(False, "--strict", help="Exit 1 when any note fails validation"),
+    quiet: bool = typer.Option(False, "--quiet", help="Drop notices, leaving the report alone"),
     project: Annotated[
         Optional[str],
         typer.Option(help="The project to use. If not provided, the default project will be used."),
@@ -1314,7 +895,7 @@ def schema_validate(
         ),
     ] = None,
 ):
-    """Validate notes against their schemas (JSON output).
+    """Validate notes against their schemas.
 
     TARGET can be a note path (e.g., people/ada-lovelace.md) or a note type
     (e.g., person). If omitted, validates all notes that have schemas.
@@ -1323,7 +904,7 @@ def schema_validate(
 
     bm tool schema-validate person
     bm tool schema-validate people/ada-lovelace.md
-    bm tool schema-validate --project research
+    bm tool schema-validate person --strict
     """
     # Deferred: loading the MCP tool stack at module import slows CLI startup (#886).
     from basic_memory.mcp.tools import schema_validate as mcp_schema_validate
@@ -1346,20 +927,28 @@ def schema_validate(
                 output_format="json",
             )
         )
-        # A genuine failure: error JSON stays on stdout (stream stays parseable),
-        # humans get stderr, exit says failure (docs/OUTPUT_CONTRACT.md).
-        if isinstance(result, dict) and result.get("error"):
-            typer.echo(f"Error: {result['error']}", err=True)
-            _print_json(result)
-            raise typer.Exit(1)
-        _print_json(result)
+        report = _require_record(result)
+        if report.get("error"):
+            _fail(f"Error: {report['error']}")
+
+        # The report renderer is shared with `bm schema validate`; importing it
+        # lazily keeps this module's import cost unchanged.
+        from basic_memory.cli.commands.schema import render_validate_report
+
+        render_validate_report(report, quiet=quiet)
+
+        # Trigger: --strict with at least one failing note.
+        # Why: gating scripts need an exit code, but the report is still the
+        #      answer to the question asked, so it is rendered first.
+        error_count = report.get("error_count", 0)
+        # Same strict message as `bm schema validate` — one contract, two entry points.
+        if strict and isinstance(error_count, int) and error_count > 0:
+            _fail(f"strict: {error_count} errors")
     except ValueError as e:
-        typer.echo(f"Error: {e}", err=True)
-        raise typer.Exit(1)
+        _fail(f"Error: {e}")
     except Exception as e:  # pragma: no cover
         if not isinstance(e, typer.Exit):
-            typer.echo(f"Error during schema_validate: {e}", err=True)
-            raise typer.Exit(1)
+            _fail(f"Error during schema_validate: {e}")
         raise
 
 
@@ -1375,6 +964,7 @@ def schema_infer(
     threshold: float = typer.Option(
         0.25, "--threshold", help="Minimum frequency for optional fields (0-1)"
     ),
+    quiet: bool = typer.Option(False, "--quiet", help="Drop notices, leaving the report alone"),
     project: Annotated[
         Optional[str],
         typer.Option(help="The project to use. If not provided, the default project will be used."),
@@ -1387,7 +977,7 @@ def schema_infer(
         ),
     ] = None,
 ):
-    """Infer schema from existing notes of a type (JSON output).
+    """Infer schema from existing notes of a type.
 
     Examples:
 
@@ -1408,20 +998,20 @@ def schema_infer(
                 output_format="json",
             )
         )
-        # A genuine failure: error JSON stays on stdout (stream stays parseable),
-        # humans get stderr, exit says failure (docs/OUTPUT_CONTRACT.md).
-        if isinstance(result, dict) and result.get("error"):
-            typer.echo(f"Error: {result['error']}", err=True)
-            _print_json(result)
-            raise typer.Exit(1)
-        _print_json(result)
+        report = _require_record(result)
+        if report.get("error"):
+            _fail(f"Error: {report['error']}")
+
+        # The report renderer is shared with `bm schema infer`; importing it
+        # lazily keeps this module's import cost unchanged.
+        from basic_memory.cli.commands.schema import render_infer_report
+
+        render_infer_report(report, quiet=quiet)
     except ValueError as e:
-        typer.echo(f"Error: {e}", err=True)
-        raise typer.Exit(1)
+        _fail(f"Error: {e}")
     except Exception as e:  # pragma: no cover
         if not isinstance(e, typer.Exit):
-            typer.echo(f"Error during schema_infer: {e}", err=True)
-            raise typer.Exit(1)
+            _fail(f"Error during schema_infer: {e}")
         raise
 
 
@@ -1434,6 +1024,7 @@ def schema_diff(
         str,
         typer.Argument(help="Note type to check for drift"),
     ],
+    quiet: bool = typer.Option(False, "--quiet", help="Drop notices, leaving the report alone"),
     project: Annotated[
         Optional[str],
         typer.Option(help="The project to use. If not provided, the default project will be used."),
@@ -1446,7 +1037,7 @@ def schema_diff(
         ),
     ] = None,
 ):
-    """Show drift between schema and actual usage (JSON output).
+    """Show drift between schema and actual usage.
 
     Examples:
 
@@ -1465,18 +1056,18 @@ def schema_diff(
                 output_format="json",
             )
         )
-        # A genuine failure: error JSON stays on stdout (stream stays parseable),
-        # humans get stderr, exit says failure (docs/OUTPUT_CONTRACT.md).
-        if isinstance(result, dict) and result.get("error"):
-            typer.echo(f"Error: {result['error']}", err=True)
-            _print_json(result)
-            raise typer.Exit(1)
-        _print_json(result)
+        report = _require_record(result)
+        if report.get("error"):
+            _fail(f"Error: {report['error']}")
+
+        # The report renderer is shared with `bm schema diff`; importing it
+        # lazily keeps this module's import cost unchanged.
+        from basic_memory.cli.commands.schema import render_diff_report
+
+        render_diff_report(report, quiet=quiet)
     except ValueError as e:
-        typer.echo(f"Error: {e}", err=True)
-        raise typer.Exit(1)
+        _fail(f"Error: {e}")
     except Exception as e:  # pragma: no cover
         if not isinstance(e, typer.Exit):
-            typer.echo(f"Error during schema_diff: {e}", err=True)
-            raise typer.Exit(1)
+            _fail(f"Error during schema_diff: {e}")
         raise

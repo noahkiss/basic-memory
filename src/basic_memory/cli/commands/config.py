@@ -11,20 +11,16 @@ import json
 import os
 import types
 import typing
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
 import typer
 from pydantic import ValidationError
-from rich.console import Console
-from rich.table import Table
 
 from basic_memory.cli.app import app
 from basic_memory.config import BasicMemoryConfig, ConfigManager
 from basic_memory.redaction import SECRET_FIELDS, URL_FIELDS, redact_url
-
-console = Console()
 
 config_app = typer.Typer(help="Manage Basic Memory's config.json settings")
 app.add_typer(config_app, name="config")
@@ -151,8 +147,10 @@ def _resolve_settings() -> list[ConfigSetting]:
 def _require_known_key(key: str) -> None:
     """Exit with guidance unless `key` is a configurable scalar setting."""
     if key not in CONFIGURABLE_FIELDS:
-        console.print(f"[red]Error: '{key}' is not a recognized setting.[/red]")
-        console.print("[dim]Run 'bm config list' to see all available settings.[/dim]")
+        # Rule 6: the error and the affordance that resolves it both belong on stderr,
+        # so a caller redirecting stdout gets an empty payload, not half an error.
+        typer.echo(f"Error: '{key}' is not a recognized setting.", err=True)
+        typer.echo("Run 'bm config list' to see all available settings.", err=True)
         raise typer.Exit(1)
 
 
@@ -160,49 +158,43 @@ def _require_known_key(key: str) -> None:
 
 
 @config_app.command("list")
-def config_list(
-    json_output: bool = typer.Option(False, "--json", help="Output in JSON format"),
-) -> None:
+def config_list() -> None:
     """List every configurable setting with its effective value and source."""
     settings = _resolve_settings()
 
-    if json_output:
-        print(json.dumps([asdict(setting) for setting in settings], indent=2))
-        return
-
-    table = Table(title="Basic Memory Configuration")
-    table.add_column("Setting", style="cyan")
-    table.add_column("Value", style="green")
-    table.add_column("Source", style="yellow")
+    key_width = max((len(setting.key) for setting in settings), default=0)
+    value_width = max((len(setting.value) for setting in settings), default=0)
     for setting in settings:
-        table.add_row(setting.key, setting.value, setting.source)
-    console.print(table)
+        typer.echo(f"{setting.key:<{key_width}}  {setting.value:<{value_width}}  {setting.source}")
+    typer.echo(f"{len(settings)} settings")
 
 
 @config_app.command("get")
 def config_get(
     key: str = typer.Argument(..., help="Config setting name (see 'bm config list')"),
+    quiet: bool = typer.Option(False, "--quiet", help="Suppress notices and affordances"),
 ) -> None:
     """Show the effective value of one config setting."""
     _require_known_key(key)
 
     config = ConfigManager().config
-    console.print(f"{key} = {_render_value(key, getattr(config, key))}")
+    typer.echo(f"{key} = {_render_value(key, getattr(config, key))}")
 
     env_var = _env_var_name(key)
-    if env_var in os.environ:
+    if env_var in os.environ and not quiet:
         env_value = _redact_for_display(key, os.environ[env_var])
-        console.print(f"[yellow]Overridden by ${env_var} = {env_value}[/yellow]")
+        typer.echo(f"Overridden by ${env_var} = {env_value}")
 
 
 @config_app.command("set")
 def config_set(
     key: str = typer.Argument(..., help="Config setting name (see 'bm config list')"),
     value: str = typer.Argument(..., help="New value"),
+    quiet: bool = typer.Option(False, "--quiet", help="Suppress notices and affordances"),
 ) -> None:
     """Set a config value, validated through BasicMemoryConfig before writing.
 
-    Invalid values (e.g. `cli_output_style` outside rich|plain) fail with the
+    Invalid values (e.g. a non-boolean for `kebab_filenames`) fail with the
     Pydantic validation error instead of being written to config.json.
     """
     _require_known_key(key)
@@ -217,20 +209,22 @@ def config_set(
     try:
         validated = BasicMemoryConfig.model_validate(candidate)
     except ValidationError as e:
-        console.print(f"[red]Error: invalid value for '{key}':[/red]")
-        console.print(f"[red]{e}[/red]")
+        # Pydantic's rendering is a multi-line block with a docs URL; rule 6 allows one
+        # line, so take the first error's message and drop the rest.
+        detail = e.errors()[0]["msg"]
+        typer.echo(f"invalid value for {key}: {detail}", err=True)
         raise typer.Exit(1)
 
     setattr(config, key, getattr(validated, key))
     config_manager.save_config(config)
 
-    console.print(f"[green]{key} = {_render_value(key, getattr(config, key))}[/green]")
+    typer.echo(f"{key} = {_render_value(key, getattr(config, key))}")
 
     env_var = _env_var_name(key)
-    if env_var in os.environ:
-        console.print(
-            f"[yellow]Note: ${env_var} is set and will override this file value "
-            "until the environment variable is unset.[/yellow]"
+    if env_var in os.environ and not quiet:
+        typer.echo(
+            f"Note: ${env_var} is set and will override this file value "
+            "until the environment variable is unset."
         )
 
 
@@ -248,4 +242,4 @@ def config_unset(
     setattr(config, key, default_value)
     config_manager.save_config(config)
 
-    console.print(f"[green]{key} reverted to default: {_render_value(key, default_value)}[/green]")
+    typer.echo(f"{key} reverted to default: {_render_value(key, default_value)}")

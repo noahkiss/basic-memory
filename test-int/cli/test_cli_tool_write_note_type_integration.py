@@ -1,12 +1,38 @@
-"""Integration coverage for `bm tool write-note --type` (Issue #875)."""
+"""Integration coverage for `bm tool write-note --type` (Issue #875).
 
-import json
+Rendered under output contract v2: write-note emits labelled `key: value`
+lines, `read-note --include-frontmatter` writes the file byte-exactly, and
+search-notes emits one row per result with the permalink first.
+"""
+
+import re
 
 from typer.testing import CliRunner
 
 from basic_memory.cli.main import app as cli_app
 
 runner = CliRunner()
+
+COUNT_LINE = re.compile(r"^\d+ results$")
+
+
+def _record(stdout: str) -> dict[str, str]:
+    """Parse labelled `key: value` lines into a dict."""
+    fields: dict[str, str] = {}
+    for line in stdout.splitlines():
+        if ": " in line:
+            key, value = line.split(": ", 1)
+            fields[key] = value
+    return fields
+
+
+def _permalinks(stdout: str) -> set[str]:
+    """Collect the leading permalink column from search-notes rows."""
+    lines = [line for line in stdout.splitlines() if line.strip()]
+    rows = [
+        line for line in lines if not COUNT_LINE.match(line) and line != "more results available"
+    ]
+    return {line.split()[0] for line in rows}
 
 
 def test_write_note_type_flag_round_trip(app, app_config, test_project, config_manager):
@@ -27,8 +53,7 @@ def test_write_note_type_flag_round_trip(app, app_config, test_project, config_m
         ],
     )
     assert write_result.exit_code == 0, write_result.output
-    write_data = json.loads(write_result.stdout)
-    permalink = write_data["permalink"]
+    permalink = _record(write_result.stdout)["permalink"]
 
     # Read back the frontmatter to confirm the persisted type.
     read_result = runner.invoke(
@@ -36,8 +61,7 @@ def test_write_note_type_flag_round_trip(app, app_config, test_project, config_m
         ["tool", "read-note", permalink, "--include-frontmatter"],
     )
     assert read_result.exit_code == 0, read_result.output
-    read_data = json.loads(read_result.stdout)
-    assert read_data["frontmatter"]["type"] == "guide"
+    assert "type: guide" in read_result.stdout.splitlines()
 
     # The search note-type filter must return the typed note.
     search_result = runner.invoke(
@@ -53,9 +77,7 @@ def test_write_note_type_flag_round_trip(app, app_config, test_project, config_m
         ],
     )
     assert search_result.exit_code == 0, search_result.output
-    search_data = json.loads(search_result.stdout)
-    permalinks = {item["permalink"] for item in search_data["results"]}
-    assert permalink in permalinks
+    assert permalink in _permalinks(search_result.stdout)
 
 
 def test_write_note_content_frontmatter_type_wins_over_flag(
@@ -80,14 +102,14 @@ def test_write_note_content_frontmatter_type_wins_over_flag(
         ],
     )
     assert write_result.exit_code == 0, write_result.output
-    write_data = json.loads(write_result.stdout)
-    permalink = write_data["permalink"]
+    permalink = _record(write_result.stdout)["permalink"]
 
     read_result = runner.invoke(
         cli_app,
         ["tool", "read-note", permalink, "--include-frontmatter"],
     )
     assert read_result.exit_code == 0, read_result.output
-    read_data = json.loads(read_result.stdout)
     # Content frontmatter "session" wins over the --type "guide" flag.
-    assert read_data["frontmatter"]["type"] == "session"
+    frontmatter_lines = read_result.stdout.splitlines()
+    assert "type: session" in frontmatter_lines
+    assert "type: guide" not in frontmatter_lines

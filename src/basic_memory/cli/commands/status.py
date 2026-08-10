@@ -1,13 +1,9 @@
 """Status command for basic-memory CLI."""
 
-import json
 from typing import Annotated, Optional
 
 import typer
 from loguru import logger
-from rich.console import Console
-from rich.panel import Panel
-from rich.tree import Tree
 
 from basic_memory.cli.app import app
 from basic_memory.mcp.async_client import get_client
@@ -16,63 +12,42 @@ from basic_memory.mcp.clients import ProjectClient
 from basic_memory.schemas import ProjectIndexStatusResponse
 from basic_memory.mcp.project_context import get_active_project
 
-# Create rich console
-console = Console()
-
-
-def add_observed_files_to_tree(tree: Tree, status: ProjectIndexStatusResponse) -> None:
-    """Add observed project-index files to the tree, grouped by directory."""
-    by_dir: dict[str, list[tuple[str, str, str | None, bool]]] = {}
-    for observed_file in status.observed_files:
-        path = observed_file.path
-        parts = path.split("/", 1)
-        dir_name = parts[0] if len(parts) > 1 else ""
-        file_name = parts[1] if len(parts) > 1 else parts[0]
-        checksum = observed_file.checksum[:8] if observed_file.checksum else None
-        by_dir.setdefault(dir_name, []).append((file_name, path, checksum, observed_file.indexed))
-
-    for dir_name, files in sorted(by_dir.items()):
-        if dir_name:
-            branch = tree.add(f"[bold]{dir_name}/[/bold]")
-        else:
-            branch = tree
-
-        for file_name, _, checksum, indexed in sorted(files):
-            detail = f" ({checksum})" if checksum else ""
-            # An unindexed file is the one case where the listing would otherwise read as
-            # a clean bill of health for a note no query can reach, so mark it inline.
-            marker = "" if indexed else " [yellow]not indexed[/yellow]"
-            branch.add(f"[cyan]{file_name}[/cyan]{detail}{marker}")
-
 
 def display_project_index_status(
     project_name: str,
-    title: str,
     status: ProjectIndexStatusResponse,
     verbose: bool = False,
+    quiet: bool = False,
 ) -> None:
-    """Display project-index observation status using Rich."""
-    tree = Tree(f"{project_name}: {title}")
-    tree.add(f"{status.total_files} observed file{'s' if status.total_files != 1 else ''}")
+    """Write the project-index observation as labelled lines, notices last."""
+    typer.echo(f"project: {project_name}")
+    typer.echo(f"total files: {status.total_files}")
+    typer.echo(f"unindexed files: {status.unindexed_file_count}")
+
+    if verbose:
+        path_width = max(
+            (len(observed.path) for observed in status.observed_files),
+            default=0,
+        )
+        for observed in sorted(status.observed_files, key=lambda observed: observed.path):
+            checksum = observed.checksum[:8] if observed.checksum else ""
+            # An unindexed file is the one case where the listing would otherwise read as
+            # a clean bill of health for a note no query can reach, so mark it inline.
+            marker = "" if observed.indexed else " not indexed"
+            typer.echo(f"{observed.path:<{path_width}}  {checksum}{marker}".rstrip())
 
     # Trigger: the scan saw files that have no index row.
     # Why: observation is a filesystem walk, and only indexing makes a file reachable by
     #      search or read. Folding both into one "observed" count is a silent wrong answer:
     #      the total looks healthy while every query against those files returns nothing.
     # Outcome: report the gap and name the command that closes it.
-    if status.unindexed_file_count:
+    if status.unindexed_file_count and not quiet:
         plural = status.unindexed_file_count != 1
-        tree.add(
-            f"[bold yellow]{status.unindexed_file_count} observed file"
-            f"{'s are' if plural else ' is'} NOT indexed[/bold yellow] — "
-            "invisible to search and read until 'basic-memory reindex'"
+        typer.echo(
+            f"{status.unindexed_file_count} file{'s' if plural else ''} not indexed — "
+            "invisible to search and read until reindexed"
         )
-
-    if verbose and status.observed_files:
-        files_branch = tree.add("[cyan]Observed Files[/cyan]")
-        add_observed_files_to_tree(files_branch, status)
-
-    console.print(Panel(tree, expand=False))
+        typer.echo("Run 'basic-memory reindex' to index them.")
 
 
 async def run_status(
@@ -121,7 +96,7 @@ def status(
         typer.Option(help="The project name."),
     ] = None,
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Show detailed file information"),
-    json_output: bool = typer.Option(False, "--json", help="Output in JSON format"),
+    quiet: bool = typer.Option(False, "--quiet", help="Suppress notices and affordances"),
     wait: bool = typer.Option(
         False,
         "--wait",
@@ -131,7 +106,6 @@ def status(
 ):
     """Show current project-index observation status.
 
-    Use --json for machine-readable output.
     The --wait flag is accepted for compatibility and returns the current
     project-index observation immediately.
     """
@@ -152,34 +126,14 @@ def status(
         project_name, project_index_status = run_with_cleanup(
             run_status(project, wait=wait, timeout=timeout)
         )
-
-        if json_output:
-            print(
-                json.dumps(
-                    project_index_status.model_dump(mode="json"),
-                    indent=2,
-                    default=str,
-                )
-            )
-        else:
-            display_project_index_status(
-                project_name,
-                "Project Index",
-                project_index_status,
-                verbose,
-            )
     except (ValueError, ToolError) as e:
-        if json_output:
-            print(json.dumps({"error": str(e)}, indent=2))
-        else:
-            console.print(f"[red]Error: {e}[/red]")
+        typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(code=1)
     except typer.Exit:
         raise
-    except Exception as e:
+    except Exception as e:  # pragma: no cover
         logger.error(f"Error checking status: {e}")
-        if json_output:
-            print(json.dumps({"error": str(e)}, indent=2))
-        else:
-            typer.echo(f"Error checking status: {e}", err=True)
-        raise typer.Exit(code=1)  # pragma: no cover
+        typer.echo(f"Error checking status: {e}", err=True)
+        raise typer.Exit(code=1)
+
+    display_project_index_status(project_name, project_index_status, verbose, quiet)

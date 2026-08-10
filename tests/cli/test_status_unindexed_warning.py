@@ -5,11 +5,6 @@ from search and read, so a bare "N observed files" reads as a clean corpus while
 query against those files misses.
 """
 
-from io import StringIO
-from unittest.mock import patch
-
-from rich.console import Console
-
 from basic_memory.cli.commands import status as status_command
 from basic_memory.schemas import ProjectIndexStatusResponse
 from basic_memory.schemas.project_index import ProjectIndexObservedFileResponse
@@ -32,45 +27,47 @@ def _status(*indexed_flags: bool) -> ProjectIndexStatusResponse:
     )
 
 
-def _render(status: ProjectIndexStatusResponse, verbose: bool = True) -> str:
-    # A wide, non-color console keeps rich from wrapping the warning mid-sentence, so the
-    # assertions test the message rather than the terminal width the test happens to run at.
-    buffer = StringIO()
-    console = Console(file=buffer, width=200, no_color=True)
-    with patch.object(status_command, "console", console):
-        status_command.display_project_index_status(
-            "q3test", "Project Index", status, verbose=verbose
-        )
-    return buffer.getvalue()
+def _render(capsys, status: ProjectIndexStatusResponse, verbose: bool = True, quiet: bool = False):
+    status_command.display_project_index_status("q3test", status, verbose=verbose, quiet=quiet)
+    return capsys.readouterr().out
 
 
-def test_status_warns_about_unindexed_observed_files():
+def test_status_warns_about_unindexed_observed_files(capsys):
     """An unindexed file must be counted separately and point at the fix."""
-    output = _render(_status(True, False, False))
+    output = _render(capsys, _status(True, False, False))
 
-    assert "3 observed files" in output
-    assert "2 observed files are NOT indexed" in output
+    assert "total files: 3" in output
+    assert "unindexed files: 2" in output
+    assert "2 files not indexed" in output
     assert "invisible to search and read" in output
-    assert "basic-memory reindex" in output
+    assert "Run 'basic-memory reindex' to index them." in output
 
 
-def test_status_marks_the_unindexed_file_in_the_verbose_listing():
+def test_status_marks_the_unindexed_file_in_the_verbose_listing(capsys):
     """The verbose listing must name which file is unreachable, not just how many."""
-    output = _render(_status(True, False))
+    output = _render(capsys, _status(True, False))
 
-    assert "note-1.md" in output
-    assert "not indexed" in output
+    assert "notes/note-1.md  00000000 not indexed" in output
+    assert "notes/note-0.md  00000000" in output
 
 
-def test_status_stays_quiet_when_everything_is_indexed():
+def test_status_stays_quiet_when_everything_is_indexed(capsys):
     """No warning when the observation and the index agree — the flag must mean something."""
-    output = _render(_status(True, True))
+    output = _render(capsys, _status(True, True))
 
-    assert "2 observed files" in output
-    assert "NOT indexed" not in output
+    assert "total files: 2" in output
+    assert "not indexed" not in output
 
 
-def test_status_warning_is_singular_for_one_unindexed_file():
-    output = _render(_status(False))
+def test_status_warning_is_singular_for_one_unindexed_file(capsys):
+    output = _render(capsys, _status(False))
 
-    assert "1 observed file is NOT indexed" in output
+    assert "1 file not indexed" in output
+
+
+def test_quiet_drops_the_warning_but_keeps_the_counts(capsys):
+    """--quiet removes notices and affordances; the payload stays whole."""
+    output = _render(capsys, _status(True, False), verbose=False, quiet=True)
+
+    assert "unindexed files: 1" in output
+    assert "Run 'basic-memory reindex'" not in output

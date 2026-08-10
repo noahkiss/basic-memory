@@ -1,13 +1,18 @@
-"""Tests for CLI schema commands (Rich output).
+"""Tests for CLI schema commands (output contract v2).
 
-Tests mock the MCP tool functions and verify Rich-formatted output.
+Each verb has exactly one rendering — no --json. Tests mock the MCP tool
+functions and assert the line shapes in docs/OUTPUT_CONTRACT.md.
 """
 
-import json
 from unittest.mock import AsyncMock, patch
 
 from typer.testing import CliRunner
 
+from basic_memory.cli.commands.schema import (
+    render_diff_report,
+    render_infer_report,
+    render_validate_report,
+)
 from basic_memory.cli.main import app as cli_app
 
 runner = CliRunner()
@@ -62,7 +67,7 @@ DIFF_REPORT_WITH_DRIFT = {
     "dropped_fields": [
         {"name": "phone", "source": "observation", "count": 0, "total": 5, "percentage": 0.0}
     ],
-    "cardinality_changes": ["role: single -> array"],
+    "cardinality_changes": ["role: schema declares single-value but usage is typically array"],
 }
 
 DIFF_REPORT_NO_DRIFT = {
@@ -74,6 +79,95 @@ DIFF_REPORT_NO_DRIFT = {
 }
 
 
+# --- Renderers (shared with `bm tool schema-*`) ---
+
+
+def test_render_validate_report_lines(capsys):
+    """One line per note, identifier first, details indented, count line last."""
+    render_validate_report(VALIDATE_REPORT)
+
+    assert capsys.readouterr().out.splitlines() == [
+        "people/alice  pass",
+        "people/bob    fail",
+        "  warning: Missing optional field: role",
+        "  error: Missing required field: name",
+        "1/2 valid, 1 warnings, 1 errors",
+    ]
+
+
+def test_render_validate_report_warn_status(capsys):
+    """A note that passed with warnings renders as warn, not pass."""
+    render_validate_report(
+        {
+            "total_notes": 1,
+            "valid_count": 1,
+            "warning_count": 1,
+            "error_count": 0,
+            "results": [
+                {
+                    "note_identifier": "people/carol",
+                    "passed": True,
+                    "warnings": ["Missing optional field: role"],
+                    "errors": [],
+                }
+            ],
+        }
+    )
+
+    assert capsys.readouterr().out.splitlines() == [
+        "people/carol  warn",
+        "  warning: Missing optional field: role",
+        "1/1 valid, 1 warnings, 0 errors",
+    ]
+
+
+def test_render_infer_report_lines(capsys):
+    """Field lines, then the suggested schema as key: value — no JSON blob."""
+    render_infer_report(INFER_REPORT, quiet=True)
+
+    assert capsys.readouterr().out.splitlines() == [
+        "name  observation  5  100%",
+        "role  observation  3  60%",
+        "Suggested schema:",
+        "  name: string, full name",
+        "  role?: string, job title",
+        "5 notes analyzed",
+    ]
+
+
+def test_render_infer_report_affordance(capsys):
+    """The --save affordance trails the payload and --quiet drops it."""
+    render_infer_report(INFER_REPORT)
+
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[-1].startswith("--save not yet implemented")
+    assert lines[-2] == "5 notes analyzed"
+
+
+def test_render_diff_report_sections(capsys):
+    """Sections are plain headings with counts; field name leads each line."""
+    render_diff_report(DIFF_REPORT_WITH_DRIFT)
+
+    assert capsys.readouterr().out.splitlines() == [
+        "New fields (1):",
+        "  email  60% of notes  observation",
+        "Dropped fields (1):",
+        "  phone  0% of notes  observation",
+        "Cardinality changes (1):",
+        "  role: schema declares single-value but usage is typically array",
+    ]
+
+
+def test_render_diff_report_omits_empty_sections(capsys):
+    """A section with no rows does not appear — absence is the signal."""
+    render_diff_report({**DIFF_REPORT_WITH_DRIFT, "dropped_fields": [], "cardinality_changes": []})
+
+    assert capsys.readouterr().out.splitlines() == [
+        "New fields (1):",
+        "  email  60% of notes  observation",
+    ]
+
+
 # --- validate ---
 
 
@@ -83,15 +177,15 @@ DIFF_REPORT_NO_DRIFT = {
     new_callable=AsyncMock,
     return_value=VALIDATE_REPORT,
 )
-def test_validate_renders_table(mock_mcp, mock_config_cls):
-    """bm schema validate renders a Rich table with results."""
+def test_validate_renders_report(mock_mcp, mock_config_cls):
+    """bm schema validate renders one line per note plus the summary."""
     result = runner.invoke(cli_app, ["schema", "validate", "person"])
 
     assert result.exit_code == 0, f"CLI failed: {result.output}"
-    assert "Schema Validation" in result.output
-    assert "people/alice" in result.output
-    assert "people/bob" in result.output
-    assert "1/2 valid" in result.output
+    assert "people/alice  pass" in result.output
+    assert "people/bob    fail" in result.output
+    assert "  error: Missing required field: name" in result.output
+    assert "1/2 valid, 1 warnings, 1 errors" in result.output
     mock_mcp.assert_called_once()
     assert mock_mcp.call_args.kwargs["output_format"] == "json"
 
@@ -103,10 +197,12 @@ def test_validate_renders_table(mock_mcp, mock_config_cls):
     return_value=VALIDATE_REPORT,
 )
 def test_validate_strict_exits_on_errors(mock_mcp, mock_config_cls):
-    """bm schema validate --strict exits with code 1 when errors exist."""
+    """--strict renders the report, then fails on stderr with the error count."""
     result = runner.invoke(cli_app, ["schema", "validate", "person", "--strict"])
 
     assert result.exit_code == 1
+    assert "1/2 valid, 1 warnings, 1 errors" in result.output
+    assert "strict: 1 errors" in result.stderr
 
 
 @patch("basic_memory.cli.commands.schema.resolve_cli_project", return_value="test-project")
@@ -124,18 +220,11 @@ def test_validate_strict_exits_on_errors(mock_mcp, mock_config_cls):
     },
 )
 def test_validate_empty_is_a_result_not_an_error(mock_mcp, mock_config_cls):
-    """A legitimate empty renders as a message and exits 0 (docs/OUTPUT_CONTRACT.md)."""
+    """A legitimate empty renders the reason and exits 0 (contract rule 5)."""
     result = runner.invoke(cli_app, ["schema", "validate", "person"])
 
     assert result.exit_code == 0
-    assert "No notes found" in result.output
-
-    json_result = runner.invoke(cli_app, ["schema", "validate", "person", "--json"])
-
-    assert json_result.exit_code == 0
-    parsed = json.loads(json_result.stdout)
-    assert "error" not in parsed
-    assert parsed["reason"] == "No notes found of type 'person'"
+    assert "No notes found of type 'person'" in result.output
 
 
 @patch("basic_memory.cli.commands.schema.resolve_cli_project", return_value="test-project")
@@ -145,11 +234,21 @@ def test_validate_empty_is_a_result_not_an_error(mock_mcp, mock_config_cls):
     return_value={"error": "Schema validation failed: database on fire"},
 )
 def test_validate_error_response(mock_mcp, mock_config_cls):
-    """A genuine failure goes to stderr and exits non-zero (docs/OUTPUT_CONTRACT.md)."""
+    """A genuine failure goes to stderr, exits 1, and writes nothing to stdout."""
     result = runner.invoke(cli_app, ["schema", "validate", "person"])
 
     assert result.exit_code == 1
     assert "Schema validation failed" in result.stderr
+    assert "people/" not in result.output  # no payload rows on the error path
+
+
+@patch("basic_memory.cli.commands.schema.lookup_project", return_value=(None, None))
+def test_validate_unknown_project(mock_lookup):
+    """An unscoped request is a failure: stderr, exit 1 (contract rule 5)."""
+    result = runner.invoke(cli_app, ["schema", "validate", "person", "--project", "nope"])
+
+    assert result.exit_code == 1
+    assert "No project found named: nope" in result.stderr
 
 
 @patch("basic_memory.cli.commands.schema.resolve_cli_project", return_value="test-project")
@@ -176,16 +275,35 @@ def test_validate_identifier_heuristic(mock_mcp, mock_config_cls):
     new_callable=AsyncMock,
     return_value=INFER_REPORT,
 )
-def test_infer_renders_table(mock_mcp, mock_config_cls):
-    """bm schema infer renders frequency table and suggested schema."""
+def test_infer_renders_report(mock_mcp, mock_config_cls):
+    """bm schema infer renders field lines and the suggested schema."""
     result = runner.invoke(cli_app, ["schema", "infer", "person"])
 
     assert result.exit_code == 0, f"CLI failed: {result.output}"
-    assert "Field Frequencies" in result.output
-    assert "name" in result.output
-    assert "Suggested schema" in result.output
+    assert "name  observation  5  100%" in result.output
+    assert "Suggested schema:" in result.output
+    assert "  role?: string, job title" in result.output
+    assert "5 notes analyzed" in result.output
     mock_mcp.assert_called_once()
     assert mock_mcp.call_args.kwargs["output_format"] == "json"
+
+
+@patch("basic_memory.cli.commands.schema.resolve_cli_project", return_value="test-project")
+@patch(
+    "basic_memory.mcp.tools.schema_infer",
+    new_callable=AsyncMock,
+    return_value=INFER_REPORT,
+)
+def test_infer_save_affordance_and_quiet(mock_mcp, mock_config_cls):
+    """--save earns the not-implemented affordance; --quiet drops it."""
+    saved = runner.invoke(cli_app, ["schema", "infer", "person", "--save"])
+    quiet = runner.invoke(cli_app, ["schema", "infer", "person", "--save", "--quiet"])
+
+    assert saved.exit_code == 0
+    assert "--save not yet implemented" in saved.output
+    assert quiet.exit_code == 0
+    assert "--save not yet implemented" not in quiet.output
+    assert "5 notes analyzed" in quiet.output
 
 
 @patch("basic_memory.cli.commands.schema.resolve_cli_project", return_value="test-project")
@@ -209,11 +327,12 @@ def test_infer_threshold_passthrough(mock_mcp, mock_config_cls):
     return_value={"error": "Schema inference failed: database on fire"},
 )
 def test_infer_error_response(mock_mcp, mock_config_cls):
-    """A genuine failure goes to stderr and exits non-zero (GAPS O8)."""
+    """A genuine failure goes to stderr, exits 1, and writes nothing to stdout."""
     result = runner.invoke(cli_app, ["schema", "infer", "person"])
 
     assert result.exit_code == 1
     assert "Schema inference failed" in result.stderr
+    assert "people/" not in result.output  # no payload rows on the error path
 
 
 @patch("basic_memory.cli.commands.schema.resolve_cli_project", return_value="test-project")
@@ -229,18 +348,11 @@ def test_infer_error_response(mock_mcp, mock_config_cls):
     },
 )
 def test_infer_no_pattern_is_a_result_not_an_error(mock_mcp, mock_config_cls):
-    """A legitimate no-pattern answer renders as a message and exits 0 (GAPS O5)."""
+    """A legitimate no-pattern answer renders the reason and exits 0 (GAPS O5)."""
     result = runner.invoke(cli_app, ["schema", "infer", "person"])
 
     assert result.exit_code == 0
-    assert "No schema pattern found" in result.output
-
-    json_result = runner.invoke(cli_app, ["schema", "infer", "person", "--json"])
-
-    assert json_result.exit_code == 0
-    parsed = json.loads(json_result.stdout)
-    assert "error" not in parsed
-    assert parsed["suggested_schema"] is None
+    assert "No schema pattern found for 'person' (threshold: 25%)" in result.output
 
 
 @patch("basic_memory.cli.commands.schema.resolve_cli_project", return_value="test-project")
@@ -258,11 +370,11 @@ def test_infer_no_pattern_is_a_result_not_an_error(mock_mcp, mock_config_cls):
     },
 )
 def test_infer_zero_notes(mock_mcp, mock_config_cls):
-    """bm schema infer shows message when zero notes found."""
+    """Zero notes carries no reason from the tool, but is still a result, exit 0."""
     result = runner.invoke(cli_app, ["schema", "infer", "person"])
 
     assert result.exit_code == 0
-    assert "No notes found" in result.output
+    assert "No notes found with type: person" in result.output
 
 
 # --- diff ---
@@ -279,10 +391,12 @@ def test_diff_renders_drift(mock_mcp, mock_config_cls):
     result = runner.invoke(cli_app, ["schema", "diff", "person"])
 
     assert result.exit_code == 0, f"CLI failed: {result.output}"
-    assert "drift detected" in result.output
-    assert "email" in result.output
-    assert "phone" in result.output
-    assert "role: single -> array" in result.output
+    assert "New fields (1):" in result.output
+    assert "  email  60% of notes  observation" in result.output
+    assert "Dropped fields (1):" in result.output
+    assert "  phone  0% of notes  observation" in result.output
+    assert "Cardinality changes (1):" in result.output
+    assert "  role: schema declares single-value but usage is typically array" in result.output
     mock_mcp.assert_called_once()
     assert mock_mcp.call_args.kwargs["output_format"] == "json"
 
@@ -294,11 +408,11 @@ def test_diff_renders_drift(mock_mcp, mock_config_cls):
     return_value=DIFF_REPORT_NO_DRIFT,
 )
 def test_diff_no_drift(mock_mcp, mock_config_cls):
-    """bm schema diff shows success message when no drift found."""
+    """No drift is a result: one line, exit 0."""
     result = runner.invoke(cli_app, ["schema", "diff", "person"])
 
     assert result.exit_code == 0, f"CLI failed: {result.output}"
-    assert "No drift detected" in result.output
+    assert "No drift detected for person schema." in result.output
 
 
 @patch("basic_memory.cli.commands.schema.resolve_cli_project", return_value="test-project")
@@ -315,18 +429,11 @@ def test_diff_no_drift(mock_mcp, mock_config_cls):
     },
 )
 def test_diff_no_schema_is_a_result_not_an_error(mock_mcp, mock_config_cls):
-    """No schema to diff against is a result, exit 0 (docs/OUTPUT_CONTRACT.md)."""
+    """No schema to diff against is a result, exit 0 (contract rule 5)."""
     result = runner.invoke(cli_app, ["schema", "diff", "person"])
 
     assert result.exit_code == 0
-    assert "No schema found" in result.output
-
-    json_result = runner.invoke(cli_app, ["schema", "diff", "person", "--json"])
-
-    assert json_result.exit_code == 0
-    parsed = json.loads(json_result.stdout)
-    assert "error" not in parsed
-    assert parsed["schema_found"] is False
+    assert "No schema found for type 'person'" in result.output
 
 
 @patch("basic_memory.cli.commands.schema.resolve_cli_project", return_value="test-project")
@@ -336,8 +443,9 @@ def test_diff_no_schema_is_a_result_not_an_error(mock_mcp, mock_config_cls):
     return_value={"error": "Schema diff failed: database on fire"},
 )
 def test_diff_error_response(mock_mcp, mock_config_cls):
-    """A genuine failure goes to stderr and exits non-zero (docs/OUTPUT_CONTRACT.md)."""
+    """A genuine failure goes to stderr, exits 1, and writes nothing to stdout."""
     result = runner.invoke(cli_app, ["schema", "diff", "person"])
 
     assert result.exit_code == 1
     assert "Schema diff failed" in result.stderr
+    assert "people/" not in result.output  # no payload rows on the error path

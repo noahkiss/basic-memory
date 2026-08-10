@@ -2804,7 +2804,7 @@ decision an agent makes rarely. The split: **brief names the types** (it derives
 the vocabulary anyway, so the list is free), **the write-path error teaches at the moment of
 failure** (item 3), and **the explainer command carries the full text on demand** (item 4).
 
-### W20 — `--json` may be the wrong agent-facing surface; W7's contract needs reopening
+### W20 — `--json` may be the wrong agent-facing surface; W7's contract needs reopening — **SHIPPED 2026-08-10**
 **Opened 2026-08-04 (user)**, while deciding W5's nag format: *"I don't even know if JSON is the
 best choice for giving data to an agent, anyway — anything could work, markdown, a table, some
 smaller structured output, whatever."*
@@ -2871,6 +2871,50 @@ envelope run about three times the tokens of the same rows as columns, and the g
 because JSON repeats key names on every record. That is reasoning, not a measurement. Take the real
 figures on real output before calling the change done; do not let this paragraph become the
 inherited-figure problem T18 was.
+
+**Measured 2026-08-10** on real output: 5 notes written to a scratch project, then
+`bm tool search-notes "sprint planning decisions" --json` captured verbatim (3951 bytes) and the
+same result set re-rendered as aligned columns. Token counts via tiktoken `cl100k_base` (a proxy —
+Claude's tokenizer is not public; the ratios are the finding, not the absolute counts):
+
+| rendering | tokens |
+|---|---|
+| v1 JSON envelope, 5 records | 1151 |
+| same 11 fields as aligned columns | 764 (−34%) |
+| realistic v2 columns: permalink, score, title, snippet + count line | 202 (−82%) |
+
+So the "3×" illustration was wrong in both directions: pure serialization overhead is ~1.5×, not
+3× — but the real v2 rendering wins ~5.7×, because the envelope also carries fields that are
+duplicates (`entity` ≡ `permalink`, `content` ≡ `matched_chunk`) or agent-useless
+(`external_id`, `entity_id`, full ISO timestamps). The token argument for v2 is really two
+arguments: columns beat braces, and a curated row beats a full record dump. The header line
+amortizes across rows while JSON re-pays its keys per record, so the gap widens with result size.
+
+**SHIPPED 2026-08-10.** `docs/OUTPUT_CONTRACT.md` is now version 2: rules, not a serialization.
+What was removed, wholesale: every `--json` flag, `--plain`, the TTY-detection/auto-JSON
+machinery in `tool.py`, and the `cli_output_style` config field — each verb has exactly one
+rendering. What each shape became: lists are aligned columns, identifier first, count line last
+(`search-notes`, `recent-activity`, `list-projects`, `project list`/`ls`, `orphans`,
+`config list`); single records are labelled `key: value` lines (`write-note`, `edit-note`,
+`delete-note`, `config get/set/unset`); grouped reports are plain sections (`project info` lost
+its panel/bar-chart dashboard, `status` lost its Panel/Tree, `schema validate/infer/diff` lost
+their Rich tables — the schema renderers are shared functions in `cli/commands/schema.py` called
+by both `bm schema *` and `bm tool schema-*`, one contract, two entry points). Notices and
+affordances trail the payload on stdout; `--quiet` drops them where they exist. All error paths
+now exit 1 with one message line on stderr and no payload on stdout (this also moved T11's
+`NewerSchemaError` message to stderr, and unified the two strict messages on `strict: N errors`).
+
+Judgment calls: rich rendering was removed rather than kept as a second mode — keeping it would
+have been the same "secondary mode" softening the user rejected for `--json`, and its box-drawing
+violates rule 1. The read-note byte-exact plain path became the read-note rendering (round-tripping
+is now a contract rule). `tests/cli/test_native_command_import_guard.py` swapped its probe from
+`--json`+json.loads to the column output; its import assertions are unchanged.
+
+Verified: fast-check 0; unit 3285/2 (3308 − 23; +67/−90 `def test_` reconciled — the deletions are
+the mode-precedence/JSON-envelope tests whose subject no longer exists); int 329/3 (330 − 1;
++7/−8 — one JSON-format-contract test folded into a v2 rewrite); doctor green. Live scratch smoke:
+`project list`, `search-notes`, `config list`, `orphans`, `status`, `project info` all render v2
+(columns, id first, trailing counts), streams clean.
 
 ### W21 — the permalink normalization contract is undocumented, and permalinks are this fork's identity
 **Opened 2026-08-07**, by the `.forked/` reconciliation pass, from `.forked/pass4-5-inventory.md`

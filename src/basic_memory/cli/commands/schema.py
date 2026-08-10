@@ -3,18 +3,16 @@
 Provides CLI access to schema validation, inference, and drift detection.
 Registered as a subcommand group: `bm schema validate`, `bm schema infer`, `bm schema diff`.
 
-Each command calls the corresponding MCP tool with output_format="json" and
-renders the result as Rich tables — same code path as `bm tool schema-*` but
-with human-friendly formatting.
+The three `render_*_report` functions are the single rendering of each report
+(docs/OUTPUT_CONTRACT.md v2): both these commands and `bm tool schema-*` call
+them, so the two entry points cannot drift apart.
 """
 
-import json
+from collections.abc import Sequence
 from typing import Annotated, Optional
 
 import typer
 from loguru import logger
-from rich.console import Console
-from rich.table import Table
 
 from basic_memory.cli.app import app
 from basic_memory.cli.commands.command_utils import run_with_cleanup
@@ -24,8 +22,6 @@ from basic_memory.project_marker import resolve_cli_project
 # MCP tool functions are imported inside each command: importing
 # basic_memory.mcp.tools loads the entire tool stack (fastmcp, mcp SDK,
 # SQLAlchemy), which would slow every CLI invocation, including --help (#886).
-
-console = Console()
 
 schema_app = typer.Typer(help="Schema management commands")
 app.add_typer(schema_app, name="schema")
@@ -45,118 +41,135 @@ def _resolve_project_name(project: Optional[str]) -> Optional[str]:
 # --- Rendering helpers ---
 
 
-def _render_validate_table(data: dict) -> None:
-    """Render a validation report dict as a Rich table."""
-    note_type = data.get("note_type")
-    title_label = note_type or "all"
+def _aligned(rows: Sequence[Sequence[str]]) -> list[str]:
+    """Join each row into a line, padding every column to a common width.
 
-    table = Table(title=f"Schema Validation: {title_label}")
-    table.add_column("Note", style="cyan")
-    table.add_column("Status", justify="center")
-    table.add_column("Warnings", justify="right")
-    table.add_column("Errors", justify="right")
+    Alignment only — the contract forbids box-drawing tables (rule 1).
+    """
+    if not rows:
+        return []
+    widths = [max(len(cell) for cell in column) for column in zip(*rows)]
+    return [
+        "  ".join(cell.ljust(width) for cell, width in zip(row, widths)).rstrip() for row in rows
+    ]
 
-    for result in data.get("results", []):
-        warnings = result.get("warnings", [])
-        errors = result.get("errors", [])
-        passed = result.get("passed", True)
 
-        if passed and not warnings:
-            status = "[green]pass[/green]"
-        elif passed:
-            status = "[yellow]warn[/yellow]"
-        else:
-            status = "[red]fail[/red]"
+def _rendered_reason(report: dict) -> bool:
+    """Print the empty-answer reason, if any, and report whether it stood in for a payload.
 
-        table.add_row(
-            result.get("note_identifier", ""),
-            status,
-            str(len(warnings)),
-            str(len(errors)),
-        )
+    An empty answer is a result, not a failure (contract rule 5). The schema
+    tools set `reason` only on paths that carry no payload, so a reason always
+    replaces the rendering rather than accompanying it.
+    """
+    reason = report.get("reason")
+    if not reason:
+        return False
+    print(reason)
+    return True
 
-    console.print(table)
-    console.print(
-        f"\nSummary: {data.get('valid_count', 0)}/{data.get('total_notes', 0)} valid, "
-        f"{data.get('warning_count', 0)} warnings, {data.get('error_count', 0)} errors"
+
+def _validation_status(result: dict) -> str:
+    if not result.get("passed", True):
+        return "fail"
+    return "warn" if result.get("warnings") else "pass"
+
+
+def render_validate_report(report: dict, quiet: bool = False) -> None:
+    """Render a validation report to stdout.
+
+    `quiet` is accepted for a uniform renderer signature; validation emits no
+    notices or affordances, so it changes nothing here.
+    """
+    if _rendered_reason(report):
+        return
+
+    results = report.get("results", [])
+    rows = [(result.get("note_identifier", ""), _validation_status(result)) for result in results]
+    for line, result in zip(_aligned(rows), results):
+        print(line)
+        for warning in result.get("warnings", []):
+            print(f"  warning: {warning}")
+        for error in result.get("errors", []):
+            print(f"  error: {error}")
+
+    print(
+        f"{report.get('valid_count', 0)}/{report.get('total_notes', 0)} valid, "
+        f"{report.get('warning_count', 0)} warnings, {report.get('error_count', 0)} errors"
     )
 
 
-def _render_infer_table(data: dict) -> None:
-    """Render an inference report dict as a Rich table."""
-    note_type = data.get("note_type", "")
-    notes_analyzed = data.get("notes_analyzed", 0)
-    suggested_required = data.get("suggested_required", [])
-    suggested_optional = data.get("suggested_optional", [])
-
-    console.print(f"\n[bold]Analyzing {notes_analyzed} notes with type: {note_type}...[/bold]\n")
-
-    table = Table(title="Field Frequencies")
-    table.add_column("Field", style="cyan")
-    table.add_column("Source")
-    table.add_column("Count", justify="right")
-    table.add_column("Percentage", justify="right")
-    table.add_column("Suggested")
-
-    for freq in data.get("field_frequencies", []):
-        pct = f"{freq.get('percentage', 0):.0%}"
-        name = freq.get("name", "")
-        if name in suggested_required:
-            suggested = "[green]required[/green]"
-        elif name in suggested_optional:
-            suggested = "[yellow]optional[/yellow]"
-        else:
-            suggested = "[dim]excluded[/dim]"
-
-        table.add_row(
-            name,
-            freq.get("source", ""),
-            str(freq.get("count", 0)),
-            pct,
-            suggested,
-        )
-
-    console.print(table)
-
-    suggested_schema = data.get("suggested_schema", {})
-    if suggested_schema:
-        console.print("\n[bold]Suggested schema:[/bold]")
-        console.print(json.dumps(suggested_schema, indent=2))
-
-
-def _render_diff_output(data: dict) -> None:
-    """Render a drift report dict as Rich output."""
-    note_type = data.get("note_type", "")
-    new_fields = data.get("new_fields", [])
-    dropped_fields = data.get("dropped_fields", [])
-    cardinality_changes = data.get("cardinality_changes", [])
-
-    has_drift = new_fields or dropped_fields or cardinality_changes
-
-    if not has_drift:
-        console.print(f"[green]No drift detected for {note_type} schema.[/green]")
+def render_infer_report(report: dict, quiet: bool = False) -> None:
+    """Render an inference report to stdout."""
+    if _rendered_reason(report):
         return
 
-    console.print(f"\n[bold]Schema drift detected for {note_type}:[/bold]\n")
+    notes_analyzed = report.get("notes_analyzed", 0)
+    # Zero notes carries no `reason` from the tool, but it is the same kind of
+    # empty answer: nothing to infer from, exit 0.
+    if notes_analyzed == 0:
+        print(f"No notes found with type: {report.get('note_type', '')}")
+        return
 
-    if new_fields:
-        console.print("[green]+ New fields (common in notes, not in schema):[/green]")
-        for f in new_fields:
-            console.print(
-                f"  + {f['name']}: {f.get('percentage', 0):.0%} of notes ({f.get('source', '')})"
-            )
+    for line in _aligned(
+        [
+            (freq["name"], freq["source"], str(freq["count"]), f"{freq['percentage']:.0%}")
+            for freq in report.get("field_frequencies", [])
+        ]
+    ):
+        print(line)
 
-    if dropped_fields:
-        console.print("[red]- Dropped fields (in schema, rare in notes):[/red]")
-        for f in dropped_fields:
-            console.print(
-                f"  - {f['name']}: {f.get('percentage', 0):.0%} of notes ({f.get('source', '')})"
-            )
+    suggested_schema = report.get("suggested_schema") or {}
+    if suggested_schema:
+        print("Suggested schema:")
+        for key, value in suggested_schema.items():
+            print(f"  {key}: {value}")
 
-    if cardinality_changes:
-        console.print("[yellow]~ Cardinality changes:[/yellow]")
-        for change in cardinality_changes:
-            console.print(f"  ~ {change}")
+    print(f"{notes_analyzed} notes analyzed")
+
+    if not quiet:
+        print(
+            "--save not yet implemented. "
+            f"Copy the schema above into schema/{report.get('note_type', '')}.md"
+        )
+
+
+def _render_drift_section(heading: str, rows: Sequence[Sequence[str]]) -> None:
+    """Print a drift section, or nothing when it is empty — absence is the signal."""
+    if not rows:
+        return
+    print(f"{heading} ({len(rows)}):")
+    for line in _aligned(rows):
+        print(f"  {line}")
+
+
+def render_diff_report(report: dict, quiet: bool = False) -> None:
+    """Render a drift report to stdout.
+
+    `quiet` is accepted for a uniform renderer signature; drift emits no
+    notices or affordances, so it changes nothing here.
+    """
+    if _rendered_reason(report):
+        return
+
+    new_fields = report.get("new_fields", [])
+    dropped_fields = report.get("dropped_fields", [])
+    cardinality_changes = report.get("cardinality_changes", [])
+
+    if not (new_fields or dropped_fields or cardinality_changes):
+        print(f"No drift detected for {report.get('note_type', '')} schema.")
+        return
+
+    def field_rows(fields: Sequence[dict]) -> list[tuple[str, str, str]]:
+        return [
+            (field["name"], f"{field['percentage']:.0%} of notes", field["source"])
+            for field in fields
+        ]
+
+    _render_drift_section("New fields", field_rows(new_fields))
+    _render_drift_section("Dropped fields", field_rows(dropped_fields))
+    # Cardinality changes arrive as prose already led by the field name
+    # (picoschema/diff.py), so they are one column, not three.
+    _render_drift_section("Cardinality changes", [(change,) for change in cardinality_changes])
 
 
 # --- Commands ---
@@ -173,14 +186,12 @@ def validate(
         typer.Option(help="The project name."),
     ] = None,
     strict: bool = typer.Option(False, "--strict", help="Exit with error on validation failures"),
-    json_output: bool = typer.Option(False, "--json", help="Output in JSON format"),
 ):
     """Validate notes against their schemas.
 
     TARGET can be a note path (e.g., people/ada-lovelace.md) or a note type
     (e.g., person). If omitted, validates all notes that have schemas.
 
-    Use --json for machine-readable output.
     Use --strict to exit with error code 1 if any validation errors are found.
     """
     # Deferred: loading the MCP tool stack at module import slows CLI startup (#886).
@@ -206,36 +217,22 @@ def validate(
             )
         )
 
-        # A genuine failure: JSON stream stays parseable JSON, humans get
-        # stderr, and the exit code says failure (docs/OUTPUT_CONTRACT.md).
-        if isinstance(result, dict) and "error" in result:
-            if json_output:
-                print(json.dumps(result, indent=2, default=str))
-            else:
-                typer.echo(f"Error: {result['error']}", err=True)
-            raise typer.Exit(1)
-
         # output_format="json" guarantees a dict return
         assert isinstance(result, dict)
 
-        # A legitimate empty answer (no schemas defined, no notes of the type,
-        # no schema for the type): exit 0 — it is a result, not a failure.
-        if result.get("reason"):
-            if json_output:
-                print(json.dumps(result, indent=2, default=str))
-            else:
-                console.print(f"[yellow]{result['reason']}[/yellow]")
-            return
+        if "error" in result:
+            typer.echo(f"Error: {result['error']}", err=True)
+            raise typer.Exit(1)
 
-        if json_output:
-            print(json.dumps(result, indent=2, default=str))
-        else:
-            _render_validate_table(result)
+        render_validate_report(result)
 
+        # --strict turns "the notes are wrong" into a failing exit for callers
+        # that gate on it; the report itself already rendered on stdout.
         if strict and result.get("error_count", 0) > 0:
+            typer.echo(f"strict: {result['error_count']} errors", err=True)
             raise typer.Exit(1)
     except ValueError as e:
-        console.print(f"[red]Error: {e}[/red]")
+        typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1)
     except Exception as e:
         if not isinstance(e, typer.Exit):
@@ -259,7 +256,7 @@ def infer(
         0.25, "--threshold", help="Minimum frequency for optional fields (0-1)"
     ),
     save: bool = typer.Option(False, "--save", help="Save inferred schema to schema/ directory"),
-    json_output: bool = typer.Option(False, "--json", help="Output in JSON format"),
+    quiet: bool = typer.Option(False, "--quiet", help="Drop notices and affordances"),
 ):
     """Infer schema from existing notes of a type.
 
@@ -268,8 +265,6 @@ def infer(
 
     Fields present in 95%+ of notes become required. Fields above the
     threshold (default 25%) become optional. Fields below threshold are excluded.
-
-    Use --json for machine-readable output.
     """
     # Deferred: loading the MCP tool stack at module import slows CLI startup (#886).
     from basic_memory.mcp.tools import schema_infer as mcp_schema_infer
@@ -286,47 +281,18 @@ def infer(
             )
         )
 
-        # A genuine failure: JSON stream stays parseable JSON, humans get
-        # stderr, and the exit code says failure either way (GAPS O8).
-        if isinstance(result, dict) and "error" in result:
-            if json_output:
-                print(json.dumps(result, indent=2, default=str))
-            else:
-                typer.echo(f"Error: {result['error']}", err=True)
-            raise typer.Exit(1)
-
         # output_format="json" guarantees a dict return
         assert isinstance(result, dict)
 
-        # A legitimate empty answer: notes were analyzed, nothing met the
-        # threshold. Exit 0 — "no pattern" is a result, not a failure (GAPS O5).
-        if result.get("reason") and not result.get("suggested_schema"):
-            if json_output:
-                print(json.dumps(result, indent=2, default=str))
-            else:
-                console.print(f"[yellow]{result['reason']}[/yellow]")
-            return
+        if "error" in result:
+            typer.echo(f"Error: {result['error']}", err=True)
+            raise typer.Exit(1)
 
-        # Handle zero notes
-        if result.get("notes_analyzed", 0) == 0:
-            if json_output:
-                print(json.dumps(result, indent=2, default=str))
-            else:
-                console.print(f"[yellow]No notes found with type: {note_type}[/yellow]")
-            return
-
-        if json_output:
-            print(json.dumps(result, indent=2, default=str))
-        else:
-            _render_infer_table(result)
-
-        if save:
-            console.print(
-                f"\n[yellow]--save not yet implemented. "
-                f"Copy the schema above into schema/{note_type}.md[/yellow]"
-            )
+        # The --save affordance is the only notice here, so it is the only
+        # thing --quiet has to drop; without --save there is nothing to say.
+        render_infer_report(result, quiet=quiet or not save)
     except ValueError as e:
-        console.print(f"[red]Error: {e}[/red]")
+        typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1)
     except Exception as e:
         if not isinstance(e, typer.Exit):
@@ -346,15 +312,12 @@ def diff(
         Optional[str],
         typer.Option(help="The project name."),
     ] = None,
-    json_output: bool = typer.Option(False, "--json", help="Output in JSON format"),
 ):
     """Show drift between schema and actual usage.
 
     Compares the existing schema definition against how notes of that type
     are actually structured. Identifies new fields,
     dropped fields, and cardinality changes.
-
-    Use --json for machine-readable output.
     """
     # Deferred: loading the MCP tool stack at module import slows CLI startup (#886).
     from basic_memory.mcp.tools import schema_diff as mcp_schema_diff
@@ -370,32 +333,16 @@ def diff(
             )
         )
 
-        # A genuine failure: JSON stream stays parseable JSON, humans get
-        # stderr, and the exit code says failure (docs/OUTPUT_CONTRACT.md).
-        if isinstance(result, dict) and "error" in result:
-            if json_output:
-                print(json.dumps(result, indent=2, default=str))
-            else:
-                typer.echo(f"Error: {result['error']}", err=True)
-            raise typer.Exit(1)
-
         # output_format="json" guarantees a dict return
         assert isinstance(result, dict)
 
-        # A legitimate empty answer (no schema to diff against): exit 0.
-        if result.get("reason") and not result.get("schema_found"):
-            if json_output:
-                print(json.dumps(result, indent=2, default=str))
-            else:
-                console.print(f"[yellow]{result['reason']}[/yellow]")
-            return
+        if "error" in result:
+            typer.echo(f"Error: {result['error']}", err=True)
+            raise typer.Exit(1)
 
-        if json_output:
-            print(json.dumps(result, indent=2, default=str))
-        else:
-            _render_diff_output(result)
+        render_diff_report(result)
     except ValueError as e:
-        console.print(f"[red]Error: {e}[/red]")
+        typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1)
     except Exception as e:
         if not isinstance(e, typer.Exit):
