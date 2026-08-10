@@ -1629,6 +1629,116 @@ Three things follow for the build:
 
 Found in: sweep-localhist.md:1, :7, :13, :19, :31, :37, sweep-handoffs.md:13, sweep-beans.md:1.
 
+**DECIDED 2026-08-05 (user) — failure handling, and who records changes the tool did not make.**
+Both questions are about the same defect: a **hole in the history**. A history with holes is worse
+than none, because it is trusted and is silently incomplete.
+
+**A — a failed commit blocks destructive writes only.**
+
+| operation | git broken | grounds |
+|---|---|---|
+| create a new note | write it, warn | nothing is lost — the note is on disk; a missing history entry costs nothing |
+| delete or overwrite | **refuse**, explain | the prior content is the thing the history exists to protect; without the commit it is gone |
+
+This keeps agents working for the common case and blocks them only where the loss is real. Rejected:
+refusing all writes (the tool stops working over something unrelated to note-taking, and agents will
+route around it), and writing silently (a hole nobody ever learns about).
+
+**Recover before failing.** Transient faults — chiefly `index.lock` — retry with a short backoff.
+**Guard the lock removal:** deleting `index.lock` while another process genuinely holds it corrupts
+the repo. Remove only as a last resort, only when the file is older than a few seconds and no live
+process holds it. The risk is small here (local, single-user, `bm` is the only writer) but the guard
+is cheap. Hard faults (full disk) are out of scope by the user's judgment: *"we have bigger issues
+to talk about."*
+
+**The error is an agent-actionable requirement, not a nicety.** It must name what failed, which
+repo, and what to try. An agent can clear a stale lock if told; it cannot act on `git failed`.
+Same standard as W19.
+
+**B — the tool only ever commits changes it made.**
+
+The write path commits **the paths it just touched**, never `add -A`. Anything else that is dirty is
+**reported, never assumed**:
+
+```
+note: 2 other files have uncommitted changes (not included in this commit)
+  ...
+  run 'bm history dirty' to review
+```
+
+*Why not label those files.* An earlier draft swept them in as `Actor: human`. The user rejected the
+premise: an uncommitted file is not necessarily a human edit — it can be a crashed agent write, a
+half-finished import, or another tool. Labelling it is a guess recorded as fact, and the
+`Actor:`/`Session:` trailers are what `undo --session` reads, so a wrong label makes undo do the
+wrong thing. Two unrelated changes welded into one commit have the same effect: undoing the agent's
+work also undoes the other change.
+
+*`Actor:` records only what the tool knows* — `agent` for an agent-facing write path, `cli` for a
+human-typed command, and **omitted** for a sweep of unexplained files. Silence beats a guess.
+
+*The sweep is opt-in and is its own command*, not a flag on a write verb — a flag would weld the
+sweep into an unrelated commit, the exact defect above. It also gives the nag a command to name,
+which is what makes an agent act instead of move on:
+
+```
+bm history dirty              # what is uncommitted and not ours
+bm history commit --all       # commit all of it, one commit, no Actor trailer
+bm history commit <path>...   # commit specific paths
+```
+
+**C — the watcher is not the mechanism, on three counts.** `WatchService` /
+`WatchCoordinator` exist (`src/basic_memory/index/`) but start **only with the MCP or API server**
+(`src/basic_memory/mcp/server.py:101`); there is no `bm watch` and no daemon, so nothing watches
+during CLI or fast-verb use. It is tied to the subsystem this fork is moving away from. And it
+commits per file-change event, so a few minutes of editing yields a commit per editor autosave —
+a record of typing, not of changes.
+
+**Re-measure the commit cost.** The 12 ms / 6 ms / ~8 ms figures above were taken on `add -A`.
+Staging an explicit path list is a different operation. The difference should be noise, but per the
+evidence rules the number must be re-taken rather than inherited.
+
+**Rescued 2026-08-07 from `.forked/local-history.md` before its deletion** — four measured facts
+that had no home here.
+
+**D — history does not grow without bound, and the only rule is not to disable `gc.auto`.**
+Measured on the prototype store:
+
+| state | size |
+|---|---|
+| loose objects before gc | 2,207 objects, **12 MB** |
+| after `git gc` | **568 KB** on disk; pack **229 KiB** |
+| the working copy it is a history of | 804 KB |
+
+So: **never prune history on a schedule** — there is nothing to reclaim. Let git's own `gc.auto` run;
+it triggers near 6,700 loose objects and performed the 12 MB → 568 KB compaction unattended. The one
+way to get this wrong is to disable it.
+
+**E — cross-machine sync is one branch per machine, never merged.** Verified: one private remote,
+a branch per machine (`machine1`, `machine2`), both push cleanly, conflict-free by construction, and
+either machine can read the other's tree (`git show origin/machine2:<path>`). The central store makes
+this *more* attractive — one remote and one branch pair, not one per project.
+
+> **STANDING RULE — the store repo must never have a public remote.** Recorded 2026-08-07 from
+> `.forked/decisions.md` D2/D3, which is gitignored and was therefore the only home for a
+> constraint that governs every note this fork will ever write. Sync targets a **private** remote
+> only, from personal machines only; work and client machines never push. The unsanitized original
+> names a specific host and stays out of this file.
+
+**F — two write-path gotchas this entry previously stated only half of.**
+
+- `--no-verify` is the **wrong** fix for the pre-commit-hook trap. It is per-invocation and easy to
+  forget; `core.hooksPath=/dev/null` inside the store repo is the fix.
+- The environment scrub covers **`GIT_WORK_TREE` as well as `GIT_DIR`**, and `--git-dir` is passed
+  as a flag on each invocation. Reproduced: with `GIT_DIR` exported, `git log` run in a project root
+  printed the *store's* history and `git rev-parse --git-dir` returned the store path.
+
+**G — a JSONL journal was considered and rejected as the system of record.** A human editing a note
+in `$EDITOR` produces no journal entry, so the journal would confidently describe a state that does
+not exist. It survives only as a possible complement, and is unbuilt.
+
+**Still open, inherited from `local-history.md` §9:** off-machine durability (does history die with
+the directory?) — partly answered by **E**, not closed.
+
 ### W4 — closed record vocabulary enforced in the write path
 Humans extend the vocabulary; agents may only select from it. Upstream's frontmatter vocabulary is
 fully open, so enforcement is ours and cannot live in a wrapper.
@@ -1636,6 +1746,92 @@ fully open, so enforcement is ours and cannot live in a wrapper.
 **Decided 2026-07-31:** W4 does not build on `picoschema/`; that subsystem is stripped as the first
 commit of this build (see O-picoschema for grounds). The vocabulary source is `.bm.yml`, validated
 by a bespoke checker that W5 wires into `bm doctor`.
+
+**DECIDED 2026-08-04 (user) — the type set is six, closed, and named in plain English.**
+`.forked/schema.md` §1 had three genre types plus `unsorted`. Testing it against four real cases
+(relationship notes, coding notes, a forked repo's coding notes, a long-running enterprise
+migration) found two of them had no home, and the schema's own axes explain why: types are keyed on
+**temporal shape** (lifecycle / date / mutability / supersession), and two shapes were never
+considered — every candidate §1 rejected was a flavour of *work*.
+
+| type | lifecycle | world-time date | mutable | superseded | picks it |
+|---|---|---|---|---|---|
+| `task` | yes | `opened` | `status` | no | **do it** |
+| `guide` | no | none | title + body | no | **consult it** |
+| `finding` | no | `event-date` req | none | **yes** | **learned it** |
+| `profile` | no | `since` (opt) | title + body + declared fields | no | **refer to it** |
+| `state` | no | none | title + body | no | **how things are** |
+| `inbox` | no | none | — | no | **can't tell** |
+
+`review-by` is required and `.bm.yml`-defaulted on **both** `finding` and `guide` — instructions rot
+faster than findings do, and it puts guides inside the gardener's expiry query for free.
+
+**Renames from the draft, and why.** `entity` → `profile`: "entity" already means the DB-level
+indexed representation of a file in this codebase, so reusing it collides in every conversation.
+`fact` → `finding` (kept): `fact` implies settled truth, but this is the only supersedable type —
+it is provisional by construction. `snapshot` → `state` (kept): "snapshot" implies a retained
+series, and this type is overwritten or deleted with no history. `howto` → `guide`: `howto` excludes
+explainers, which would push them into `finding` — the exact misfiling the split exists to prevent.
+
+**`finding` vs `guide` is the split this repo already runs.** `AGENTS.md` is a guide — edited in
+place, always current. `GAPS.md` entries are findings — dated, superseded rather than rewritten,
+kept after they ship. `AGENTS.md` says so itself: *"Every rule below was bought with a wasted pass,
+a wrong diagnosis, or a red suite."* Guide holds the instruction, finding holds the evidence. A
+guide edit does **not** require a finding; the test is *"would you want to find this again without
+going through the guide?"*
+
+**Reversibility, which is why six and not five.** 6 → 5 later retypes only guides (the smaller
+pile); 5 → 6 later means re-reading every finding to sort out which were guides. §2 makes a type
+change *a new record*, so neither is free — start on the side that is cheaper to undo. Same shape as
+§1's own ">~150 findings" escape hatch.
+
+**Extension rules — fields and types get different answers, because the blast radius differs.**
+An extra optional *field* does not fragment queries and is reversible by deleting a line. A new
+*type* fragments every type-scoped query permanently and, per §2, cannot be undone per record
+without rewriting each one with a new id — orphaning every edge bound to the old permalink.
+
+- **Fields:** agents **may** add a declared optional field. Each is a name plus one of three kinds
+  (`string`, `date`, `enum` + values). No required-if, no cross-field rules, no defaults beyond
+  `review-by`'s. Declared extras are **optional-only** — a repo-required field makes notes
+  unportable and fails every cross-repo import.
+- **Types:** agents may **propose, never enable.** `bm new --type runbook` fails; the error says to
+  file it `inbox` and records the proposed type on the record. `bm doctor` surfaces *"4 inbox
+  records propose type `runbook`"*, and a human promotes it with one command. This reuses the
+  existing escape hatch and beats the S7 return-visit problem, because the human is already in
+  `doctor` when they see it.
+
+**The vocabulary file moves into the store, and this is load-bearing.** `AGENTS.md` calls `.bm.yml`
+*"a pointer, not a container"* at a **working directory** root — usually someone else's code repo.
+`schema.md` §3 puts `types:`/`statuses:`/`areas:` in a file at the **store** root. Those are two
+files under one name. They must split: the working-dir pointer keeps `.bm.yml`; the vocabulary
+becomes a separate file under `store/<id>/`. If the vocabulary lived at the working-dir root, W3's
+history could not see it — and then agent field-extension has **no enforcement at all**, since the
+only real check is that the change is a commit carrying an `Actor: agent` trailer.
+
+**Enforcement lives in the service layer, not the CLI or the MCP tool.** `entity_service.py:368`
+`create_entity_with_content` is the agent write path; `entity_service.py:674`
+`upsert_entity_from_markdown` is the sync/watcher path a human's text editor reaches. Checking only
+the CLI rebuilds beans' failure exactly (`.forked/decisions.md` R5: the CLI rejected
+`maintenance-record` while GraphQL wrote it to disk, and the `types:` config block was silently
+ignored).
+
+**The sync path always indexes and never rejects.** Refusing to index a hand-edited off-vocabulary
+file makes it invisible to search *and* to `doctor` — on disk, unfindable, silent. Index it, record
+the violation, let `doctor` report it. §4 already says a human hand-editing a file is not an error.
+
+**Unknown frontmatter *keys* are allowed and flagged**, not rejected: frontmatter is BM's open
+metadata surface and W18 now indexes it into FTS. Sprawl is a *type* and *value* problem.
+
+**Acceptance condition, set by the user and binding:** six types ship only with (a) CLI help that
+says when to use each, (b) a primer that explains the set, and (c) write-path errors that name the
+allowed values in the same plain vocabulary. See **W19**. A closed vocabulary an agent cannot
+understand at the moment of filing relocates the misfiling rather than preventing it.
+
+**Owed before the build:** `.forked/schema.md` §1–§4 predate all of this and must be rewritten —
+the type table, the per-type field sections, the `.bm.yml` example (its `types:` list is now real),
+and §4's *"exactly two mutable things in the whole schema"*, which becomes four. That last one is
+safe now in a way it was not when written, because W3 puts every edit in the history repo; the rule
+was only ever guarding against edits that vanished.
 
 ### W5 — the remaining schema-validation rules, inside `bm doctor` — **NOT a `bm check` command**
 **Rewritten 2026-08-03.** Two things were wrong with this entry, one naming and one substantive.
