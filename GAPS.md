@@ -1977,6 +1977,64 @@ block and `AGENTS.md`). W6 therefore runs **after** W3, so the import is itself 
 Found in: sweep-status-agents.md:61, sweep-handoffs.md:37, sweep-inv-plan.md:49,
 sweep-decisions.md:25, sweep-prior-art.md:31.
 
+**CLOSED 2026-08-05 (user) — nothing ships for this.** The migration is a Claude workflow: scan
+repos first for candidate files (`STATUS.local.md`, `.forked/`, `GAPS`/`backlog`/`todo` and
+similar), then one agent per repo, with validator agents checking the output. *"We don't need any
+defined code-based importer."*
+
+The three original requirements resolve without code:
+
+- **Resumable** — inherent to one-agent-per-repo. A dead run re-runs the repos that did not finish.
+- **Normalizing** — the agents classify into W4's six types, and W4's write-path enforcement is what
+  keeps them inside the vocabulary. This is the load the closed vocabulary was built to carry.
+- **Idempotent** — not needed. The user does not plan to run it twice, and validator agents cover
+  the case. A `source:`-collision check on the write path was proposed and **rejected as
+  unnecessary**; if a repeat import ever happens, that is the cheap place to add it (two records
+  legitimately share a source, so it would be a warning naming the existing record, never a
+  refusal).
+
+**The verbatim `_import/` copy from `.forked/schema.md` §7 is also dropped.** It existed to guarantee
+file-level losslessness when extraction quality was uncertain. It is no longer needed: the store now
+lives outside every source worktree, the source repos keep their own git history, and `source:`
+points back at the original. **This holds only while the source files stay in place** — if imported
+`STATUS.local.md` files are later deleted, the copy becomes necessary again and this decision must
+be revisited.
+
+**REVISITED 2026-08-07 (user) — the sources do *not* stay in place, so the archive comes back.** The
+condition above fired. The user's decision: *"the source files can and should be trimmed, preferably
+to basically nothing"*, with *"a snapshot at the time of running"* kept as a backup — *"could even
+go into some custom place in the bm location."*
+
+So three things change:
+
+1. **A verbatim snapshot is taken before any trim**, at run time, of every file the migration reads.
+   Byte-for-byte, no frontmatter, no schema.
+2. **It lives inside the store repo but outside any project** — `store/_archive/<YYYY-MM-DD>/<repo>/`
+   — so **W3's history covers it for free** and it is one `git show` away forever. It must be
+   **excluded from indexing** (W10 shipped that mechanism); it is a backup, not note content, and
+   `AGENTS.md`'s "the store is the only home for note content" is not violated by a file that is
+   not a note.
+3. **Phase 1's "never edit a source file" rule is replaced**, not merely relaxed. The new rule:
+   *snapshot first, extract, then trim the source*. An agent may not trim a file it did not snapshot.
+
+**This closes the open conflict** raised in `.forked/migration-workflow.md` on 2026-08-07 — the old
+`migration.md` wanted absorbed content deleted from the source with a pointer left behind, and the
+workflow forbade touching sources. The user resolved it in favour of trimming, with the snapshot as
+the safety net that makes trimming reversible.
+
+**Deliberately not decided here:** how far "basically nothing" goes — whether a trimmed
+`STATUS.local.md` keeps a pointer stub, or the file is removed entirely. W9 makes `bm` replace that
+file anyway, so the two decisions should be taken together when W9's dotfiles transition happens.
+
+**Ordering consequence:** "W3 lands before W6" is now advisory rather than a build gate. W3 still
+wants to land before the migration runs, so the import is a revertable commit — but nothing in the
+tree depends on it.
+
+**The workflow shape is sketched in `.forked/migration-workflow.md`** (2026-08-05): phase 0 scan
+with a human-reviewed candidate list, phase 1 one extraction agent per repo, phase 2 validators,
+phase 3 report gated on `bm doctor`. It records the agent-brief rules (write only through `bm new`,
+never touch a source file, never invent a date, no summarizing) and the carried-over traps.
+
 ### W7 — an agent-facing output contract — **SHIPPED 2026-07-31: `docs/OUTPUT_CONTRACT.md` v1; schema commands + search envelope conformed**
 B3 records that one `--json` command exits 1. The underlying gap is that no contract exists for it to
 violate: JSON to stdout only, diagnostics to stderr, no ANSI inside JSON, non-zero exit on failure,
