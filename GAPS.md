@@ -1871,7 +1871,90 @@ and not by `picoschema/` (see O-picoschema for the grounds).
 
 Found in: sweep-schema.md:43.
 
-### W6 — an idempotent, resumable importer
+**DECIDED 2026-08-04 (user) — the mechanism, which governs all five rules.**
+
+W4 settled the policy (agent write path rejects, sync path always indexes and never rejects,
+`doctor` reports). W5 owes the mechanism, and one question sits under all five rules: *where does a
+violation live between the moment sync indexes a bad file and the moment anything reports it?*
+Every check `doctor` runs today is a SQL query over indexed columns, but four of these five rules
+are about frontmatter **values**, which are not columns.
+
+**A — sync persists violations; `doctor` queries them. Not a re-parse.**
+`upsert_entity_from_markdown` already parses the file, so it runs the checker and writes rows to a
+violation table keyed by entity. Rejected alternative: `doctor` walks the store and re-parses. The
+deciding reason is **B** below — a warning on every command has to be nearly free, and the cheapest
+possible re-parse is O(corpus) file I/O, which is the entire latency budget of a fast verb spent on
+a banner that usually says nothing. Persisted violations make it one indexed count query.
+
+Secondary grounds: `bm doctor`'s hygiene checks and `bm brief` consume the same rows instead of each
+re-parsing (this read `bm gc` until 2026-08-07 — W2 abolished that command the day after W5-A was
+written, and the reconciliation pass caught the slip);
+and it is the only option where W4's *"index it, record the violation, let doctor report it"* is
+literally what the code does — the re-parse options give the sync-path check and the report-path
+check two implementations that can drift.
+
+Cost, stated honestly: one table, one Alembic migration, and a revalidation trigger when the
+vocabulary file changes (counts are stale until then). Vocabulary edits are *"a deliberate human
+act"* per `.forked/schema.md` §3, so that trigger has an obvious home.
+
+**No background `doctor`.** The user's premise was right — agents do not run `doctor` on their own
+initiative — but the fix is the nag, not a daemon. Sync already knows the violation at write time;
+a background process would re-derive it with a lifecycle to own, against the house rule on hidden
+background work.
+
+**B — the nag: any project-touching command reports the count.**
+Rationale (user): agents treat corpus hygiene as not-their-problem and will not run `doctor`
+unprompted, but they reliably act on a warning delivered as part of a message they were already
+reading — the model is a `git push` reporting outstanding advisories.
+
+- **Content: count + top reason + pointer.** `4 records need attention (3 propose type 'runbook')
+  — run 'bm doctor' for details`. The top reason is one `GROUP BY` on the same query and it is what
+  makes the line actionable; a bare count just relocates the lookup into `doctor`.
+- **Verbosity is not a concern.** Erring long is fine here.
+- **Never changes an exit code.** Violations are corpus state, not command failure —
+  `docs/OUTPUT_CONTRACT.md`'s addressing-vs-content line puts them on the content side. A non-zero
+  exit would break every script that runs `bm ls` against an imperfect corpus.
+- **No throttle.** Rate-limiting means the one command an agent runs in a session may be the
+  suppressed one, and it makes behaviour depend on invisible state.
+- **Suppressed only on `bm doctor` itself**, which is about to print all of it.
+- **Stream and format are NOT decided here** — stderr, a `notices` field, or trailing the payload
+  are all open. That question belongs to **W20**, which reopens the shipped output contract.
+
+A correction worth keeping: an early draft argued for the top reason on the grounds that agents
+"learn to ignore" a constant banner. They do not — every session is fresh. The argument that
+survives is actionability, not habituation.
+
+**C — nag scope follows `.bm.yml`, which is a scope *narrowing*, not a project lookup.**
+
+| cwd | scope |
+|---|---|
+| inside a `.bm.yml` tree | pinned to that project — you declared which one you mean |
+| anywhere else | **all projects** — unscoped is the honest answer, not a fallback |
+| `--project X` | overrides either |
+
+Pinned → that project's count. Unscoped → a rolled-up count, with the top reason naming its
+project. This is the user's requirement in both directions: an agent must not be handed another
+project's problems while working inside a marked tree, *and* an agent must be able to review all
+outstanding `bm` work, pull information out of another project, or hand off a session without first
+`cd`-ing anywhere. Both fall out of the table with no flag — `--all-projects` has nothing left to
+do and is not built.
+
+Rejected: nagging about the configured default project when no marker is present. It is the exact
+behaviour the user ruled out, and naming the project in the line only stops a reader being confused,
+not an agent from acting on it.
+
+**Consequence — the default-project fallback retires for reads.** Today an unmarked cwd resolves to
+`config.json`'s default project. Under this model reads are unscoped instead. The default project
+survives as a **write** target only (`bm new` outside a marker still needs a home for the note).
+Reads unscoped, writes explicitly homed.
+
+**What remains mechanical.** With A settled, the five rules above are lints on one code path with
+one report surface. Rule 5 (validate on read, not only on write) is largely answered: sync validates
+every file it indexes, including hand edits, so drift cannot sit undetected the way `status: done`
+did in the predecessor tool. W4 also moves rule 4 — `review-by` is required on **`guide`** as well
+as `finding`.
+
+### W6 — an idempotent, resumable importer — **CLOSED 2026-08-05 (user): no importer ships; it is a Claude workflow**
 The corpus is written by other sessions while a migration runs. Measured over twenty minutes in a
 single session: `project-a` 271 → 368 lines, `project-b` 292 → 438, `project-c` 21 → 31, and the
 corpus count 52 → 53 files. A one-shot importer silently drops everything written while it runs, and
