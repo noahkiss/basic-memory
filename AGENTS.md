@@ -203,6 +203,17 @@ judgment call taken. No Claude co-author line, no generated-with footer.
 The repo is public. No local paths, no personal material, nothing from `.forked/` committed. A bare
 `gh repo view` in this directory reports **upstream** — always name the fork explicitly.
 
+### The stop-list — the only things that still require asking
+
+Everything else in this file is a rule to follow. These four are decisions to bring back:
+
+- Deleting or force-pushing anything already published to `origin`.
+- Deleting a subsystem not already named for deletion in `GAPS.md`.
+- Anything touching the user's machine outside this repo and `~/.basic-memory/`.
+- A change in what the product *is* — new verbs, dropped verbs, a different store design.
+
+Moved here 2026-08-07 from `.forked/campaign.md`, which was deleted; it was the only home for this.
+
 ---
 
 *Everything below is upstream's project guide, trimmed to what this fork actually runs. Where it
