@@ -2098,7 +2098,114 @@ prints nothing and exits 0, direct DB path (no MCP import cost). W8 closes when 
    sections from the vocabulary instead of the hardcoded trio, so new record types appear without
    editing brief.
 
-### W9 — a `STATUS.local.md` emitter with a validated contract
+**Amended 2026-08-04.** W4's decided type set is `task` / `guide` / `finding` / `profile` / `state`
+/ `inbox` — none of which is the hardcoded trio, so item 2 is a rewrite of brief's sections rather
+than a generalization of them. Two consequences worth stating before the build:
+
+- **Not every type belongs in a session primer.** `task` (non-terminal `status`) and `state` earn
+  their rows unconditionally. `finding` wants the `review-by`-expired subset, not recency. `guide`
+  and `profile` are consulted on demand and probably rate no rows at all — a brief that lists every
+  guide is a table of contents, which is content, which W8 exists to forbid. Deriving *sections*
+  from the vocabulary must not mean deriving *rows* uniformly from it.
+- **Brief names the types; it does not explain them.** The per-type explainer is W19 item 4, a
+  separate on-demand command. Brief's ~50-token cap is spent every session; a filing decision an
+  agent makes rarely must not be billed to it.
+
+**DECIDED 2026-08-06 (user) — how the primer reaches an agent. This closes the question
+`.forked/decisions.md:597` deferred to W8.**
+
+**S4 is refined, not upheld.** S4 concluded "inject a pointer, not content" from the observation
+that injected STATUS was skimmed. The diagnosis was right and the conclusion one step too wide. The
+user's counter-evidence: injected *tool* information works reliably — the harness's own
+per-tool-call status reminder and usage telemetry both change agent behaviour, and this session is a
+live positive control (the assistant's repeated `STATUS.local.md` updates are hook-driven, not
+self-initiated). The real split is **timing and repetition**, not injection:
+
+| shape | example | result |
+|---|---|---|
+| once, at session start, before the task is known | the old STATUS dump | skimmed, then re-read later anyway |
+| repeatedly, alongside actions | status reminder, usage telemetry | acted on |
+
+A pointer injected once at startup would have failed for the same reason the content did. And the
+mechanisms that work ride on **any** tool call, not on a related one — which is why an in-`bm`
+notice alone cannot solve this: it requires the very action it is trying to prompt.
+
+**Three layers. Only the middle one knows anything.**
+
+| layer | what it is | what it knows |
+|---|---|---|
+| harness reminder | static line after tool calls, in the user's own hook + `CLAUDE.md` | **nothing** — "record things in bm" |
+| `bm` output | notices on every `bm` command | everything — counts, what is broken, what to run |
+| escalation | a heavier prompt at a milestone | comes from `bm` output; the hook cannot know |
+
+The layers cannot drift, because the hook makes no factual claim. Every fact is produced by `bm` at
+the moment it is asked.
+
+**`bm` never installs or edits a hook (user).** *"I'm not a big fan of apps which try to add/modify
+hooks themselves."* The README documents a short snippet; wiring it is the user's deliberate act.
+
+**No cached notice file, and no `bm` call from the hook.** An earlier draft proposed `bm` writing a
+one-line status file for the hook to `cat`. Retired — the user's design carries no `bm` data in the
+hook at all, which removes three problems rather than solving them: the **speed** problem (measured
+floor is 0.15 s for `bm --version`, 1.1 s for a real verb — unusable after every tool call),
+**staleness**, and the need to label which project a cached line refers to. A static string has none
+of these.
+
+**Follow-up suggestions are `bm`'s own verbs, shipped as defaults, not user config.** An earlier
+draft proposed a user-authored config list of external tools; the user corrected the premise —
+*"most uses of bm are going to probably come down to 5 or 6 main tools anyway."* Once the follow-ups
+are bm's own closed verb set, this collapses into the W5-B notice format already decided
+(count + top reason + the command to run). There is no separate escalation mechanism; there is only
+which notice fires:
+
+| condition | notice points at |
+|---|---|
+| schema violations exist | `bm doctor` |
+| findings past `review-by` | `bm doctor --only hygiene` |
+| `inbox` pile not empty | `bm ls --type inbox` |
+| dirty files the tool did not write | `bm history dirty` |
+| open items exist, nothing read yet this session | `bm brief` |
+| sessions in this project never mined | `bm mine` |
+
+W5-B's cap applies: at most two per command, highest priority first.
+
+**Corrected 2026-08-06.** This paragraph first read *"never the same notice twice in one session"*,
+which contradicted W5-B's explicit **no throttle** decision and required per-session state `bm` does
+not hold. Notices are stateless: the same condition prints the same line every time, because the
+condition is still true. See the matching correction on W19 item 5.
+
+**Milestones are condition-based, not invocation counts.** The user noted a hook could detect `bm`
+in a tool call and treat that as a milestone, but judged it *"basically the same as follow-up
+commands and probably a bit harder to keep track of"* — agreed; it duplicates state `bm` already
+holds.
+
+**The one nudge `bm` cannot produce** is the prompt to record something at all: an agent that has not
+run `bm` gets no `bm` output. That is the static harness line, and it is the whole reason layer 1
+exists.
+
+**No SessionStart injection of the primer.** That part of S4 stands — the primer is content, and
+content delivered before the task is known is skimmed.
+
+**Judgment call (assistant, reversible): `guide` and `profile` get no rows in `bm brief`.** A brief
+listing every guide is a table of contents, which is content, which W8 exists to forbid. They are
+consulted on demand via search. Reverse this only with evidence that an agent failed to find a guide
+it needed.
+
+**Rescued 2026-08-07 from `.forked/hook-design.md` before its deletion — an empty brief and a broken
+brief are the same output.** This entry records *"empty brief prints nothing and exits 0"* as a
+virtue and never states the cost: a bad project name, an un-migrated DB, and a config error **all
+degrade to silence too**, so a genuinely broken brief is indistinguishable from a healthy quiet one.
+As built, failures log at DEBUG and `bm brief -p <name>` by hand is the only diagnostic. The fix is a
+`--verbose` flag, roughly 10 lines, and it was not built. Decide it when W8 lands; note it interacts
+with W20 rule 5, which makes an empty result a *stated* result rather than silence.
+
+**Note — the `beans prime` comparison figures in this entry are no longer reproducible.** Probed
+2026-08-06 on the installed build: `beans prime` prints nothing and exits 0 outside a beans project,
+and `beans prime --help` shows `-h` plus two global flags, contradicting this entry's *"shows no
+flags at all"*. The 189-line / ~1,850-token measurement was taken inside a project on an older
+build. Treat it as a historical record, not a check to re-run.
+
+### W9 — replacing `STATUS.local.md` — **DECIDED 2026-08-06 (user): `bm` replaces it fully; no emitter is built**
 The headline file stays flat (B4), but it must be written *by* the store rather than by hand — and the
 write has to satisfy three consumers with three different parsers: the statusline script requires
 `lines[0].trim() === '---'` **and** `lines[1].startsWith('headline:')`; a local projects-overview
