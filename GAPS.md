@@ -2194,8 +2194,9 @@ Found in: sweep-beans.md:7, sweep-transcript.md:55.
    (same window as T12): DB said `moved/o6-dup.md` + `file_write_status=pending` while the file sat
    untouched at the old path — and the recovery command (`bm reindex`) then materialized the new
    path from the DB *and* re-indexed the leftover old file as a second entity. **An interrupted move
-   plus reindex silently duplicates the note** (both `synced` afterwards). `bm gc` needs a dedupe
-   check for exactly this shape, and W3's git history is the real safety net.
+   plus reindex silently duplicates the note** (both `synced` afterwards). **`bm doctor` needs a
+   dedupe check** for exactly this shape (this read `bm gc` until 2026-08-07; see W2), and W3's git
+   history is the real safety net.
 
 **Proposed root fix (2026-07-31, not yet scoped): synchronous write-through.** The DB-first
 deferred-write architecture exists so a hosted runtime can accept writes without a filesystem —

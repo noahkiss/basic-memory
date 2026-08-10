@@ -54,9 +54,10 @@ subcommands, **not** as a separate wrapper tool.
 
 Planned, in rough dependency order:
 
-1. **A gardener** (`bm gc`) that keeps the note corpus from rotting. Strictly lossless: it may move,
-   index, dedupe, re-label, and flag — it may never summarize, merge, or resolve. Ship the flag-only
-   version first so the lossless constraint is structural rather than aspirational.
+1. **A gardener**, which is **not a command** — its jobs are checks inside `bm doctor` (GAPS W2,
+   decided 2026-08-05). Strictly lossless: it may flag — it may never summarize, merge, or resolve.
+   Flag-only was already the constraint, so a separate `bm gc` would have been a second checking
+   command, i.e. the one nobody runs.
 2. **Local git history on writes.** Every mutation commits into a local-only store repo so pruning is
    recoverable. Two traps: set `core.excludesFile` and `core.hooksPath` to `/dev/null` inside that
    repo (a global pre-commit hook will otherwise block automated commits), and never export `GIT_DIR`.
@@ -87,7 +88,7 @@ Consequences, all deliberate:
   another repo's worktree.
 
 **Naming:** `tend` is a **codename for the design, not a command.** There is no `tend` binary and no
-`bm tend` namespace — the verbs ship flat under `bm` (`bm gc`, `bm ls`, `bm new`, `bm path`,
+`bm tend` namespace — the verbs ship flat under `bm` (`bm ls`, `bm new`, `bm path`,
 `bm mine`, `bm done`, `bm show`, `bm history`, `bm undo`, `bm mark`). **There is no `bm check`** —
 the schema and integrity checks land inside the existing `bm doctor` (see `GAPS.md` W5), because a
 second checking command would immediately be the one nobody runs.
