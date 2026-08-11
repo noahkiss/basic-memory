@@ -1979,9 +1979,18 @@ Builds in W5's phase, where the write-path validation lands. Closes `.forked/sch
 `bm edit` joins the flat verb list in `AGENTS.md` (this resolves the W19-example-vs-verb-list
 discrepancy in favour of the example).
 
+**DECIDED 2026-08-10 (user) — two names.** The vocabulary file is **`store/<id>/vocabulary.yml`**:
+it says what the file is, and it does not echo the pointer's name — a `bm.yml`/`.bm.yml` pair would
+recreate the exact pointer-vs-container confusion schema.md §3 exists to fix. The W19-item-4
+explainer verb is **`bm types`**: it matches the question an agent is asking at the moment of
+filing. `bm types` joins the flat verb list in `AGENTS.md`. Earlier text in this file that named
+`.bm.yml` as the vocabulary source predates the 2026-08-04 pointer/vocabulary split and has been
+patched in place to say `vocabulary.yml`.
+
 **Decided 2026-07-31:** W4 does not build on `picoschema/`; that subsystem is stripped as the first
-commit of this build (see O-picoschema for grounds). The vocabulary source is `.bm.yml`, validated
-by a bespoke checker that W5 wires into `bm doctor`.
+commit of this build (see O-picoschema for grounds). The vocabulary source is the store's
+`vocabulary.yml` (this line originally said `.bm.yml`; patched per the 2026-08-10 naming decision),
+validated by a bespoke checker that W5 wires into `bm doctor`.
 
 **DECIDED 2026-08-04 (user) — the type set is six, closed, and named in plain English.**
 `.forked/schema.md` §1 had three genre types plus `unsorted`. Testing it against four real cases
@@ -1999,7 +2008,7 @@ considered — every candidate §1 rejected was a flavour of *work*.
 | `state` | no | none | title + body | no | **how things are** |
 | `inbox` | no | none | — | no | **can't tell** |
 
-`review-by` is required and `.bm.yml`-defaulted on **both** `finding` and `guide` — instructions rot
+`review-by` is required and `vocabulary.yml`-defaulted on **both** `finding` and `guide` — instructions rot
 faster than findings do, and it puts guides inside the gardener's expiry query for free.
 
 **Renames from the draft, and why.** `entity` → `profile`: "entity" already means the DB-level
@@ -2040,7 +2049,8 @@ without rewriting each one with a new id — orphaning every edge bound to the o
 *"a pointer, not a container"* at a **working directory** root — usually someone else's code repo.
 `schema.md` §3 puts `types:`/`statuses:`/`areas:` in a file at the **store** root. Those are two
 files under one name. They must split: the working-dir pointer keeps `.bm.yml`; the vocabulary
-becomes a separate file under `store/<id>/`. If the vocabulary lived at the working-dir root, W3's
+becomes a separate file under `store/<id>/` — `vocabulary.yml`, named 2026-08-10. If the
+vocabulary lived at the working-dir root, W3's
 history could not see it — and then agent field-extension has **no enforcement at all**, since the
 only real check is that the change is a commit carrying an `Actor: agent` trailer.
 
@@ -2063,11 +2073,10 @@ says when to use each, (b) a primer that explains the set, and (c) write-path er
 allowed values in the same plain vocabulary. See **W19**. A closed vocabulary an agent cannot
 understand at the moment of filing relocates the misfiling rather than preventing it.
 
-**Owed before the build:** `.forked/schema.md` §1–§4 predate all of this and must be rewritten —
-the type table, the per-type field sections, the `.bm.yml` example (its `types:` list is now real),
-and §4's *"exactly two mutable things in the whole schema"*, which becomes four. That last one is
-safe now in a way it was not when written, because W3 puts every edit in the history repo; the rule
-was only ever guarding against edits that vanished.
+~~**Owed before the build:** `.forked/schema.md` §1–§4 predate all of this and must be rewritten~~
+— **discharged 2026-08-10**: schema.md's header now reads "§1–§4, §6–§7 rewritten 2026-08-10"; the
+type table, per-type sections, the vocabulary example, and §4's mutability count ("four") are
+current.
 
 ### W5 — the remaining schema-validation rules, inside `bm doctor` — **NOT a `bm check` command**
 **Rewritten 2026-08-03.** Two things were wrong with this entry, one naming and one substantive.
@@ -2098,11 +2107,11 @@ each:
 1. `supersedes` appearing on a type other than `finding`.
 2. Set-once field violations generally (the permalink case is done; the rule is not).
 3. `date-ref` present on an `inline`/`mtime`/`inferred` rung — it is permitted on one rung only.
-4. `review-by` missing on a `finding`, and its default injected from `.bm.yml` at write time.
+4. `review-by` missing on a `finding`, and its default injected from `vocabulary.yml` at write time.
 5. Validation must run **on the read path as well as the write path**. The predecessor tool
    validated only on write, which is why `status: done` drift sat undetected on disk for six months.
 
-All five are `.bm.yml`-vocabulary rules, which is why W5 is wired by the bespoke checker W4 builds
+All five are `vocabulary.yml` rules, which is why W5 is wired by the bespoke checker W4 builds
 and not by `picoschema/` (see O-picoschema for the grounds).
 
 Found in: sweep-schema.md:43.
@@ -2791,7 +2800,8 @@ Simplified Technical English.
    the same plain vocabulary, or the agent's next guess is uninformed.
 4. **A command that explains the type set on demand** — one short paragraph per type, its picking
    question, and its fields. Derived from the live vocabulary file, never a hardcoded copy, or it
-   drifts the first time someone declares a field.
+   drifts the first time someone declares a field. **Named 2026-08-10 (user): `bm types`** — it
+   matches the question an agent is asking (`bm explain` and folding into `bm man` were declined).
 
 **Promoted 2026-08-04 (user) — items 2–4 are a binding acceptance condition on W4, not a follow-up.**
 The user agreed to six record types *"as long as we have good cli help docs that explain when to use
@@ -3016,7 +3026,8 @@ strip as the first commit of the W4 build.** Grounds, each checked against the c
    `frontmatter['schema']`, a referenced schema note, or implicit by type against schema notes
    (`picoschema/resolver.py:1-12`). Schema notes are agent-writable, so the vocabulary is open by
    construction — the exact property W4 exists to remove. The closed vocabulary is declared in
-   `.bm.yml`, human-edited, enforced in the write path. Building W4 on picoschema would leave two
+   the store's `vocabulary.yml`, human-edited, enforced in the write path. Building W4 on
+   picoschema would leave two
    competing sources of truth for the same concern.
 2. **Missing semantics.** The syntax expresses required/optional, enum, array, object
    (`parser.py`). It cannot express set-once fields, conditional requirements (`date-ref` mandatory
