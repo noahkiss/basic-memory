@@ -2073,6 +2073,39 @@ A new mutator that skips the funnel is a bug, not a policy choice. Scope also co
 this phase ships `vocabulary.yml` + checker + funnel + `bm types` + W19 items 2–3; the write verbs
 (`bm new`, `bm edit`) stay in W5's phase as recorded.
 
+**DECIDED 2026-08-10 (user) — the vocabulary file's presence is what governs a project.** Building
+the funnel surfaced a collision the entry never addressed: `markdown/entity_parser.py:322` defaults
+every note's frontmatter to `type: note`, and nothing generates a `tnd-` id yet, so a default
+vocabulary applied everywhere would reject every existing write on the spot. The rule instead:
+
+- **No `vocabulary.yml` → the checker never runs.** An absent file means "this project is not
+  governed", not "use the defaults". The default block in `.forked/schema.md` §3 is what `bm new`
+  *writes* into a new file, never what an absent file *means*.
+- **A `vocabulary.yml` present → strict, with no passthrough.** `type: note` is an off-vocabulary
+  type like any other and is rejected on the agent write path. There is no ungoverned seventh type;
+  an escape hatch that every write already sets by default would close the vocabulary in name only.
+
+Rejected: gating per record on a `tnd-` id (an agent writing `type: runbook` with no id would be
+silently ungoverned, which voids *"agents may propose, never enable"*). Opting a project in is a
+deliberate human act, which is the same standard §3 already sets for editing the file.
+
+**DECIDED 2026-08-10 (user) — the store id is `Project.external_id`, and the vocabulary lands in
+the store repo now.** W3 shipped `store_path()` as one repo root (`store/history.py:75`); the
+per-project `store/<id>/` directories do not exist yet and arrive with W6's importer, while a
+project's `path` is still user-chosen (`services/project_service.py:133-166`). So `<id>` had no
+referent. It is now `Project.external_id` — the unique UUID4 already on the model
+(`models/project.py:41-53`) and already printed by `project list` — and the file lives at
+`store_path() / <external_id> / vocabulary.yml` from day one.
+
+The deciding reason is the one this entry already gives for putting the vocabulary in the store at
+all: W3's history must see every edit to it, because a commit carrying an `Actor: agent` trailer is
+the only real check on agent field-extension. Placing the file at `<project.path>/vocabulary.yml`
+until W6 migrates would leave it outside the history repo for the whole intervening period — the
+enforcement gap the store placement exists to close. A short ULID column plus a migration was
+rejected as W4-scope work for W6's benefit: `AGENTS.md` already says a directory name inside the
+store is *"a human-browsing label that nothing reads"*, so a UUID reads worse and costs nothing.
+W6 moves note content in beside the vocabulary file that is already there.
+
 **The sync path always indexes and never rejects.** Refusing to index a hand-edited off-vocabulary
 file makes it invisible to search *and* to `doctor` — on disk, unfindable, silent. Index it, record
 the violation, let `doctor` report it. §4 already says a human hand-editing a file is not an error.
