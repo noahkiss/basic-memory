@@ -1,11 +1,12 @@
 """Service for managing entities in the database."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, List, Optional, Sequence, Tuple, Union
+from typing import Any, List, Literal, Optional, Sequence, Tuple, Union
 
 from loguru import logger
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from basic_memory import db
@@ -20,6 +21,7 @@ from basic_memory.markdown.utils import entity_model_from_markdown
 from basic_memory.models import Entity as EntityModel
 from basic_memory.models import Observation, Relation
 from basic_memory.models.knowledge import Entity
+from basic_memory.models.project import Project
 from basic_memory.repository import ObservationRepository, RelationRepository
 from basic_memory.repository.entity_repository import EntityRepository
 from basic_memory.runtime.note_move import normalize_note_move_destination_path
@@ -36,6 +38,7 @@ from basic_memory.services.exceptions import (
     EntityAlreadyExistsError,
     EntityCreationError,
     EntityNotFoundError,
+    VocabularyViolationError,
 )
 from basic_memory.services.link_resolver import LinkResolver
 from basic_memory.services.note_preparation import (
@@ -51,6 +54,8 @@ from basic_memory.services.note_preparation import (
     replace_section_content as replace_note_section_content,
 )
 from basic_memory.services.search_service import SearchService
+from basic_memory.vocabulary.checker import Violation, check_frontmatter, has_errors
+from basic_memory.vocabulary.model import Vocabulary, load_vocabulary
 
 __all__ = [
     "EntityService",
@@ -61,6 +66,14 @@ __all__ = [
 ]
 
 _fenced_code_line_flags = _note_fenced_code_line_flags
+
+# What the *caller* declares a violation means. Static per mutator: the write's
+# origin decides, never the content it carries (GAPS W4).
+#   reject — verbs, MCP, the API. The write does not happen.
+#   record — the sync/watcher path, reading a file a human may have hand-edited.
+#            It always indexes: a file refused an index is invisible to search
+#            and to `bm doctor` alike.
+type EnforcementMode = Literal["reject", "record"]
 
 
 @dataclass(frozen=True)
@@ -108,6 +121,125 @@ class EntityService(BaseService[EntityModel]):
         # Callable that returns the current user ID (cloud user_profile_id UUID as string).
         # Default returns None for local/CLI usage. Cloud overrides this to read from UserContext.
         self.get_user_id: Callable[[], Optional[str]] = lambda: None
+        # Vocabulary state, cached for the life of the service instance. See
+        # _project_vocabulary for why that lifetime is the right one. The load
+        # flag is what separates "no vocabulary.yml, not governed" from "not
+        # looked yet" — a cached None means the first, and only the flag can say
+        # so.
+        self._project_external_id_cache: str | None = None
+        self._vocabulary_cache: Vocabulary | None = None
+        self._vocabulary_loaded = False
+
+    # --- Vocabulary enforcement (GAPS W4) ---
+    #
+    # Every entity mutator passes through _enforce_vocabulary and nothing else
+    # validates frontmatter. A new mutator that skips the funnel is a bug, not a
+    # policy choice: hooking only the paths someone remembered is how the
+    # predecessor tool ended up rejecting a type in its CLI while its API wrote
+    # the same type to disk (.forked/decisions.md R5).
+
+    async def _project_external_id(self, session: AsyncSession) -> str:
+        """Return this service's project ``external_id``, the store directory key.
+
+        EntityService holds only the integer project PK, and the vocabulary file
+        is keyed by the UUID (``store/<external_id>/vocabulary.yml``), so the
+        mapping has to be read once from the project table.
+
+        Takes the caller's session rather than opening one. Every funnel call
+        sits inside a mutator's own ``scoped_session`` block, and the pool holds
+        a single connection: a second acquire waits on a connection the caller
+        already owns and times out after 30 s.
+        """
+        if self._project_external_id_cache is not None:
+            return self._project_external_id_cache
+
+        project_id = self.repository.project_id
+        async with db.scoped_session(self.session_maker, session) as active_session:
+            result = await active_session.execute(
+                select(Project.external_id).where(Project.id == project_id)
+            )
+            external_id = result.scalar_one_or_none()
+
+        # A service bound to a project row that does not exist cannot decide
+        # whether the project is governed, and answering "ungoverned" would turn
+        # a broken wiring into a silently disabled check.
+        if external_id is None:
+            raise EntityNotFoundError(f"Project not found for project_id: {project_id}")
+
+        self._project_external_id_cache = external_id
+        return external_id
+
+    async def _project_vocabulary(self, session: AsyncSession) -> Vocabulary | None:
+        """Return the project's vocabulary, or ``None`` when it is not governed.
+
+        Cached for the life of the service instance. Editing a vocabulary is
+        "a deliberate human act" (.forked/schema.md §3), and GAPS W5 already owes
+        a revalidation trigger for when the file changes — so re-reading the file
+        on every write would buy nothing that trigger will not buy properly.
+
+        A malformed file raises ``VocabularyError`` and is not cached: degrading
+        to ungoverned would make "no vocabulary" and "vocabulary with a typo in
+        it" the same state to every later check.
+        """
+        # Checked before any session work: once this is loaded, an ungoverned
+        # project does no DB work at all on the write path.
+        if not self._vocabulary_loaded:
+            self._vocabulary_cache = load_vocabulary(await self._project_external_id(session))
+            # Set last: a VocabularyError above must leave the state unloaded so
+            # the next write raises again rather than inheriting a stale answer.
+            self._vocabulary_loaded = True
+        return self._vocabulary_cache
+
+    async def _enforce_vocabulary(
+        self,
+        metadata: Mapping[str, Any] | None,
+        *,
+        mode: EnforcementMode,
+        file_path: str,
+        session: AsyncSession,
+        previous: Mapping[str, Any] | None = None,
+    ) -> list[Violation]:
+        """Check one write's frontmatter against the project's vocabulary.
+
+        ``previous`` is the record's frontmatter before this write, and ``None``
+        means a creation; it feeds the set-once rule and nothing else. Both sides
+        are normalized first so a native YAML date on the incoming side and the
+        ISO string already stored on the previous side compare equal.
+
+        ``session`` is required, not optional: the funnel runs inside a mutator's
+        open transaction, and the one-connection pool deadlocks if this opens a
+        second one. Passing the caller's session also means the vocabulary lookup
+        sees the same uncommitted state the write does.
+        """
+        vocabulary = await self._project_vocabulary(session)
+        # No vocabulary.yml means the project is not governed, so no rule applies
+        # and the checker must not run — an absent file is not the defaults.
+        if vocabulary is None:
+            return []
+
+        violations = check_frontmatter(
+            normalize_frontmatter_metadata(dict(metadata or {})),
+            vocabulary,
+            previous=None if previous is None else normalize_frontmatter_metadata(dict(previous)),
+        )
+
+        if mode == "reject" and has_errors(violations):
+            # Raised before the caller writes anything: a rejection that leaves a
+            # written file on disk is worse than no rejection.
+            raise VocabularyViolationError(file_path, violations)
+
+        # Logged, not persisted. GAPS W5 mechanism A writes these rows to a table
+        # keyed by entity so `bm doctor` can query them; that table, its Alembic
+        # migration, and the revalidation trigger are W5's scope and are
+        # deliberately not built here.
+        for violation in violations:
+            message = f"Vocabulary violation in {file_path}: {violation.message}"
+            if violation.severity == "error":
+                logger.warning(message, rule=violation.rule, field=violation.field)
+            else:
+                logger.debug(message, rule=violation.rule, field=violation.field)
+
+        return violations
 
     async def detect_file_path_conflicts(
         self,
@@ -373,6 +505,16 @@ class EntityService(BaseService[EntityModel]):
             # Derive the canonical markdown/entity fields before touching the filesystem.
             prepared = await self.prepare_create_entity_content(schema, session=session)
             self._sync_prepared_schema_state(schema, prepared)
+            # --- Enforce The Vocabulary Before Anything Is Written ---
+            # This is the agent write path, so it rejects. The prepared markdown's
+            # frontmatter is what the file will carry, which is the only thing
+            # worth judging — schema.entity_metadata is a request, not the result.
+            await self._enforce_vocabulary(
+                prepared.entity_markdown.frontmatter.metadata,
+                mode="reject",
+                file_path=prepared.file_path.as_posix(),
+                session=session,
+            )
             # --- Persist File, Then Indexable DB State ---
             # Local mode still writes the file immediately; the prepare object keeps semantics separate
             # from that persistence step.
@@ -384,6 +526,7 @@ class EntityService(BaseService[EntityModel]):
                 prepared.entity_markdown,
                 is_new=True,
                 session=session,
+                vocabulary_checked=True,
             )
             updated = await self.repository.update(session, entity.id, {"checksum": checksum})
             if not updated:  # pragma: no cover
@@ -424,6 +567,16 @@ class EntityService(BaseService[EntityModel]):
                 session=session,
             )
             self._sync_prepared_schema_state(schema, prepared)
+            # Agent write path: reject, before the file is written. `previous` is
+            # the stored frontmatter, which is what makes the set-once rule real
+            # on a full replacement.
+            await self._enforce_vocabulary(
+                prepared.entity_markdown.frontmatter.metadata,
+                mode="reject",
+                file_path=prepared.file_path.as_posix(),
+                session=session,
+                previous=entity.entity_metadata,
+            )
             previous_file_path = Path(entity.file_path)
             # Trigger: a full replacement also renames the note to a different canonical path.
             # Why: Path.replace() overwrites existing files, so the destination must be conflict-free
@@ -448,6 +601,7 @@ class EntityService(BaseService[EntityModel]):
                 is_new=False,
                 existing_entity=entity,
                 session=session,
+                vocabulary_checked=True,
             )
             if prepared.file_path.as_posix() != previous_file_path.as_posix():
                 # Trigger: a full replacement changed the canonical note path.
@@ -554,6 +708,8 @@ class EntityService(BaseService[EntityModel]):
         file_path: Path,
         markdown: EntityMarkdown,
         session: AsyncSession | None = None,
+        *,
+        vocabulary_checked: bool = False,
     ) -> EntityModel:
         """Create entity and observations only.
 
@@ -561,8 +717,13 @@ class EntityService(BaseService[EntityModel]):
         Relations will be added in second pass.
 
         Uses UPSERT approach to handle permalink/file_path conflicts cleanly.
+
+        ``vocabulary_checked`` is for delegation only: a caller passes True when
+        it has already run the funnel for this same write, so one logical write
+        produces exactly one check.
         """
         logger.debug(f"Creating entity: {markdown.frontmatter.title} file_path: {file_path}")
+
         model = entity_model_from_markdown(
             file_path, markdown, project_id=self.repository.project_id
         )
@@ -577,6 +738,19 @@ class EntityService(BaseService[EntityModel]):
             model.last_updated_by = user_id
 
         async with db.scoped_session(self.session_maker, session) as active_session:
+            # The sync path records and indexes anyway. It never rejects: a
+            # hand-edited off-vocabulary file refused an index is on disk,
+            # unfindable, and silent (GAPS W4). Inside the session block so the
+            # lookup reuses this transaction rather than deadlocking on the
+            # single-connection pool.
+            if not vocabulary_checked:
+                await self._enforce_vocabulary(
+                    markdown.frontmatter.metadata,
+                    mode="record",
+                    file_path=file_path.as_posix(),
+                    session=active_session,
+                )
+
             # Use UPSERT to handle conflicts cleanly
             try:
                 return await self.repository.upsert_entity(active_session, model)
@@ -591,11 +765,15 @@ class EntityService(BaseService[EntityModel]):
         *,
         existing_entity: EntityModel | None = None,
         session: AsyncSession | None = None,
+        vocabulary_checked: bool = False,
     ) -> EntityModel:
         """Update entity fields and observations.
 
         Updates everything except relations and sets null checksum
         to indicate sync not complete.
+
+        ``vocabulary_checked`` is for delegation only: a caller passes True when
+        it has already run the funnel for this same write.
         """
         logger.debug(f"Updating entity and observations: {file_path}")
 
@@ -614,6 +792,18 @@ class EntityService(BaseService[EntityModel]):
                 )
             if db_entity is None:  # pragma: no cover
                 raise EntityNotFoundError(f"Entity not found for file path: {file_path}")
+
+            # Read before _apply_markdown_entity_fields overwrites entity_metadata
+            # below — this row is the only record of what the note said before
+            # this write, which is what the set-once rule compares against.
+            if not vocabulary_checked:
+                await self._enforce_vocabulary(
+                    markdown.frontmatter.metadata,
+                    mode="record",
+                    file_path=file_path.as_posix(),
+                    session=active_session,
+                    previous=db_entity.entity_metadata,
+                )
 
             # Observations are owned by the markdown file, so re-indexing replaces the old set.
             # We only need the entity id here; loading the old relationship collection is wasted work.
@@ -681,12 +871,22 @@ class EntityService(BaseService[EntityModel]):
         resolve_relations: bool = True,
         reload_entity: bool = True,
         session: AsyncSession | None = None,
+        vocabulary_checked: bool = False,
     ) -> EntityModel:
-        """Create/update entity and relations from parsed markdown."""
+        """Create/update entity and relations from parsed markdown.
+
+        Reaches the funnel through whichever branch it takes. It does not check
+        itself: the create/update branch sees the same frontmatter and, on an
+        update, already holds the previous row the set-once rule needs. The
+        relations pass is told the check is done so one write is judged once.
+        """
         async with db.scoped_session(self.session_maker, session) as active_session:
             if is_new:
                 created = await self.create_entity_from_markdown(
-                    file_path, markdown, session=active_session
+                    file_path,
+                    markdown,
+                    session=active_session,
+                    vocabulary_checked=vocabulary_checked,
                 )
             else:
                 created = await self.update_entity_and_observations(
@@ -694,6 +894,7 @@ class EntityService(BaseService[EntityModel]):
                     markdown,
                     existing_entity=existing_entity,
                     session=active_session,
+                    vocabulary_checked=vocabulary_checked,
                 )
             # Pass the entity through so relation work does not have to rediscover the source row.
             return await self.update_entity_relations(
@@ -702,6 +903,7 @@ class EntityService(BaseService[EntityModel]):
                 resolve_targets=resolve_relations,
                 reload_entity=reload_entity,
                 session=active_session,
+                vocabulary_checked=True,
             )
 
     async def update_entity_relations(
@@ -712,16 +914,33 @@ class EntityService(BaseService[EntityModel]):
         resolve_targets: bool = True,
         reload_entity: bool = True,
         session: AsyncSession | None = None,
+        vocabulary_checked: bool = False,
     ) -> EntityModel:
         """Update relations for entity.
 
         Accepts the entity object directly to avoid a redundant DB fetch.
         Only entity.id and entity.permalink are used from the passed-in object.
+
+        ``vocabulary_checked`` is for delegation only. Rewriting relations does
+        not touch frontmatter, but this is a public mutator that takes the parsed
+        markdown, so a direct caller still passes it through the funnel.
         """
         entity_id = entity.id
         logger.debug(f"Updating relations for entity: {entity.file_path}")
 
         async with db.scoped_session(self.session_maker, session) as active_session:
+            # Inside the session block so the vocabulary lookup reuses this
+            # transaction: the pool holds one connection and a second acquire
+            # would wait on the one this block already owns.
+            if not vocabulary_checked:
+                await self._enforce_vocabulary(
+                    markdown.frontmatter.metadata,
+                    mode="record",
+                    file_path=entity.file_path,
+                    session=active_session,
+                    previous=entity.entity_metadata,
+                )
+
             # Clear existing relations first
             await self.relation_repository.delete_outgoing_relations_from_entity(
                 active_session, entity_id
@@ -897,6 +1116,19 @@ class EntityService(BaseService[EntityModel]):
                 session=session,
             )
 
+            # MCP `edit_note` lands here, so this is an agent write path and it
+            # rejects. An edit does not change frontmatter, so a set-once
+            # violation cannot originate here — but the note's existing
+            # frontmatter may already be off vocabulary from a hand edit, and
+            # refusing to build on it is the intended outcome.
+            await self._enforce_vocabulary(
+                prepared.entity_markdown.frontmatter.metadata,
+                mode="reject",
+                file_path=file_path.as_posix(),
+                session=session,
+                previous=entity.entity_metadata,
+            )
+
             checksum = await self.file_service.write_file(
                 file_path,
                 prepared.markdown_content,
@@ -910,6 +1142,7 @@ class EntityService(BaseService[EntityModel]):
                 prepared.entity_markdown,
                 is_new=False,
                 session=session,
+                vocabulary_checked=True,
             )
 
             entity = await self.repository.update(session, entity.id, {"checksum": checksum})
@@ -1066,24 +1299,50 @@ class EntityService(BaseService[EntityModel]):
         if await self.file_service.exists(destination_path):
             raise ValueError(f"Destination already exists: {destination_path}")
 
+        # 4. Derive the permalink the move will write, if any. Resolved here
+        # rather than after the file has moved because the funnel below has to
+        # judge the frontmatter the note will end up with, and it has to do that
+        # while rejecting still means "nothing happened". resolve_permalink reads
+        # the path and the DB, so it is safe before the file exists at the
+        # destination.
+        new_permalink: str | None = None
+        if not app_config.disable_permalinks and (
+            app_config.update_permalinks_on_move or old_permalink is None
+        ):
+            new_permalink = await self.resolve_permalink(destination_path)
+
+        # 5. Enforce the vocabulary. A move is an agent write path, so it
+        # rejects. permalink is set-once, so a governed project refuses a move
+        # that would rewrite it: every edge binds to the permalink.
+        prospective_metadata = dict(entity.entity_metadata or {})
+        if new_permalink is not None:
+            prospective_metadata["permalink"] = new_permalink
+        # move_entity holds no open transaction at this point — step 4's
+        # resolve_permalink opened and closed its own — so this session is the
+        # outermost one and closes again before the file moves. Nesting it inside
+        # the step 11 update block instead would put the check after the move.
+        async with db.scoped_session(self.session_maker) as session:
+            await self._enforce_vocabulary(
+                prospective_metadata,
+                mode="reject",
+                file_path=destination_path,
+                session=session,
+                previous=entity.entity_metadata,
+            )
+
         try:
-            # 4. Ensure destination directory if needed (no-op for S3)
+            # 6. Ensure destination directory if needed (no-op for S3)
             await self.file_service.ensure_directory(Path(destination_path).parent)
 
-            # 5. Move physical file via FileService (filesystem rename or cloud move)
+            # 7. Move physical file via FileService (filesystem rename or cloud move)
             await self.file_service.move_file(current_path, destination_path)
             logger.info(f"Moved file: {current_path} -> {destination_path}")
 
-            # 6. Prepare database updates
+            # 8. Prepare database updates
             updates = {"file_path": destination_path}
 
-            # 7. Update permalink if configured or if entity has null permalink (unless disabled)
-            if not app_config.disable_permalinks and (
-                app_config.update_permalinks_on_move or old_permalink is None
-            ):
-                # Generate new permalink from destination path
-                new_permalink = await self.resolve_permalink(destination_path)
-
+            # 9. Write the permalink resolved in step 4, when the move updates it
+            if new_permalink is not None:
                 # Update frontmatter with new permalink
                 await self.file_service.update_frontmatter(
                     destination_path, {"permalink": new_permalink}
@@ -1097,11 +1356,11 @@ class EntityService(BaseService[EntityModel]):
                 else:
                     logger.info(f"Updated permalink: {old_permalink} -> {new_permalink}")
 
-            # 8. Recalculate checksum
+            # 10. Recalculate checksum
             new_checksum = await self.file_service.compute_checksum(destination_path)
             updates["checksum"] = new_checksum
 
-            # 9. Update database
+            # 11. Update database
             async with db.scoped_session(self.session_maker) as session:
                 updated_entity = await self.repository.update(session, entity.id, updates)
                 if not updated_entity:

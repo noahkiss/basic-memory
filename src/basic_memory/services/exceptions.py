@@ -1,3 +1,6 @@
+from basic_memory.vocabulary.checker import Violation
+
+
 class FileOperationError(Exception):
     """Raised when file operations fail"""
 
@@ -48,6 +51,29 @@ class DirectoryOperationError(Exception):
     """Raised when directory operations fail"""
 
     pass
+
+
+class VocabularyViolationError(ValueError):
+    """Raised when a write is refused because its frontmatter is off vocabulary.
+
+    Only the *reject* mode of ``EntityService._enforce_vocabulary`` raises this —
+    the verb, MCP, and API write paths. The sync path records violations and
+    indexes anyway, because a file refused an index is invisible to search and
+    to ``bm doctor`` alike (GAPS W4).
+
+    A ``ValueError`` because that is what the CLI and API boundaries already
+    render as a user-facing rejection rather than a 500.
+    """
+
+    def __init__(self, file_path: str, violations: list[Violation]) -> None:
+        self.file_path = file_path
+        # Kept whole so a caller can render them per-field instead of as prose.
+        self.violations = violations
+        # Advisories never block a write, so listing one here would name a
+        # reason that is not in fact the reason (GAPS W4).
+        blocking = [violation for violation in violations if violation.severity == "error"]
+        detail = "\n".join(f"  - {violation.message}" for violation in blocking)
+        super().__init__(f"{file_path} is off this project's vocabulary:\n{detail}")
 
 
 class SyncFatalError(Exception):
