@@ -1955,7 +1955,42 @@ tests/cli/test_history_command.py); int 329/3 unchanged; doctor skipped — noth
 the file↔DB loop. Live scratch smoke: `history dirty` empty case, per-file listing, path commit,
 `--all` sweep with trailer-free message all conform.
 
-### W4 — closed record vocabulary enforced in the write path
+### W4 — closed record vocabulary enforced in the write path — **SHIPPED 2026-08-10**
+
+**Close block, 2026-08-10.** Shipped in four commits: `2e62e726` (`vocabulary.yml` + the bespoke
+checker), `ee5bc1a4` (the shared glossary), `2310dc87` (the funnel), `63ad4fba` (`bm types`).
+Verification: unit 3091 → 3220 (+129: 106 checker/loader, 12 funnel, 3 funnel guard, 7 `bm types`,
+1 guard parametrization), int 284 unchanged, `just doctor` green.
+
+**Two things this entry did not settle, both found on contact with the code and decided by the user
+the same day** — the governance gate and the store id. Both are recorded above as DECIDED blocks
+and in `.forked/schema.md` §3 (commit `ef6f5dbc`). Neither was visible from the design docs; each
+appeared the moment the checker met a real write path.
+
+**The funnel found a live side door beyond the one this entry names.** The decision block above
+predicted MCP `edit_note` → `edit_entity_with_content`. The build also had to cover `move_entity`,
+which rewrites `permalink` — a set-once field, and the strictest member of the list. That is the
+argument for a funnel rather than hook points, made once more by the code itself.
+
+**A deadlock that only a real write path could show.** The first funnel resolved the project's
+`external_id` by opening its own session. Every call sits inside a mutator's open
+`scoped_session`, and the pool holds one connection, so the nested acquire waited on a connection
+the caller already owned and timed out after 30 s. The unit suite went from 80 s to over 600 s with
+~50 failures across four directories. The fix is that `_enforce_vocabulary` takes the caller's
+session and never opens one. Recorded because the shape recurs: **any per-write lookup added to a
+service method must use the session already in hand.**
+
+**A verification lesson, and it was the orchestrator's error.** One suite run was started while an
+editing agent was still writing `entity_service.py` — the file's mtime was one second after the
+run began. It reported 10 move-path failures that did not reproduce and were never real. `AGENTS.md`
+already says verification runs centrally *after* every agent has reported; the gap was that
+"reported" was inferred from the files existing rather than from the agent saying so. **Check that
+the tree is stable before starting a suite, not just that the files are present.**
+
+**Deliberately not built here** (W5's scope, unchanged): the violation table, its Alembic migration,
+the revalidation trigger when `vocabulary.yml` changes, and `bm doctor` reporting. The checker's
+`Violation` is already shaped as a row keyed by entity so W5 persists it without rework.
+The write verbs `bm new` and `bm edit` remain in W5's phase as recorded.
 Humans extend the vocabulary; agents may only select from it. Upstream's frontmatter vocabulary is
 fully open, so enforcement is ours and cannot live in a wrapper.
 
@@ -2882,6 +2917,25 @@ because it is invisible.
    lines is the wrong trade. A static list costs a fixed ~20 tokens and needs no memory.
 
    Suppressed by `--quiet`, which is stateless. That is the only condition.
+
+**Items 2, 3, and 4 shipped 2026-08-10**, discharging the binding acceptance condition on W4.
+
+- **Item 2** — `342c53da`. Every shipped verb's help text: one plain sentence, condition before
+  command, no schema-internal words. One correction worth keeping: the first draft rewrote
+  `--quiet` as *"Hide notes and suggested next commands"*, which is worse than the jargon it
+  replaced — `note` is this tool's core noun, so it reads as hiding the records. It now says
+  *"Hide the status lines and next-step hints"*. **A plain word that collides with a domain noun is
+  not plain.**
+- **Item 3** — in `2e62e726`, carried by the checker's messages. An unknown type names every allowed
+  type with its picking question and says a new type cannot be enabled from a write; a set-once
+  rejection names the sanctioned route (`bm done`/`bm mark` on a task, supersession on a finding).
+- **Item 4** — `63ad4fba`, `bm types`. The type list comes from the live vocabulary and the prose
+  from `vocabulary/glossary.py`, which `ee5bc1a4` created so the rejection and the explainer teach
+  from one source. A declared type the glossary does not know still prints; a glossary type the
+  project omits does not. Both have a test.
+
+**Item 5 (workflow affordances) is still open** and is not blocking: it lands naturally with W5's
+verbs, where there is a next verb worth naming.
 
 **Item 4 does not go inside `bm brief`.** W8 caps brief at ~50 tokens of pointer rows,
 unconditionally, every session; per-type explanations would burn that budget on every start for a
