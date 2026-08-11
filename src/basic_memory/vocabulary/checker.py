@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, Literal
 
+from basic_memory.vocabulary.glossary import type_choice
 from basic_memory.vocabulary.model import Vocabulary
 
 type Severity = Literal["error", "advisory"]
@@ -37,17 +38,6 @@ class Violation:
 
 
 # --- The schema's fixed vocabulary (not the project's) ---
-
-# W19 item 3: an agent that cannot pick a type at the moment of filing relocates
-# the misfiling rather than preventing it. Every rejection carries these.
-_PICKING_QUESTIONS: Mapping[str, str] = {
-    "task": "do it",
-    "guide": "consult it",
-    "finding": "learned it",
-    "profile": "refer to it",
-    "state": "how things are",
-    "inbox": "can't tell",
-}
 
 # At most one date per record, and its name is fixed by the type (schema.md §2).
 # A human-added type is absent here and gets the common rules only.
@@ -270,7 +260,7 @@ def check_frontmatter(
 
 def _unknown_type(record_type: Any, vocabulary: Vocabulary) -> Violation:
     """Build the one message an agent reads at the moment of filing (W19 item 3)."""
-    choices = ", ".join(_type_choice(name) for name in vocabulary.types)
+    choices = ", ".join(type_choice(name) for name in vocabulary.types)
     opening = (
         "Missing required field 'type'."
         if record_type is None
@@ -286,12 +276,6 @@ def _unknown_type(record_type: Any, vocabulary: Vocabulary) -> Violation:
         ),
         severity="error",
     )
-
-
-def _type_choice(name: str) -> str:
-    """A type with its one-word picking question, or the bare name for a human addition."""
-    question = _PICKING_QUESTIONS.get(name)
-    return f"{name} ({question})" if question else name
 
 
 def _check_status(metadata: Mapping[str, Any], vocabulary: Vocabulary) -> list[Violation]:
