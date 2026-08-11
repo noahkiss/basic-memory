@@ -2061,6 +2061,18 @@ the CLI rebuilds beans' failure exactly (`.forked/decisions.md` R5: the CLI reje
 `maintenance-record` while GraphQL wrote it to disk, and the `types:` config block was silently
 ignored).
 
+**DECIDED 2026-08-10 (user) — enforcement is a single funnel, not per-hook-point.** The two
+functions above are where GAPS first located enforcement, but `entity_service.py` has six more
+mutators (`update_entity` :400, `update_entity_with_content` :406, `update_entity_and_observations`
+:587, `update_entity_relations` :707, `edit_entity` :819, `edit_entity_with_content` :861), and
+they are live agent paths — MCP `edit_note` routes through `edit_entity_with_content`. Hooking only
+the named points leaves MCP edits unvalidated, which rebuilds beans' failure (above) with the roles
+recast. So: **every entity mutator passes through one checker call**, and the *caller* declares the
+mode — **reject** (verbs, MCP, API) or **record-violation** (the sync path, which never rejects).
+A new mutator that skips the funnel is a bug, not a policy choice. Scope also confirmed same day:
+this phase ships `vocabulary.yml` + checker + funnel + `bm types` + W19 items 2–3; the write verbs
+(`bm new`, `bm edit`) stay in W5's phase as recorded.
+
 **The sync path always indexes and never rejects.** Refusing to index a hand-edited off-vocabulary
 file makes it invisible to search *and* to `doctor` — on disk, unfindable, silent. Index it, record
 the violation, let `doctor` report it. §4 already says a human hand-editing a file is not an error.
