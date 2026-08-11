@@ -30,11 +30,10 @@ def orphans(
         typer.Option(help="The project name."),
     ] = None,
 ):
-    """Show entities that have no relations in the knowledge graph.
+    """List the notes that have no links to or from other notes.
 
-    Orphan entities have no incoming or outgoing connections. These may indicate
-    newly created notes not yet linked to other entities, or notes that have had
-    their relations removed.
+    A note is an orphan when nothing links to it and it links to nothing. A new
+    note is often an orphan until you link it to the rest of the graph.
     """
     from basic_memory.cli.commands.command_utils import run_with_cleanup
 

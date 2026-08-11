@@ -172,7 +172,7 @@ def config_list() -> None:
 @config_app.command("get")
 def config_get(
     key: str = typer.Argument(..., help="Config setting name (see 'bm config list')"),
-    quiet: bool = typer.Option(False, "--quiet", help="Suppress notices and affordances"),
+    quiet: bool = typer.Option(False, "--quiet", help="Hide the status lines and next-step hints"),
 ) -> None:
     """Show the effective value of one config setting."""
     _require_known_key(key)
@@ -190,12 +190,12 @@ def config_get(
 def config_set(
     key: str = typer.Argument(..., help="Config setting name (see 'bm config list')"),
     value: str = typer.Argument(..., help="New value"),
-    quiet: bool = typer.Option(False, "--quiet", help="Suppress notices and affordances"),
+    quiet: bool = typer.Option(False, "--quiet", help="Hide the status lines and next-step hints"),
 ) -> None:
-    """Set a config value, validated through BasicMemoryConfig before writing.
+    """Set one config setting to a new value.
 
-    Invalid values (e.g. a non-boolean for `kebab_filenames`) fail with the
-    Pydantic validation error instead of being written to config.json.
+    If the value is not valid for the setting, the command reports why and
+    writes nothing to config.json.
     """
     _require_known_key(key)
 

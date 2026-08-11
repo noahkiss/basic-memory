@@ -46,14 +46,12 @@ def import_claude(
         str, typer.Option(help="The folder to place the files in.")
     ] = "conversations",
 ):
-    """Import chat conversations from conversations2.json format.
+    """Import chat conversations from a Claude.ai JSON export.
 
-    This command will:
-    1. Read chat data and nested messages
-    2. Create markdown files for each conversation
-    3. Format content in clean, readable markdown
+    The command reads each chat and its nested messages, then writes one markdown
+    file per conversation.
 
-    After importing, run 'bm reindex --search' to index the new files.
+    After the import, run 'bm reindex --search' to index the new files.
     """
 
     config = get_project_config()

@@ -46,14 +46,12 @@ def import_projects(
         str, typer.Option(help="The base folder to place project files in.")
     ] = "projects",
 ):
-    """Import project data from Claude.ai.
+    """Import project data from a Claude.ai JSON export.
 
-    This command will:
-    1. Create a directory for each project
-    2. Store docs in a docs/ subdirectory
-    3. Place prompt template in project root
+    The command creates one directory per project. It writes the documents into a
+    docs/ subdirectory and the prompt template into the project root.
 
-    After importing, run 'bm reindex --search' to index the new files.
+    After the import, run 'bm reindex --search' to index the new files.
     """
     config = get_project_config()
     try:

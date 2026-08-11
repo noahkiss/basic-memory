@@ -46,14 +46,12 @@ def import_chatgpt(
         str, typer.Option(help="The folder to place the files in.")
     ] = "conversations",
 ):
-    """Import chat conversations from ChatGPT JSON format.
+    """Import chat conversations from a ChatGPT JSON export.
 
-    This command will:
-    1. Read the complex tree structure of messages
-    2. Convert them to linear markdown conversations
-    3. Save as clean, readable markdown files
+    The command reads the message tree, flattens each conversation in order, and
+    writes one markdown file per conversation.
 
-    After importing, run 'bm reindex --search' to index the new files.
+    After the import, run 'bm reindex --search' to index the new files.
     """
 
     try:

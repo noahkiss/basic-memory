@@ -24,7 +24,7 @@ from basic_memory.project_marker import resolve_cli_project
 # SQLAlchemy), which would slow every CLI invocation, including --help (#886).
 
 tool_app = typer.Typer()
-app.add_typer(tool_app, name="tool", help="Access to MCP tools via CLI")
+app.add_typer(tool_app, name="tool", help="Run the MCP tools from the command line")
 
 VALID_EDIT_OPERATIONS = ["append", "prepend", "find_replace", "replace_section"]
 
@@ -276,9 +276,7 @@ def write_note(
     folder: Annotated[str, typer.Option(help="The folder to create the note in")],
     content: Annotated[
         Optional[str],
-        typer.Option(
-            help="The content of the note. If not provided, content will be read from stdin."
-        ),
+        typer.Option(help="The note content. If you omit it, bm reads the content from stdin."),
     ] = None,
     tags: Annotated[
         Optional[List[str]], typer.Option(help="A list of tags to apply to the note")
@@ -288,31 +286,31 @@ def write_note(
         typer.Option(
             "--type",
             help=(
-                "Note type stored in frontmatter (e.g. 'guide', 'report'). "
-                "A 'type:' in the note's own content frontmatter takes precedence."
+                "Note type written into the frontmatter, for example 'guide' or 'report'. "
+                "If the content has its own 'type:', that value wins."
             ),
         ),
     ] = "note",
     project: Annotated[
         Optional[str],
-        typer.Option(
-            help="The project to write to. If not provided, the default project will be used."
-        ),
+        typer.Option(help="The project to write to. If you omit it, bm uses the default project."),
     ] = None,
     project_id: Annotated[
         Optional[str],
         typer.Option(
             "--project-id",
-            help="Project external_id (UUID). Takes precedence over --project; use to disambiguate same-named projects.",
+            help="The project's UUID. It wins over --project, and it separates projects that share a name.",
         ),
     ] = None,
     overwrite: bool = typer.Option(
         False,
         "--overwrite",
-        help="Replace an existing note on conflict (matches MCP write_note overwrite=True)",
+        help="If a note already exists there, replace it",
     ),
 ):
-    """Create or update a markdown note. Content can be provided via --content or stdin.
+    """Create or update a markdown note.
+
+    Pass the content with --content, or pipe it to stdin.
 
     Examples:
 
@@ -380,13 +378,13 @@ def read_note(
     ),
     project: Annotated[
         Optional[str],
-        typer.Option(help="The project to use. If not provided, the default project will be used."),
+        typer.Option(help="The project to use. If you omit it, bm uses the default project."),
     ] = None,
     project_id: Annotated[
         Optional[str],
         typer.Option(
             "--project-id",
-            help="Project external_id (UUID). Takes precedence over --project; use to disambiguate same-named projects.",
+            help="The project's UUID. It wins over --project, and it separates projects that share a name.",
         ),
     ] = None,
 ):
@@ -442,13 +440,13 @@ def delete_note(
     ),
     project: Annotated[
         Optional[str],
-        typer.Option(help="The project to use. If not provided, the default project will be used."),
+        typer.Option(help="The project to use. If you omit it, bm uses the default project."),
     ] = None,
     project_id: Annotated[
         Optional[str],
         typer.Option(
             "--project-id",
-            help="Project external_id (UUID). Takes precedence over --project; use to disambiguate same-named projects.",
+            help="The project's UUID. It wins over --project, and it separates projects that share a name.",
         ),
     ] = None,
 ) -> None:
@@ -509,25 +507,23 @@ def edit_note(
         True,
         "--replace-subsections/--no-replace-subsections",
         help=(
-            "For replace_section, replace nested subsections too; use "
-            "--no-replace-subsections to preserve them"
+            "With replace_section, replace the nested subsections too. Use "
+            "--no-replace-subsections to keep them"
         ),
     ),
     project: Annotated[
         Optional[str],
-        typer.Option(
-            help="The project to edit. If not provided, the default project will be used."
-        ),
+        typer.Option(help="The project to edit. If you omit it, bm uses the default project."),
     ] = None,
     project_id: Annotated[
         Optional[str],
         typer.Option(
             "--project-id",
-            help="Project external_id (UUID). Takes precedence over --project; use to disambiguate same-named projects.",
+            help="The project's UUID. It wins over --project, and it separates projects that share a name.",
         ),
     ] = None,
 ):
-    """Edit an existing markdown note using append/prepend/find_replace/replace_section.
+    """Edit a note with one operation: append, prepend, find_replace, or replace_section.
 
     Examples:
 
@@ -574,20 +570,20 @@ def build_context(
     url: str,
     depth: Optional[int] = typer.Option(1, "--depth", help="Depth of context to build"),
     timeframe: Optional[str] = typer.Option(
-        "7d", "--timeframe", help="Timeframe filter (e.g., '7d', '1 week')"
+        "7d", "--timeframe", help="Time window to cover, for example '7d' or '1 week'"
     ),
     page: int = typer.Option(1, "--page", help="Page number for pagination"),
     page_size: int = typer.Option(10, "--page-size", help="Number of results per page"),
     max_related: int = typer.Option(10, "--max-related", help="Maximum related items to return"),
     project: Annotated[
         Optional[str],
-        typer.Option(help="The project to use. If not provided, the default project will be used."),
+        typer.Option(help="The project to use. If you omit it, bm uses the default project."),
     ] = None,
     project_id: Annotated[
         Optional[str],
         typer.Option(
             "--project-id",
-            help="Project external_id (UUID). Takes precedence over --project; use to disambiguate same-named projects.",
+            help="The project's UUID. It wins over --project, and it separates projects that share a name.",
         ),
     ] = None,
 ):
@@ -634,7 +630,7 @@ def recent_activity(
     type: Annotated[Optional[List[str]], typer.Option(help="Filter by item type")] = None,
     depth: Optional[int] = typer.Option(1, "--depth", help="Depth of context to build"),
     timeframe: Optional[str] = typer.Option(
-        "7d", "--timeframe", help="Timeframe filter (e.g., '7d', '1 week')"
+        "7d", "--timeframe", help="Time window to cover, for example '7d' or '1 week'"
     ),
     page: int = typer.Option(1, "--page", help="Page number for pagination"),
     # Match the MCP recent_activity default (page_size=10) so identical default
@@ -642,13 +638,13 @@ def recent_activity(
     page_size: int = typer.Option(10, "--page-size", help="Number of results per page"),
     project: Annotated[
         Optional[str],
-        typer.Option(help="The project to use. If not provided, the default project will be used."),
+        typer.Option(help="The project to use. If you omit it, bm uses the default project."),
     ] = None,
     project_id: Annotated[
         Optional[str],
         typer.Option(
             "--project-id",
-            help="Project external_id (UUID). Takes precedence over --project; use to disambiguate same-named projects.",
+            help="The project's UUID. It wins over --project, and it separates projects that share a name.",
         ),
     ] = None,
 ):
@@ -702,7 +698,10 @@ def search_notes(
     hybrid: Annotated[bool, typer.Option("--hybrid", help="Use hybrid retrieval")] = False,
     after_date: Annotated[
         Optional[str],
-        typer.Option("--after_date", help="Search results after date, eg. '2d', '1 week'"),
+        typer.Option(
+            "--after_date",
+            help="Return only notes changed after this time, for example '2d' or '1 week'",
+        ),
     ] = None,
     tags: Annotated[
         Optional[List[str]],
@@ -728,8 +727,8 @@ def search_notes(
         typer.Option(
             "--category",
             help=(
-                "Filter observation results to exact categories (repeatable); "
-                "pair with --entity-type observation"
+                "Keep only the facts in these exact categories (repeatable). "
+                "Pair it with --entity-type observation"
             ),
         ),
     ] = None,
@@ -743,16 +742,16 @@ def search_notes(
     ] = None,
     page: int = typer.Option(1, "--page", help="Page number for pagination"),
     page_size: int = typer.Option(10, "--page-size", help="Number of results per page"),
-    quiet: bool = typer.Option(False, "--quiet", help="Drop notices, leaving the results alone"),
+    quiet: bool = typer.Option(False, "--quiet", help="Hide the status lines and next-step hints"),
     project: Annotated[
         Optional[str],
-        typer.Option(help="The project to use. If not provided, the default project will be used."),
+        typer.Option(help="The project to use. If you omit it, bm uses the default project."),
     ] = None,
     project_id: Annotated[
         Optional[str],
         typer.Option(
             "--project-id",
-            help="Project external_id (UUID). Takes precedence over --project; use to disambiguate same-named projects.",
+            help="The project's UUID. It wins over --project, and it separates projects that share a name.",
         ),
     ] = None,
 ):

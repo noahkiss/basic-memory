@@ -95,19 +95,19 @@ def status(
         Optional[str],
         typer.Option(help="The project name."),
     ] = None,
-    verbose: bool = typer.Option(False, "--verbose", "-v", help="Show detailed file information"),
-    quiet: bool = typer.Option(False, "--quiet", help="Suppress notices and affordances"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="List each file the scan saw"),
+    quiet: bool = typer.Option(False, "--quiet", help="Hide the status lines and next-step hints"),
     wait: bool = typer.Option(
         False,
         "--wait",
-        help="Compatibility flag; returns the current project-index observation",
+        help="Compatibility flag. The command reports the current counts at once",
     ),
     timeout: float = typer.Option(30.0, "--timeout", help="Compatibility option for --wait"),
 ):
-    """Show current project-index observation status.
+    """Show how many files bm saw in the project, and how many it has indexed.
 
-    The --wait flag is accepted for compatibility and returns the current
-    project-index observation immediately.
+    The --wait flag is kept for compatibility. It reports the current counts at
+    once and waits for nothing.
     """
     from basic_memory.cli.commands.command_utils import run_with_cleanup
 

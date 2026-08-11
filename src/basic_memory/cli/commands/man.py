@@ -49,7 +49,7 @@ def install(
         ),
     ] = None,
 ) -> None:
-    """Install the bm man pages, then try `man bm`."""
+    """Install the bm man pages so that `man bm` works."""
     man_root = (directory or _default_man_root()).expanduser()
     man1 = man_root / "man1"
     man1.mkdir(parents=True, exist_ok=True)

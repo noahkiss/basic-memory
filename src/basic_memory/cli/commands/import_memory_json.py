@@ -43,15 +43,13 @@ def memory_json(
         "memory.json"
     ),
     destination_folder: Annotated[
-        str, typer.Option(help="Optional destination folder within the project")
+        str, typer.Option(help="Folder inside the project to write the files into")
     ] = "",
 ):
-    """Import entities and relations from a memory.json file.
+    """Import notes and their links from a memory.json file.
 
-    This command will:
-    1. Read entities and relations from the JSON file
-    2. Create markdown files for each entity
-    3. Include outgoing relations in each entity's markdown
+    The command writes one markdown file per record. Each file lists the links
+    that lead out of that record.
     """
 
     if not json_path.exists():

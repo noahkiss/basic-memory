@@ -87,7 +87,7 @@ def add_project(
     name: str = typer.Argument(..., help="Name of the project"),
     path: str = typer.Argument(..., help="Path to the project directory"),
     set_default: bool = typer.Option(False, "--default", help="Set as default project"),
-    quiet: bool = typer.Option(False, "--quiet", help="Suppress notices and affordances"),
+    quiet: bool = typer.Option(False, "--quiet", help="Hide the status lines and next-step hints"),
 ) -> None:
     """Add a new project.
 
@@ -156,7 +156,7 @@ def remove_project(
 def set_default_project(
     name: str = typer.Argument(..., help="Name of the project to set as CLI default"),
 ) -> None:
-    """Set the default project used as fallback when no project is specified."""
+    """Set the project that bm uses when a command names no project."""
 
     async def _set_default():
         async with get_client() as client:
@@ -180,11 +180,11 @@ def set_default_project(
 def move_project(
     name: str = typer.Argument(..., help="Name of the project to move"),
     new_path: str = typer.Argument(..., help="New absolute path for the project"),
-    quiet: bool = typer.Option(False, "--quiet", help="Suppress notices and affordances"),
+    quiet: bool = typer.Option(False, "--quiet", help="Hide the status lines and next-step hints"),
 ) -> None:
-    """Move a project to a new filesystem location.
+    """Point a project at a new location on disk.
 
-    This updates the project's configured path in the local database.
+    The command updates the stored path only. It moves no files.
     """
     # Resolve to absolute path
     resolved_path = Path(os.path.abspath(os.path.expanduser(new_path))).as_posix()
@@ -275,9 +275,9 @@ def ls_project_command(
 @project_app.command("info")
 def display_project_info(
     name: str = typer.Argument(..., help="Name of the project"),
-    quiet: bool = typer.Option(False, "--quiet", help="Suppress notices and affordances"),
+    quiet: bool = typer.Option(False, "--quiet", help="Hide the status lines and next-step hints"),
 ):
-    """Display detailed information and statistics about the current project."""
+    """Show the settings, the counts, and the system details for one project."""
     try:
         info = run_with_cleanup(get_project_info(name))
     except typer.Exit:

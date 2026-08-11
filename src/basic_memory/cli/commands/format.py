@@ -178,10 +178,10 @@ def format(
         typer.Option("--project", "-p", help="Project name to format."),
     ] = None,
 ) -> None:
-    """Format files using configured formatters.
+    """Run your configured formatter over the note files.
 
-    Uses the formatter_command or formatters settings from your config.
-    By default, formats all .md, .json, and .canvas files in the current project.
+    The command reads the formatter_command and formatters settings from your config.
+    If you give no path, it formats every .md, .json, and .canvas file in the project.
 
     Examples:
         bm format                    # Format all files in current project

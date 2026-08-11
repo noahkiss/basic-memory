@@ -331,20 +331,24 @@ async def _restore_registry(app_config, rows: list[dict], default_name: Optional
 
 @app.command()
 def reset(
-    reindex: bool = typer.Option(False, "--reindex", help="Rebuild db index from filesystem"),
+    reindex: bool = typer.Option(
+        False, "--reindex", help="Read the files on disk again after the reset"
+    ),
     force: bool = typer.Option(
         False,
         "--force",
         help=(
-            "Skip the pre-flight checks: the refusal to reset while "
-            "basic-memory MCP processes are running, and the refusal to "
-            "reset while accepted note writes have not reached disk "
-            "(the latter loses that content). Use only in automated "
-            "workflows where you've already ensured neither applies."
+            "Skip both pre-flight checks. The command then resets while "
+            "basic-memory MCP processes run, and while accepted notes have "
+            "not reached disk. The second case loses those notes. Use this "
+            "only in automated work where you know neither case applies."
         ),
     ),
 ):  # pragma: no cover
-    """Reset database (drop all tables and recreate)."""
+    """Delete the local database and create it again.
+
+    The markdown files on disk are not changed.
+    """
     # Deferred: SQLAlchemy and the db module load only when a reset actually
     # runs, not on every CLI start (#886).
     from sqlalchemy.exc import OperationalError
@@ -427,23 +431,23 @@ def reset(
 @app.command()
 def reindex(
     embeddings: bool = typer.Option(
-        False, "--embeddings", "-e", help="Rebuild vector embeddings (requires semantic search)"
+        False, "--embeddings", "-e", help="Rebuild the vector embeddings; needs semantic search"
     ),
-    search: bool = typer.Option(False, "--search", "-s", help="Rebuild full-text search index"),
+    search: bool = typer.Option(False, "--search", "-s", help="Rebuild the full-text search index"),
     full: bool = typer.Option(
         False,
         "--full",
-        help="Request a full project-index run instead of the default project-index pass",
+        help="Read every file again, not only the files that changed",
     ),
     project: str = typer.Option(
-        None, "--project", "-p", help="Reindex a specific project (default: all)"
+        None, "--project", "-p", help="Reindex one project. The default is every project"
     ),
 ):  # pragma: no cover
-    """Rebuild search indexes and/or vector embeddings without dropping the database.
+    """Rebuild the search index and the vector embeddings, without deleting the database.
 
-    By default runs the project-index coordinator + embeddings (if semantic search is enabled).
-    Use --full to request a full project-index run and re-embed all eligible notes.
-    Use --search or --embeddings to rebuild only one side.
+    If you give no flag, the command rebuilds both. If semantic search is off, it
+    rebuilds the search index only. Use --search or --embeddings to rebuild one side.
+    Use --full to read every file again and to embed every eligible note again.
 
     Examples:
         bm reindex                  # Project index + embeddings

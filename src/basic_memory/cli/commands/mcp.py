@@ -30,17 +30,15 @@ def mcp(
     ),
     port: int = typer.Option(8000, help="Port for HTTP transports"),
     path: str = typer.Option("/mcp", help="Path prefix for streamable-http transport"),
-    project: Optional[str] = typer.Option(None, help="Restrict MCP server to single project"),
+    project: Optional[str] = typer.Option(None, help="Restrict the MCP server to one project"),
 ):  # pragma: no cover
-    """Run the MCP server with configurable transport options.
+    """Run the MCP server on one of three transports.
 
-    This command starts an MCP server using one of three transport options:
+    - stdio: standard input and output, for local use
+    - streamable-http: the recommended transport for a web deployment
+    - sse: server-sent events, for older clients
 
-    - stdio: Standard I/O (good for local usage)
-    - streamable-http: Recommended for web deployments
-    - sse: Server-Sent Events (for compatibility with existing clients)
-
-    Initialization, file indexing, and cleanup are handled by the MCP server's lifespan.
+    The server's own lifespan does the startup, the file indexing, and the cleanup.
     """
     # Import mcp tools/prompts to register them with the server
     import basic_memory.mcp.tools  # noqa: F401  # pragma: no cover

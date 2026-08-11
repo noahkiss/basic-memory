@@ -52,10 +52,10 @@ def commit(
     ] = False,
     quiet: Annotated[
         bool,
-        typer.Option("--quiet", help="Drop notices and affordances."),
+        typer.Option("--quiet", help="Hide the status lines and next-step hints."),
     ] = False,
 ) -> None:
-    """Commit changes the tool did not make, as an explicit sweep.
+    """Commit note changes that bm did not make itself.
 
     The sweep is its own command rather than a flag on a write verb: a flag
     would weld unrelated changes into one commit, and undoing the tool's work

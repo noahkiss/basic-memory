@@ -231,11 +231,11 @@ def doctor(
     project: str | None = typer.Option(
         None,
         "--project",
-        help="Report corpus integrity for this project (unresolved relations, "
-        "permalink invariant) instead of running the file/database self-test.",
+        help="Check this project's notes for broken links and for id problems, "
+        "instead of running the self-test.",
     ),
 ) -> None:
-    """Run local consistency checks to verify file/database indexing."""
+    """Check that the notes on disk and the database agree."""
     # Deferred: ToolError lives in the mcp SDK, which must not load at CLI startup (#886).
     from mcp.server.fastmcp.exceptions import ToolError
 
