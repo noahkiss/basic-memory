@@ -12,6 +12,7 @@ subprocess and asserts that ``basic_memory.api.app``, ``basic_memory.mcp.tools``
 ``fastapi``, and ``dateparser`` never enter ``sys.modules``.
 """
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -40,6 +41,51 @@ async def direct_project_service() -> "ProjectService":
     _, session_maker = await db.get_or_create_db(config.database_path, config=config)
     await ensure_project_registry(config)
     return ProjectService(repository=ProjectRepository(), session_maker=session_maker)
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectRef:
+    """A project's name and the store directory it owns."""
+
+    name: str
+    external_id: str
+
+
+async def direct_project_ref(project_name: str | None) -> ProjectRef:
+    """Resolve a project to its name and ``external_id``, the store dir it owns.
+
+    ``store/<external_id>/`` is where a project's ``vocabulary.yml`` lives (GAPS
+    W4, decided 2026-08-10), so any verb that reads the vocabulary needs this id.
+
+    ``project_name`` is None when the CLI chain found nothing to resolve — which
+    on a fresh install means the registry did not exist yet when the chain ran.
+    ``ensure_project_registry`` below creates it, so the default is asked for
+    here rather than before bootstrap, where the answer is always None.
+
+    Raises ValueError for an unknown project, and for a registry with no default:
+    an unaddressable request is a failure, not an empty result (contract rule 5).
+    """
+    # Deferred: the service layer pulls SQLAlchemy + Alembic, which must not
+    # load at CLI import time — only when a command actually runs (#886).
+    from basic_memory import db
+    from basic_memory.config import ConfigManager
+    from basic_memory.repository.project_repository import ProjectRepository
+    from basic_memory.services.initialization import ensure_project_registry
+
+    config = ConfigManager().config
+    _, session_maker = await db.get_or_create_db(config.database_path, config=config)
+    await ensure_project_registry(config)
+    async with db.scoped_session(session_maker) as session:
+        repository = ProjectRepository()
+        if project_name is None:
+            project = await repository.get_default_project(session)
+            if project is None:
+                raise ValueError("No default project is set")
+        else:
+            project = await repository.get_by_name(session, project_name)
+            if project is None:
+                raise ValueError(f"Project not found: '{project_name}'")
+        return ProjectRef(name=project.name, external_id=project.external_id)
 
 
 async def direct_corpus_integrity_report(
