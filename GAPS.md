@@ -1314,6 +1314,63 @@ the smaller, safer change** and matches the fail-fast rule — routing means the
 which names are columns, and gets it wrong the moment a note legitimately carries an
 `updated_at:` frontmatter key.
 
+### T22 — W4's reject mode is unreachable: no note write goes through `EntityService`
+**Opened 2026-08-10**, found by running the shipped W4 build against a real project rather than a
+fixture. W4 ships a funnel whose central promise is *"the caller declares the mode — **reject**
+(verbs, MCP, API) or **record-violation** (the sync path)"*. **Reject never fires.** Every note
+write in this fork reaches the database through a path that does not touch `EntityService` at all.
+
+**Reproduction**, isolated config dir, project governed by a `vocabulary.yml` with the six types:
+
+```
+$ bm tool write-note --title "Another Ordinary Note" --folder notes --content "Just a note."
+permalink: main/notes/another-ordinary-note
+action: created                      # accepted, written to disk, exit 0
+```
+
+The frontmatter written is `type: note`, which is off-vocabulary and should have been refused. The
+violation *is* detected — a moment later, on the indexer's pass, in record mode:
+
+```
+$ grep "Vocabulary violation" <config-dir>/basic-memory.log
+WARNING | entity_service:_enforce_vocabulary:238 - Vocabulary violation in
+notes/Another Ordinary Note.md: Type 'note' is not in this project's vocabulary. Pick one of:
+task (do it), guide (consult it), … A new type cannot be enabled from a write.
+```
+
+**Root cause, verified by reading rather than inferred.** `POST /knowledge/entities`
+(`api/v2/routers/knowledge_router.py:559`) calls `note_content_mutation_service.create_note(...)`,
+which writes accepted state and then materializes the file. `EntityService` is never on that path.
+Outside `entity_service.py` itself, the only mutator any caller reaches is
+`upsert_entity_from_markdown`, from `indexing/batch_indexer.py:613` — and that is record mode by
+design, because it is the sync path. The one exception is `move_directory`
+(`knowledge_router.py:835`), the only API endpoint that takes an `EntityService` for a mutation.
+
+So `create_entity_with_content`, `update_entity_with_content`, `edit_entity_with_content`, and
+`move_entity` — every reject-mode call site — have **no external callers in this fork**. The funnel
+is correct; it is wired to a layer this fork stopped writing through.
+
+**Why the W4 build did not catch it.** The entry says `entity_service.py:368
+create_entity_with_content` *"is the agent write path"*. That was true when the sentence was
+written and is not true now, and every W4 test drives `EntityService` directly, so the tests agree
+with the stale premise. The funnel guard test proves every mutator *reaches* the funnel; nothing
+proved anything *reaches the mutators*. **A guard over a layer proves nothing about whether callers
+use that layer** — this is the general lesson, and it is the same shape as the positive-control
+rule: the W4 suite could not have produced a rejection on a real path, so its green was not
+evidence.
+
+**What still works, so the fix is scoped and not a rebuild.** Record mode is live and correct
+end-to-end: hand-edited and agent-written off-vocabulary files are detected, carry the right
+plain-English message, and are indexed anyway — which is W4's stated sync-path behaviour. The
+checker, the vocabulary loader, `bm types`, and the messages need no change.
+
+**Owed:** enforcement has to move to, or be added at, the accepted-state write path
+(`services/note_content_writes.py`, `run_accepted_note_create` and its update/edit siblings) so a
+governed project refuses the write before it is accepted. Open question for that work: whether the
+funnel belongs in both layers or moves wholesale, given `move_directory` still enters through
+`EntityService`. **Decide before W5** — W5's `bm doctor` reporting assumes violations are the
+exception, and today they are the only outcome.
+
 ---
 
 ## BLOCKERS / gaps in capability
@@ -1955,7 +2012,11 @@ tests/cli/test_history_command.py); int 329/3 unchanged; doctor skipped — noth
 the file↔DB loop. Live scratch smoke: `history dirty` empty case, per-file listing, path commit,
 `--all` sweep with trailer-free message all conform.
 
-### W4 — closed record vocabulary enforced in the write path — **SHIPPED 2026-08-10**
+### W4 — closed record vocabulary enforced in the write path — **SHIPPED 2026-08-10, but see T22**
+
+> **T22, opened the same day.** Reject mode is unreachable: no note write in this fork goes through
+> `EntityService`, so the agent write path accepts off-vocabulary records and the violation is only
+> logged afterward by the indexer. Record mode works end-to-end. Read T22 before building on this.
 
 **Close block, 2026-08-10.** Shipped in four commits: `2e62e726` (`vocabulary.yml` + the bespoke
 checker), `ee5bc1a4` (the shared glossary), `2310dc87` (the funnel), `63ad4fba` (`bm types`).
