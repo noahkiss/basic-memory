@@ -1371,6 +1371,46 @@ funnel belongs in both layers or moves wholesale, given `move_directory` still e
 `EntityService`. **Decide before W5** — W5's `bm doctor` reporting assumes violations are the
 exception, and today they are the only outcome.
 
+**Confirmed independently 2026-08-10** by a cross-model review of the funnel diff, which traced the
+same chain from the MCP tools down (`mcp/tools/write_note.py:236` → `mcp/clients/knowledge.py` →
+`knowledge_router.py:533-810` → `NoteContentMutationService`) and ran the positive control this
+entry should have: `grep -n "vocabulary\|enforce"` over `services/note_content_writes.py`,
+`services/note_preparation.py`, and `indexing/accepted_note_write_runner.py` returns nothing, while
+the same pattern over `entity_service.py` returns dozens of hits. The review also confirmed, call
+site by call site, that the five reject-mode calls inside `EntityService` are each correct in mode,
+in `previous`, and in running before the file write — the defect is entirely one of which layer
+callers use, not of the funnel itself.
+
+**Also found, and owed to W5 rather than here:** the checker short-circuits on `unknown-type`
+(`vocabulary/checker.py:122-124`), so a record-mode write that changes `type` to an undeclared value
+records `unknown-type` and loses the `set-once-changed` violation that W5's table would want. It is
+harmless on a reject path, where the write stops either way.
+
+### T23 — a move on disk rewrites the set-once `permalink` and the checker never sees it
+**Opened 2026-08-10**, found by the same cross-model review that confirmed T22 and verified here by
+reading `src/basic_memory/index/local_moves.py:110-152`. **Filed separately from T22 on purpose:**
+fixing T22 at the accepted-state write path does not touch this path, and folding it in would let a
+T22 fix appear to close it.
+
+When `update_permalinks_on_move` is on, the local watcher's move handler resolves a new permalink,
+merges it into the file's frontmatter, and writes the file itself through
+`file_service.write_file`. No funnel call in any mode — **not even record**. Worse than T22 in one
+respect: T22 at least logs the violation on the indexer's next pass, and this cannot, because the
+move batch deliberately stamps the entity and `note_content` rows with the planned content's
+checksum so file and database agree. The file therefore never presents as modified and is never
+re-indexed. The invariant is documented in the code and is correct for its own purpose; the
+consequence for W4 is that the write is invisible.
+
+Concrete case: `mv a.md sub/b.md` inside a governed store silently rewrites `permalink` — the
+strictest set-once field, the one edges bind to, the one whose rewrite orphans every relation
+pointing at the record. `EntityService.move_entity` rejects exactly this rewrite on a governed
+project; the watcher path performs it with no check at all.
+
+A hand-move is a human act, so **reject is the wrong answer here** — §4 says a human editing a file
+by hand is not an error. The right answer is that this path must reach the funnel in **record**
+mode, which in turn needs the violation to survive the checksum stamp that suppresses re-indexing.
+That is the real work, and it is why this is not a one-line fix.
+
 ---
 
 ## BLOCKERS / gaps in capability
@@ -2014,9 +2054,11 @@ the file↔DB loop. Live scratch smoke: `history dirty` empty case, per-file lis
 
 ### W4 — closed record vocabulary enforced in the write path — **SHIPPED 2026-08-10, but see T22**
 
-> **T22, opened the same day.** Reject mode is unreachable: no note write in this fork goes through
-> `EntityService`, so the agent write path accepts off-vocabulary records and the violation is only
-> logged afterward by the indexer. Record mode works end-to-end. Read T22 before building on this.
+> **T22 and T23, opened the same day.** Reject mode is unreachable: no note write in this fork goes
+> through `EntityService`, so the agent write path accepts off-vocabulary records and the violation
+> is only logged afterward by the indexer (**T22**). A watcher move rewrites the set-once
+> `permalink` with no funnel contact in any mode (**T23**). Record mode on the indexer's own path
+> works end-to-end. Read both before building on this.
 
 **Close block, 2026-08-10.** Shipped in four commits: `2e62e726` (`vocabulary.yml` + the bespoke
 checker), `ee5bc1a4` (the shared glossary), `2310dc87` (the funnel), `63ad4fba` (`bm types`).
