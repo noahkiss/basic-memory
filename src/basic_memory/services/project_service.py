@@ -4,11 +4,13 @@ import asyncio
 import json
 import os
 import shutil
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional, Sequence
 
 
+import yaml
 from loguru import logger
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError as SAOperationalError
@@ -30,10 +32,86 @@ from basic_memory.config import (
     get_project_config,
     ProjectConfig,
 )
+from basic_memory.store.history import HistoryError, commit_paths, store_path
+from basic_memory.store.write_hook import session_id
 from basic_memory.utils import generate_permalink
+from basic_memory.vocabulary.model import DEFAULT_VOCABULARY, Vocabulary, vocabulary_path
 
 if TYPE_CHECKING:  # pragma: no cover
     from basic_memory.services.file_service import FileService
+
+
+def vocabulary_document(vocabulary: Vocabulary) -> dict[str, object]:
+    """The YAML mapping one vocabulary serializes to (`.forked/schema.md` §3).
+
+    Only ``enum`` fields carry ``values``; the parser rejects the key on the
+    other two kinds, so emitting an empty list would produce a file this tree
+    cannot read back.
+    """
+    return {
+        "types": list(vocabulary.types),
+        "statuses": list(vocabulary.statuses),
+        "areas": list(vocabulary.areas),
+        "review_months": vocabulary.review_months,
+        "fields": {
+            name: (
+                {"kind": declared.kind, "values": list(declared.values)}
+                if declared.kind == "enum"
+                else {"kind": declared.kind}
+            )
+            for name, declared in vocabulary.fields.items()
+        },
+    }
+
+
+def write_default_vocabulary(external_id: str) -> Path | None:
+    """Give a project the default vocabulary, and return where it landed.
+
+    **Called only for `bm project add --governed`, and that is a reversal.**
+    D8 originally had `project add` write this unconditionally. It cannot: the
+    default vocabulary declares the six record types, MCP's `write_note` defaults
+    to `type: note`, and the checker rejects a type a project does not declare.
+    Governing by default therefore refused the primary agent write path — 7
+    integration tests and `just doctor` failed on `Type 'note' is not in this
+    project's vocabulary`, and every existing MCP caller in the wild would have
+    failed the same way on its next write. An absent file means ungoverned
+    (GAPS W4), so opt-in restores that meaning instead of overriding it.
+
+    Returns None when the file is already there. A vocabulary is hand-edited
+    (`.forked/schema.md` §3), so overwriting an existing one would discard a
+    human's declarations — and re-adding a project by name must not cost them.
+
+    The natural home for this is `vocabulary/model.py`, which owns the format;
+    it lives here because that module was being edited concurrently when this
+    landed. Moving it is mechanical.
+    """
+    path = vocabulary_path(external_id)
+    if path.exists():
+        return None
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        yaml.safe_dump(vocabulary_document(DEFAULT_VOCABULARY), sort_keys=False),
+        encoding="utf-8",
+    )
+
+    # Committed here, not left for a later write to notice. The file sits in the
+    # store's worktree, so an uncommitted one is reported as somebody else's
+    # dirty work by every note write that follows it, forever (GAPS W3-B).
+    # Trigger: the store repository is unusable — a stale lock, a broken config.
+    # Why: the vocabulary is already on disk and the project is already in the
+    #     registry, so failing the add would leave both behind anyway.
+    # Outcome: log for the operator and keep the project, which is W3-A's rule
+    #     for a create: nothing is lost, so a missing entry costs a warning.
+    try:
+        commit_paths(
+            [f"{external_id}/{path.name}"],
+            f"create {external_id}/{path.name}",
+            actor="cli",
+            session_id=session_id(),
+        )
+    except HistoryError as error:
+        logger.warning(f"Could not record {path} in the note history: {error}")
+    return path
 
 
 class ProjectService:
@@ -130,13 +208,28 @@ class ProjectService:
                 # Not nested in either direction
                 return False
 
-    async def add_project(self, name: str, path: str, set_default: bool = False) -> None:
+    async def add_project(
+        self,
+        name: str,
+        path: str | None = None,
+        set_default: bool = False,
+        governed: bool = False,
+    ) -> None:
         """Add a new project to the registry.
 
         Args:
             name: The name of the project
-            path: The file path to the project directory
+            path: An import source to adopt as the project's directory. Omit it to
+                give the project its store-derived home, which is the design
+                (AGENTS.md; verbs decision D3): note content lives only under
+                ``store/<external_id>/``, and that is what puts every write in the
+                history repo. A path argument means "the notes are already here",
+                and the project keeps living there until W6's importer moves it.
             set_default: Whether to set this project as the default
+            governed: Write ``DEFAULT_VOCABULARY`` into the project's store
+                directory, so the checker runs on every write to it (verbs
+                decision D8). **Off by default**, and that default is load-bearing
+                rather than cautious — see ``write_default_vocabulary``.
 
         Raises:
             ValueError: If the project already exists or path collides with existing project
@@ -144,6 +237,9 @@ class ProjectService:
         # If project_root is set, constrain all projects to that directory
         project_root = self.config_manager.config.project_root
         sanitized_name = None
+        # Set only for a store-derived project: the store path embeds the id, so
+        # the row cannot be allowed to generate its own default afterwards.
+        store_external_id: str | None = None
         if project_root:
             base_path = Path(project_root)
 
@@ -161,6 +257,13 @@ class ProjectService:
                     f"BASIC_MEMORY_PROJECT_ROOT is set to {project_root}. "
                     f"All projects must be created under this directory. Invalid path: {path}"
                 )  # pragma: no cover
+
+        elif path is None:
+            # Decision point: no import source, so the project gets its own store
+            # directory. The id has to exist before the path does — the path *is*
+            # the id — so it is drawn here rather than left to the row's default.
+            store_external_id = str(uuid.uuid4())
+            resolved_path = (store_path() / store_external_id).as_posix()
 
         else:
             resolved_path = Path(os.path.abspath(os.path.expanduser(path))).as_posix()
@@ -190,9 +293,22 @@ class ProjectService:
                             f"Under project_root, paths are normalized to lowercase to prevent case-sensitivity issues."
                         )  # pragma: no cover
 
-            # Check for nested paths with existing projects
-            for existing in existing_projects:
-                if self._check_nested_paths(resolved_path, existing.path):
+            # Check for nested paths with existing projects.
+            #
+            # Trigger: the new project is store-derived (no import source given).
+            # Why: its home is `store/<external_id>/`, inside the tool's own data
+            #     directory, and any user project rooted above that directory —
+            #     `~`, or a test's tmp home — encloses it by construction. Applying
+            #     the rule there refuses *every* store-derived project because of
+            #     one over-broad user project, which makes the store design
+            #     unreachable rather than protecting anything. Two store-derived
+            #     projects are siblings and can never nest, so nothing is lost.
+            # Outcome: skip the check for a store-derived path; an import source
+            #     still gets it, which is where tree-sharing actually happens.
+            if store_external_id is None:
+                for existing in existing_projects:
+                    if not self._check_nested_paths(resolved_path, existing.path):
+                        continue
                     # Determine which path is nested within which for appropriate error message
                     p_new = Path(resolved_path).resolve()
                     p_existing = Path(existing.path).resolve()
@@ -232,7 +348,17 @@ class ProjectService:
                 # Don't set is_default=False to avoid UNIQUE constraint issues
                 # Let it default to NULL, only set to True when explicitly making default
             }
+            if store_external_id is not None:
+                project_data["external_id"] = store_external_id
             created_project = await self.repository.create(session, project_data)
+
+            # Creating a project is the deliberate human act a vocabulary needs
+            # (GAPS W4, verbs decision D8), but asking for one is what makes it
+            # deliberate — see `write_default_vocabulary` for why the default had
+            # to be reversed. `bm new` never writes one: on an ungoverned project
+            # it writes the record unchecked and says so.
+            if governed:
+                write_default_vocabulary(created_project.external_id)
 
             # Trigger: the caller asked for this project to be the default, or the
             #      registry has no default at all (this is the first project).

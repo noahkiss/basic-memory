@@ -82,14 +82,21 @@ def app_callback(
     # copy of work they already do (the shape 'doctor' and 'project' use).
     # Skip for 'undo' for the same reason: it restores files with git and then
     # reindexes them through its own bootstrap.
+    # Skip for the record write verbs 'new', 'edit', 'done' and 'mark': each one
+    # builds the local write stack, whose `direct_note_writer` already opens the
+    # database and calls ensure_project_registry.
     # ('brief' returns above, before this point.)
     skip_init_commands = {
         "doctor",
+        "done",
+        "edit",
         "history",
         "ls",
         "man",
+        "mark",
         "mcp",
         "mine",
+        "new",
         "path",
         "show",
         "status",

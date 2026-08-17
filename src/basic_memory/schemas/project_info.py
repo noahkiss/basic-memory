@@ -133,8 +133,20 @@ class ProjectInfoRequest(BaseModel):
     """Request model for switching projects."""
 
     name: str = Field(..., description="Name of the project to switch to")
-    path: str = Field(..., description="Path to the project directory")
+    # Optional because a project's home is store-derived (`store/<external_id>/`,
+    # AGENTS.md, verbs decision D3). A path names an *import source* — where the
+    # notes are coming from — so a project created without one is the normal case
+    # and gets its path from the store.
+    path: Optional[str] = Field(
+        default=None, description="Import source directory; omit to use the store"
+    )
     set_default: bool = Field(..., description="Set the project as the default")
+    # Opt-in, because the default vocabulary declares the six record types and
+    # `write_note` defaults to `type: note` — governing every new project would
+    # refuse the primary agent write path (verbs decision D8, reversed).
+    governed: bool = Field(
+        default=False, description="Write the default record vocabulary into the project's store"
+    )
 
 
 class WatchEvent(BaseModel):

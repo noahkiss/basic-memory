@@ -165,8 +165,14 @@ def test_project_ls_unknown_project_fails_on_stderr(
     assert "Project 'missing' not found" in result.stderr
 
 
-def test_project_add_requires_a_path(runner: CliRunner):
-    """path is a required positional, so omitting it is a usage error."""
-    result = runner.invoke(app, ["project", "add", "solo"])
+def test_project_add_requires_a_name(runner: CliRunner):
+    """The name is the one required argument; omitting it is a usage error.
+
+    The *path* used to be required too. It is optional now: a project's home is
+    store-derived and a path argument means an import source (verbs decision D3).
+    That behaviour needs a stubbed client, so it is covered in
+    `test_project_add.py` rather than here, where nothing is stubbed.
+    """
+    result = runner.invoke(app, ["project", "add"])
 
     assert result.exit_code == 2

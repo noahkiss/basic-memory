@@ -119,8 +119,15 @@ async def add_project(
     if existing_project:
         # Project exists - check if paths match for true idempotency
         # Normalize paths for comparison (resolve symlinks, etc.)
-        requested_path = os.path.abspath(os.path.expanduser(project_data.path))
+        # A request with no path named no location at all, so there is nothing to
+        # disagree about: the project's home is store-derived (decision D3) and
+        # re-adding it by name is idempotent.
         existing_path = os.path.abspath(os.path.expanduser(existing_project.path))
+        requested_path = (
+            existing_path
+            if project_data.path is None
+            else os.path.abspath(os.path.expanduser(project_data.path))
+        )
 
         if requested_path == existing_path:
             # Same name, same path - return 200 OK (idempotent)
@@ -149,7 +156,10 @@ async def add_project(
     try:  # pragma: no cover
         # The service layer handles path sanitization
         await project_service.add_project(
-            project_data.name, project_data.path, set_default=project_data.set_default
+            project_data.name,
+            project_data.path,
+            set_default=project_data.set_default,
+            governed=project_data.governed,
         )
 
         # Fetch the newly created project to get its ID

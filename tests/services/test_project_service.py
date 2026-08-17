@@ -792,3 +792,135 @@ async def test_remove_project_rejects_database_default(project_service: ProjectS
 
     # Verify project still exists
     assert await _get_project(project_service, test_project_name) is not None
+
+
+# --- The store-derived home, and the vocabulary that comes with it (verbs item C2) ---
+
+
+@pytest.mark.asyncio
+async def test_add_project_without_a_path_is_homed_in_the_store(project_service: ProjectService):
+    """No import source means the project lives at `store/<external_id>/` (D3).
+
+    The path is the id, so the id cannot be left to the row's default: it is
+    drawn before the row is written and the directory is named after it.
+
+    This also covers the nested-path exemption, and covers it by accident in
+    exactly the way a user hits it: the fixtures register a project at the tmp
+    home, the store sits *inside* that home, and the generic "projects cannot
+    share directory trees" rule would refuse every store-derived project. It is
+    skipped for a store-derived path (see `add_project`).
+    """
+    from basic_memory.store.history import store_path
+
+    name = f"test-store-home-{os.urandom(4).hex()}"
+
+    await project_service.add_project(name)
+
+    project = await _get_project(project_service, name)
+    assert project is not None
+    assert Path(project.path) == store_path() / project.external_id
+    assert Path(project.path).is_dir()
+
+
+@pytest.mark.asyncio
+async def test_add_project_is_ungoverned_by_default(project_service: ProjectService):
+    """A new project writes no vocabulary, so its records are unchecked (W4).
+
+    This default is a reversal of D8's first shape, and the reason is concrete:
+    the default vocabulary declares the six record types, MCP's `write_note`
+    defaults to `type: note`, and the checker refuses a type the project does not
+    declare. Governing every new project refused the primary agent write path.
+    """
+    from basic_memory.vocabulary.model import load_vocabulary, vocabulary_path
+
+    name = f"test-ungoverned-{os.urandom(4).hex()}"
+
+    await project_service.add_project(name)
+
+    project = await _get_project(project_service, name)
+    assert project is not None
+    assert not vocabulary_path(project.external_id).exists()
+    assert load_vocabulary(project.external_id) is None
+
+
+@pytest.mark.asyncio
+async def test_add_project_governed_writes_the_default_vocabulary(
+    project_service: ProjectService,
+):
+    """`--governed` is the deliberate human act a vocabulary needs (D8, W4).
+
+    `bm new` never writes one — on an ungoverned project it writes the record
+    unchecked and says so — so this is the only place a project becomes governed.
+    """
+    from basic_memory.vocabulary.model import (
+        DEFAULT_VOCABULARY,
+        load_vocabulary,
+        vocabulary_path,
+    )
+
+    name = f"test-governed-{os.urandom(4).hex()}"
+
+    await project_service.add_project(name, governed=True)
+
+    project = await _get_project(project_service, name)
+    assert project is not None
+    assert vocabulary_path(project.external_id).is_file()
+    assert load_vocabulary(project.external_id) == DEFAULT_VOCABULARY
+
+
+@pytest.mark.asyncio
+async def test_a_governed_project_refuses_an_undeclared_type(project_service: ProjectService):
+    """The positive control for the reversal: governing really does refuse `type: note`.
+
+    Without this, "ungoverned by default" reads as caution. It is not — it is the
+    difference between `write_note` working and every MCP caller failing on its
+    next write. The funnel is checked directly, which is the layer that refuses.
+    """
+    from basic_memory.services.exceptions import VocabularyViolationError
+    from basic_memory.services.vocabulary_enforcement import enforce_vocabulary
+
+    name = f"test-refuses-{os.urandom(4).hex()}"
+    await project_service.add_project(name, governed=True)
+    project = await _get_project(project_service, name)
+    assert project is not None
+
+    note = {"id": "tnd-aaaa1111", "permalink": "tnd-aaaa1111", "title": "A Note", "source": "cli"}
+
+    with pytest.raises(VocabularyViolationError):
+        enforce_vocabulary(
+            {**note, "type": "note"},
+            project_external_id=project.external_id,
+            mode="reject",
+            file_path="notes/a-note.md",
+        )
+
+    # A declared type on the same project is accepted, so the refusal is about
+    # the type and not about the record being malformed.
+    assert (
+        enforce_vocabulary(
+            {**note, "type": "state"},
+            project_external_id=project.external_id,
+            mode="reject",
+            file_path="states/a-note.md",
+        )
+        == []
+    )
+
+
+@pytest.mark.asyncio
+async def test_add_project_with_a_path_keeps_it(project_service: ProjectService):
+    """A path argument is an import source: the notes stay where they already are.
+
+    Positive control for the store-derived tests above — that branch is taken
+    only when no path is given.
+    """
+    name = f"test-imported-{os.urandom(4).hex()}"
+    with tempfile.TemporaryDirectory() as temp_dir:
+        source = Path(temp_dir) / "notes"
+        source.mkdir(parents=True, exist_ok=True)
+
+        await project_service.add_project(name, str(source))
+
+        project = await _get_project(project_service, name)
+        assert project is not None
+        assert Path(project.path) == source

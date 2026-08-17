@@ -3195,9 +3195,51 @@ so `bm project add <name>` failed validation at the router. It is now `Optional[
 router's existing-project comparison treats an absent path as "no disagreement", and both other
 callers (`bm doctor`'s round-trip probe, the MCP `create_project` tool) still pass a path.
 
-**D8 lands here too:** `project add` writes `DEFAULT_VOCABULARY` to `store/<external_id>/
-vocabulary.yml`. Creating a project *is* the deliberate human act W4 requires, and it is the only
-place a project becomes governed — `bm new` never writes one.
+**D8 lands here too, and its default was REVERSED the same day.** `bm project add --governed`
+writes `DEFAULT_VOCABULARY` to `store/<external_id>/vocabulary.yml`; without the flag the project
+is ungoverned and nothing is written. Asking for it is what makes it the deliberate human act W4
+requires, and it is still the only place a project becomes governed — `bm new` never writes one.
+
+D8 as first built governed **every** new project, and that could not ship. The default vocabulary
+declares the six record types; MCP's `write_note` defaults to `type: note`; the checker refuses a
+type a project does not declare. So governing by default refused **the primary agent write path**.
+Measured by the verifier on the committed tree: 7 integration tests failed and `just doctor` failed,
+all on one error —
+
+```
+Doctor failed: doctor/Doctor API Note.md is off this project's vocabulary:
+Type 'note' is not in this project's vocabulary.
+```
+
+— and every existing MCP caller in the wild would have failed the same way on its next write.
+Reversed by the orchestrator, flagged for the user. **An absent `vocabulary.yml` means ungoverned
+(W4), and opt-in restores that meaning rather than overriding it**, which is the deeper reason the
+reversal is right and not merely expedient: the first shape made "ungoverned" unreachable through
+the only command that creates projects.
+
+Reproduction of both sides, against a temp `BASIC_MEMORY_CONFIG_DIR`:
+
+```
+$ bm project add plain            # no flag
+$ bm tool write-note --title "Plain Note" --folder notes --content "…" --project plain
+action: created
+
+$ bm project add checked --governed
+$ bm tool write-note --title "Plain Note" --folder notes --content "…" --project checked
+Error during write_note: notes/Plain Note.md is off this project's vocabulary:
+Type 'note' is not in this project's vocabulary. …
+```
+
+**Store-derived paths are unaffected** — that is C2 proper and stays the default. Only the
+vocabulary moved behind a flag.
+
+**A second defect the reversal exposed: the nested-path rule refused every store-derived project.**
+`add_project` rejects a path that shares a directory tree with an existing project, and
+`store/<external_id>/` is inside the data directory — so any user project rooted above it (`~`, or a
+test's tmp home) encloses it by construction. Two unit tests hit it immediately, and a user whose
+default project is `~` would have hit it on the first `bm project add`. The check is now skipped for
+a store-derived path: two store-derived projects are siblings and can never nest, so nothing is
+lost, and an import source still gets the check — which is where tree-sharing actually happens.
 
 **A gap this item created, found by the smoke run and fixed in the same pass.** The vocabulary file
 lands inside the store's worktree, and nothing committed it, so W3-B's dirty-file notice fired on
@@ -3216,10 +3258,15 @@ note: 1 other file has uncommitted changes in the note store (not included in th
 
 After it, the store's first commit is `create <eid>/vocabulary.yml` and the notice is absent.
 
-Tests: 3 added to `tests/services/test_project_service.py` (33 → 36) covering the store-derived
-path, the vocabulary file, and the import-source branch as its positive control; 2 in
-`tests/cli/test_project_add.py`, one of which replaces `test_project_add_requires_a_path` — that
-test guarded the behaviour this item deliberately reversed.
+Tests: 5 added to `tests/services/test_project_service.py` (33 → 38) — the store-derived path (which
+also covers the nesting exemption, the way a user hits it), ungoverned by default, `--governed`
+writing the file, the import-source branch as its positive control, and a control that a governed
+project really does refuse `type: note`. That last one is the test that would have caught the
+reversal before the verifier did. 3 in `tests/cli/test_project_add.py`, including `--governed`
+reaching the API. Two existing tests named `test_project_add_requires_a_path` — one in
+`test_project_add.py`, one in `test_project_list_and_ls.py` — guarded the behaviour this item
+deliberately reversed; the first became `test_project_add_takes_no_path`, the second became
+`test_project_add_requires_a_name`, which is the part still true.
 
 **Item E — `bm new`. Landed 2026-08-17.**
 `src/basic_memory/cli/commands/new.py`, on a new shared module
@@ -3247,7 +3294,7 @@ the type's one date field with `date-source: inline` and `date-confidence: day`,
 `--supersedes`. **`review-by` is not written here** — `prepare_accepted_note_create` stamps it, and
 stamping twice would validate one value and store another.
 
-Three judgment calls:
+Four judgment calls:
 
 - **`inline` / `day` for a new record's date.** Not `inferred`: that rung means nobody stated the
   date, and `bm doctor` reports every inferred date for human review — stamping it here would put
@@ -3258,18 +3305,30 @@ Three judgment calls:
 - **A type a human added to `vocabulary.yml` gets a directory under its bare name.** It is legal to
   write (W4), so refusing it a home would make the extension mechanism unusable, and pluralizing it
   would guess at English.
-- **`$EDITOR` is opened by hand, not by `click.edit`.** typer 0.26 does not re-export `edit`, and
-  click is not a declared dependency of this tree — reaching past typer into it for one call would
-  add an undeclared one. `body_from_editor` in `cli/record_notes.py` is ten lines and both verbs
-  share it. It opens only when stdin is a terminal: an agent has none, and an editor launched
-  there is a hang with no prompt to explain it (D11).
+- **`$EDITOR` is opened by hand, not by `click.edit`.** `typer.edit` does not exist in typer
+  0.26.8 (`hasattr(typer, "edit")` is False), which a typecheck caught before anything ran.
+  `click.edit` does exist, but **click is not in this tree's `dependencies`** — it arrives only as
+  typer's own transitive dependency, so calling it would add an undeclared one for a single call.
+  `body_from_editor` in `cli/record_notes.py` is ten lines, both verbs share it, and it opens only
+  when stdin is a terminal: an agent has none, and an editor launched there is a hang with no
+  prompt to explain it (D11).
+
+  **The branch is tested, and reaching it took a measurement.** A `CliRunner` stdin reports no
+  terminal, so the editor path is unreachable from a test until `isatty` is patched — and the class
+  to patch is **typer's** `_NamedTextIOWrapper`, not click's. Typer ships its own and installs that
+  one; patching `click.testing._NamedTextIOWrapper` changes nothing and the test then silently
+  re-tests the non-terminal path and passes. Measured: inside a typer `CliRunner`,
+  `type(sys.stdin).__module__` is `typer.testing`. The tests point `$EDITOR` at a real shell script
+  and run it as a real subprocess — one that overwrites (for `bm new`) and one that appends (for
+  `bm edit`, where the original body surviving is what proves the editor was handed the record
+  rather than a blank buffer).
 
 `--supersedes` on a non-finding is refused **by the funnel**, not by the verb, which is the point:
 the rule has one home. The verb checks only that the value is shaped like a record id, because a
 target that cannot be a permalink lands as a dangling relation that reads as a real edge.
 
-Tests: `tests/cli/test_new_command.py`, 15 tests, real path throughout — real command, real write
-stack, real database, real files, real funnel.
+Tests: `tests/cli/test_new_command.py`, 19 tests, real path throughout — real command, real write
+stack, real database, real files, real funnel. Two of the 19 close E1, below.
 
 **Item F — `bm edit`, `bm mark`, `bm done`. Landed 2026-08-17.**
 `src/basic_memory/cli/commands/record_write.py`. One module because the three share scope
@@ -3298,12 +3357,21 @@ Two judgment calls:
 - **`bm edit` with neither `--title` nor `--body` and no terminal is an error**, not a no-op write.
   A rewrite with nothing stated produces a commit the caller cannot see.
 
+**Fixed in review 2026-08-17: `--title` alone no longer opens `$EDITOR`.** `_next_body` consulted
+the editor whenever `--body` was absent and stdin was a terminal, so `bm edit <id> --title "New"`
+changed only the title under an agent and title *plus* whatever the editor returned under a human.
+One command meaning two things depending on whether a terminal is attached is the shape the output
+contract rules out elsewhere; the caller had already stated its change. `_next_body` now takes
+`may_open_editor`, which `edit_record` sets from `title is None`. Regression test:
+`test_edit_with_a_title_only_leaves_the_editor_shut`, whose positive control is the neighbouring
+test that opens the editor with the same fixtures.
+
 **Each command function calls `emit_notices` itself**, rather than a shared reporting helper doing
 it. `tests/cli/test_notice_guard.py` looks at the command functions, and it looks there
 deliberately — a guard over a helper proves nothing about whether the verbs reach it (T22). The
 first draft routed all three through one `_report`, which the guard would have failed.
 
-Tests: `tests/cli/test_record_write_commands.py`, 18 tests, records created by `bm new` rather than
+Tests: `tests/cli/test_record_write_commands.py`, 20 tests, records created by `bm new` rather than
 seeded — so every assertion is about a record the tool itself wrote. One of them closes the loop
 back to item D: closing the last open task removes the project's `headline.md`.
 `tests/cli/test_notice_guard.py` gains the four new verbs in its expected set; that file belongs to
@@ -3328,6 +3396,60 @@ a write reports, and J owns the notice block on every verb. The write hook's lin
 note store" so the two are at least distinguishable while both stand. Recommended answer: keep the
 write hook's line, which is tied to a specific commit, and let `emit_notices` drop `dirty` when the
 payload already carried a history notice.
+
+**Item E1 — `bm new --supersedes` writes an edge to a record that may not exist. Found in review
+2026-08-17; CLOSED 2026-08-17.**
+The verb checks only that the value is *shaped* like a record id (`is_record_id`,
+`cli/commands/new.py`), and the funnel's rule 1 checks only the record's *type*
+(`_check_supersedes`, `vocabulary/checker.py:395`). A well-formed id that names nothing therefore
+writes `- supersedes [[tnd-aaaa1111]]`, exits 0, and says nothing. The edge lands as a dangling
+relation, which `bm doctor`'s integrity section reports later — so the content is not lost, but the
+author is told at the wrong moment. Reproduction, against a temp `BASIC_MEMORY_CONFIG_DIR`:
+
+```
+$ basic-memory new finding "A successor" -b x --supersedes tnd-aaaa1111 -p smoke
+tnd-…  finding  …/findings/tnd-…--a-successor.md
+1 record
+$ grep supersedes …/findings/tnd-…--a-successor.md
+- supersedes [[tnd-aaaa1111]]
+```
+
+**Closed 2026-08-17 as recommended.** `create_record` already holds a session and the project row,
+so it looks the predecessor up through `record_exists` (a `permalink_exists` query — `permalink ==
+id` byte-for-byte, so a permalink query *is* an id query and no title can match it) and refuses
+before anything is written. A successor to a record that does not exist is a typo every time, and
+the author is the only person who still remembers making it; telling them at `bm doctor` time is
+telling the wrong person later.
+
+The refusal is scoped to the project, which also closes a case the entry did not name: an id that
+exists in *another* project. Records are project-scoped and a wikilink resolves within the project,
+so a foreign id lands as a dangling relation exactly like a typo does.
+
+Same command as the reproduction above, after the fix:
+
+```
+$ basic-memory new finding "A successor" -b x --supersedes tnd-aaaa1111 -p smoke
+Error: --supersedes names 'tnd-aaaa1111', which is not a record in project 'smoke'
+$ echo $?
+1
+```
+
+The positive control is in the same test: the identical command with a real predecessor exits 0 and
+writes `- supersedes [[tnd-…]]`, so the refusal is about the target's existence and nothing else.
+Tests: 2 added to `tests/cli/test_new_command.py` (17 → 19) — the missing target with its control,
+and the cross-project target.
+
+**E2 stays open** as filed. It is a different decision — what `bm new` should *say* when a human has
+removed `inbox` from their own vocabulary — and the vocabulary is the human's to shape.
+
+**Item E2 — the W4 escape hatch fails closed on a project whose vocabulary drops `inbox`. Found in
+review 2026-08-17; open.**
+`resolve_note_type` (`cli/record_notes.py`) files an undeclared type as `inbox`, but the checker
+rejects a `type` that is not in `vocabulary.types` (`checker.py:162-164`). A human who removes
+`inbox` from their `vocabulary.yml` therefore turns W4's "agents propose, never enable" hatch into
+a hard rejection — the one case the hatch exists to prevent. `DEFAULT_VOCABULARY` declares `inbox`,
+so this is unreachable until someone edits the file. Recommended answer: `bm new` states it in the
+rejection rather than the tree forbidding the edit — the vocabulary is the human's to shape.
 
 ### W5 — the remaining schema-validation rules, inside `bm doctor` — **CLOSED 2026-08-16: all six items shipped; never a `bm check` command**
 **Rewritten 2026-08-03.** Two things were wrong with this entry, one naming and one substantive.

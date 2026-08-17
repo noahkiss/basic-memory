@@ -2,6 +2,7 @@
 
 import os
 from pathlib import Path
+from typing import Optional
 
 import typer
 
@@ -91,17 +92,37 @@ def list_projects(
 @project_app.command("add")
 def add_project(
     name: str = typer.Argument(..., help="Name of the project"),
-    path: str = typer.Argument(..., help="Path to the project directory"),
+    path: Optional[str] = typer.Argument(
+        None, help="A directory whose notes to adopt. Omit it to use the store."
+    ),
     set_default: bool = typer.Option(False, "--default", help="Set as default project"),
+    governed: bool = typer.Option(
+        False,
+        "--governed",
+        help="Write the default record vocabulary, so every write to this project is checked.",
+    ),
     quiet: bool = typer.Option(False, "--quiet", help="Hide the status lines and next-step hints"),
 ) -> None:
-    """Add a new project.
+    """Add a new project, homed in the store.
+
+    A project's notes live under `~/.basic-memory/store/<id>/`, which is what
+    puts every write in the note history. A path argument names an *import
+    source* — somewhere notes already are — and that project keeps living there.
+
+    `--governed` writes the default record vocabulary into the project, which
+    turns the schema checks on for every write to it. Without it the project is
+    ungoverned and records are written unchecked — which is what a project holding
+    ordinary notes wants, because the record types are a closed set that plain
+    notes do not belong to.
 
     Example:
-        bm project add research ~/Documents/research
+        bm project add research
     """
-    # Resolve to absolute path
-    resolved_path = Path(os.path.abspath(os.path.expanduser(path))).as_posix()
+    # Resolve to absolute path. None stays None: it means "no import source", and
+    # the service gives the project its store-derived home (decision D3).
+    resolved_path = (
+        None if path is None else Path(os.path.abspath(os.path.expanduser(path))).as_posix()
+    )
 
     # Deferred: the MCP client graph costs ~0.04 s of import beyond what the CLI
     # already pays, and only the client-routed project subcommands need it.
@@ -113,7 +134,12 @@ def add_project(
 
     async def _add_project():
         async with get_client() as client:
-            data = {"name": name, "path": resolved_path, "set_default": set_default}
+            data = {
+                "name": name,
+                "path": resolved_path,
+                "set_default": set_default,
+                "governed": governed,
+            }
             return await ProjectClient(client).create_project(data)
 
     try:
@@ -124,6 +150,17 @@ def add_project(
         raise fail(f"Error adding project: {e}")
 
     typer.echo(result.message)
+
+    # Trigger: the caller named a directory instead of taking the store default.
+    # Why: notes outside `store/<id>/` are not in the history repo's worktree, so
+    #     every write to that project skips its commit and says so. Stating it
+    #     once at creation beats discovering it one notice at a time.
+    # Outcome: one notice naming the consequence, dropped by --quiet.
+    if path is not None and not quiet:
+        typer.echo(
+            f"note: '{name}' keeps its notes at {resolved_path}, outside the store — "
+            "writes there are not recorded in the note history"
+        )
 
     # Trigger: the service made the new project the default without being
     #     asked — it is the first project in an empty registry.
