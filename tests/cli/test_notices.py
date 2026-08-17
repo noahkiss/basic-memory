@@ -13,6 +13,7 @@ Three layers, because the notice has three separable claims:
 """
 
 from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -106,6 +107,29 @@ def test_a_pinned_notice_leaves_the_project_out() -> None:
     assert notice_lines(counts) == [
         "1 record needs attention (1 unknown-type on 'type') — run 'bm doctor'"
     ]
+
+
+def test_an_unreadable_vocabulary_prints_above_every_count() -> None:
+    """The line that says the counts are incomplete has to come first (V-J2)."""
+    from basic_memory.cli.direct import UnreadableVocabulary
+
+    counts = NoticeCounts(
+        violations=4,
+        unreadable=(
+            UnreadableVocabulary(project="alpha", path="/store/a/vocabulary.yml", reason="boom"),
+            UnreadableVocabulary(project="beta", path="/store/b/vocabulary.yml", reason="boom"),
+        ),
+        pinned=False,
+    )
+
+    lines = notice_lines(counts)
+
+    assert lines[0] == (
+        "vocabulary unreadable in 'alpha' — its records are not counted below: "
+        "/store/a/vocabulary.yml (+1 more) — run 'bm types'"
+    )
+    # Positive control on the cap: the count below still prints, one line down.
+    assert lines[1].startswith("4 records need attention")
 
 
 def test_a_reason_with_no_field_names_the_rule_alone() -> None:
@@ -381,6 +405,73 @@ async def test_expired_reviews_and_the_inbox_pile_are_counted(
 
     assert counts.review_due == 1
     assert counts.inbox == 1
+
+
+def break_vocabulary(project: Project) -> Path:
+    """Write a `vocabulary.yml` the parser refuses, and return its path."""
+    path = vocabulary_path(project.external_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("nonsense_key: 1\n", encoding="utf-8")
+    return path
+
+
+@pytest.mark.asyncio
+async def test_one_malformed_vocabulary_leaves_the_other_projects_counted(
+    session_maker,
+    test_project: Project,
+    config_home,
+) -> None:
+    """GAPS V-J2: one typo used to silence the notice for the whole registry.
+
+    Real files on both sides, because the claim is about what the parser does
+    with them: the broken project contributes nothing and is named, and the
+    readable one still produces its count — the positive control that proves the
+    pass ran rather than aborting quietly.
+    """
+    async with db.scoped_session(session_maker) as session:
+        broken = await make_project(session, "broken-project", config_home / "broken")
+        await make_entity(session, test_project.id, record(10), "notes/i.md")
+        await make_entity(session, broken.id, record(11), "notes/j.md")
+    govern(test_project)
+    path = break_vocabulary(broken)
+
+    counts = await gather_notice_counts(UNSCOPED)
+
+    assert counts.violations == 1
+    assert [report.project for report in counts.unreadable] == ["broken-project"]
+    assert counts.unreadable[0].path == str(path)
+    assert "nonsense_key" in counts.unreadable[0].reason
+    assert notice_lines(counts)[0].startswith("vocabulary unreadable in 'broken-project'")
+
+
+@pytest.mark.asyncio
+async def test_a_pinned_gather_on_a_broken_vocabulary_reports_the_file_and_no_counts(
+    session_maker,
+    test_project: Project,
+) -> None:
+    """Pinned to the broken project, the file is the only thing there is to say.
+
+    Its violation rows are stale — the pass that would have refreshed them is the
+    one that failed — so reporting them as current is the reduced-count failure
+    V-J2 names. The positive control is the second gather: with the file fixed,
+    the same corpus produces a count.
+    """
+    async with db.scoped_session(session_maker) as session:
+        await make_entity(session, test_project.id, record(12), "notes/k.md")
+    path = break_vocabulary(test_project)
+    scope = ReadScope(project=test_project.name, origin="flag")
+
+    counts = await gather_notice_counts(scope)
+
+    assert counts.violations == 0
+    assert counts.review_due == 0
+    assert counts.inbox == 0
+    assert [report.path for report in counts.unreadable] == [str(path)]
+
+    govern(test_project)
+    fixed = await gather_notice_counts(scope)
+    assert fixed.unreadable == ()
+    assert fixed.violations == 1
 
 
 @pytest.mark.asyncio

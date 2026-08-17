@@ -96,8 +96,25 @@ async def direct_project_refs(project_name: str | None) -> list[ProjectRef]:
         ]
 
 
-async def direct_revalidate_vocabulary(project_name: str | None = None) -> int:
-    """Re-check records whose project's vocabulary changed. Return how many were checked.
+@dataclass(frozen=True, slots=True)
+class UnreadableVocabulary:
+    """One project whose ``vocabulary.yml`` could not be parsed, and why."""
+
+    project: str
+    path: str
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
+class RevalidationScan:
+    """What one revalidation pass rechecked, and which projects it could not read."""
+
+    revalidated: int
+    unreadable: tuple[UnreadableVocabulary, ...] = ()
+
+
+async def direct_revalidate_vocabulary(project_name: str | None = None) -> RevalidationScan:
+    """Re-check records whose project's vocabulary changed, project by project.
 
     ``project_name`` pins one project; ``None`` covers every project in the
     registry, which is what an unscoped read means under GAPS W5-C. Both shapes
@@ -108,11 +125,21 @@ async def direct_revalidate_vocabulary(project_name: str | None = None) -> int:
     into a scan or sync pass: violations go stale when the *vocabulary* changes,
     not when files do, so firing on sync would leave counts wrong for anyone who
     never syncs and right only by accident for everyone else. Reporting is
-    GAPS W5 item 6's; this returns a number and prints nothing.
+    GAPS W5 item 6's; this returns a count and prints nothing.
 
-    Raises ValueError for an unknown project name, and ``VocabularyError`` for a
-    malformed ``vocabulary.yml`` — an unreadable vocabulary must not degrade into
-    "not governed" (GAPS W4).
+    Trigger: one project's ``vocabulary.yml`` is malformed (GAPS V-J2).
+    Why: the raise stays — an unreadable vocabulary must never degrade into "not
+        governed" (GAPS W4) — but a pass over every project must not lose the
+        other projects to one typo. Before this, the first bad file aborted the
+        whole pass and the notice riding on it printed nothing at all, for every
+        verb and every project, with only a log line to say so.
+    Outcome: that project is rechecked no further and named in ``unreadable``,
+        the rest of the registry is revalidated as usual, and the caller decides
+        what to say. The same per-project shape ``read_vocabularies`` uses for
+        `bm brief` (GAPS W8 F1).
+
+    Raises ValueError for an unknown project name: an unaddressable request is a
+    failure, not an empty result (contract rule 5).
     """
     # Deferred: the service layer pulls SQLAlchemy + Alembic, which must not
     # load at CLI import time — only when a command actually runs (#886).
@@ -121,6 +148,7 @@ async def direct_revalidate_vocabulary(project_name: str | None = None) -> int:
     from basic_memory.repository.project_repository import ProjectRepository
     from basic_memory.services.initialization import ensure_project_registry
     from basic_memory.services.vocabulary_revalidation import revalidate_if_vocabulary_changed
+    from basic_memory.vocabulary.model import VocabularyError, vocabulary_path
 
     config = ConfigManager().config
     _, session_maker = await db.get_or_create_db(config.database_path, config=config)
@@ -136,9 +164,19 @@ async def direct_revalidate_vocabulary(project_name: str | None = None) -> int:
             projects = [project]
 
         revalidated = 0
+        unreadable: list[UnreadableVocabulary] = []
         for registered in projects:
-            revalidated += await revalidate_if_vocabulary_changed(session, registered)
-        return revalidated
+            try:
+                revalidated += await revalidate_if_vocabulary_changed(session, registered)
+            except VocabularyError as exc:
+                unreadable.append(
+                    UnreadableVocabulary(
+                        project=registered.name,
+                        path=str(vocabulary_path(registered.external_id)),
+                        reason=str(exc),
+                    )
+                )
+        return RevalidationScan(revalidated=revalidated, unreadable=tuple(unreadable))
 
 
 # How long a `state` record may sit untouched before doctor asks about it.

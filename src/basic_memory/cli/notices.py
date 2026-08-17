@@ -49,6 +49,7 @@ import typer
 from loguru import logger
 
 if TYPE_CHECKING:  # pragma: no cover
+    from basic_memory.cli.direct import UnreadableVocabulary
     from basic_memory.cli.scope import ReadScope
 
 # W8 caps the notice at two lines per command, highest priority first. More than
@@ -99,6 +100,10 @@ class NoticeCounts:
     review_due: int = 0
     inbox: int = 0
     dirty: int = 0
+    # The in-scope projects whose `vocabulary.yml` could not be parsed. Their
+    # rows are left out of every count above, so this is what keeps the reduced
+    # numbers from reading as good news (GAPS V-J2).
+    unreadable: tuple["UnreadableVocabulary", ...] = ()
     # False when the scope covers every project, which is what decides whether
     # the top reason names its project (GAPS W5-C).
     pinned: bool = True
@@ -115,6 +120,19 @@ def notice_lines(counts: NoticeCounts) -> list[str]:
     what makes it actionable — a bare count only relocates the lookup.
     """
     lines: list[str] = []
+
+    # First, above every count, because it is the line that says the counts below
+    # are incomplete. A reduced count with nothing to explain it is exactly the
+    # silent failure W5-B exists to prevent (GAPS V-J2). One line however many
+    # files are broken: the notice names the first and says how many follow, and
+    # `bm types` prints the parse error for each.
+    if counts.unreadable:
+        first, *rest = counts.unreadable
+        others = f" (+{len(rest)} more)" if rest else ""
+        lines.append(
+            f"vocabulary unreadable in '{first.project}' — its records are not counted below: "
+            f"{first.path}{others} — run 'bm types'"
+        )
 
     if counts.violations:
         reason = ""
@@ -155,9 +173,14 @@ async def gather_notice_counts(scope: "ReadScope") -> NoticeCounts:
     surface that must never report a stale count. It costs one hash compare per
     in-scope project when nothing changed (GAPS W5 item 4).
 
-    Raises ValueError for a project the registry does not hold, and
-    ``VocabularyError`` for a malformed ``vocabulary.yml``. Both reach the caller
-    — ``emit_notices`` is what decides that a notice never fails a command.
+    A project whose ``vocabulary.yml`` is malformed contributes no counts and is
+    named in ``unreadable`` instead: the revalidation pass degrades per project
+    (GAPS V-J2), so one typo no longer silences the notice for the whole
+    registry. Its reason goes to the log, which is where an operator looks for
+    the parse error the one-line notice has no room for.
+
+    Raises ValueError for a project the registry does not hold — ``emit_notices``
+    is what decides that a notice never fails a command.
     """
     # Deferred: the service layer pulls SQLAlchemy, which must not load at CLI
     # import time — only when a command actually runs (#886).
@@ -174,7 +197,9 @@ async def gather_notice_counts(scope: "ReadScope") -> NoticeCounts:
     from basic_memory.repository.violation_repository import ViolationRepository
     from basic_memory.store.history import dirty_count
 
-    await direct_revalidate_vocabulary(scope.project)
+    scan = await direct_revalidate_vocabulary(scope.project)
+    for skipped in scan.unreadable:
+        logger.warning(f"notices: skipped project '{skipped.project}': {skipped.reason}")
 
     config = ConfigManager().config
     _, session_maker = await db.get_or_create_db(config.database_path, config=config)
@@ -188,10 +213,18 @@ async def gather_notice_counts(scope: "ReadScope") -> NoticeCounts:
                 raise ValueError(f"Project not found: '{scope.project}'")
             projects = [project]
 
-        names = {project.id: project.name for project in projects}
+        # A project whose vocabulary could not be read is left out of every count:
+        # the pass that would have refreshed its violation rows is the one that
+        # failed, so whatever the table still holds for it is stale by definition.
+        # The `unreadable` field is what stops the smaller number reading as an
+        # improvement (GAPS V-J2).
+        broken = {report.project for report in scan.unreadable}
+        readable = [project for project in projects if project.name not in broken]
+
+        names = {project.id: project.name for project in readable}
         project_ids = list(names)
         if not project_ids:
-            return NoticeCounts(pinned=scope.is_pinned)
+            return NoticeCounts(unreadable=scan.unreadable, pinned=scope.is_pinned)
 
         violations = ViolationRepository()
         total = await violations.count_for_projects(session, project_ids)
@@ -212,12 +245,17 @@ async def gather_notice_counts(scope: "ReadScope") -> NoticeCounts:
 
         # A pinned scope counts only its own store directory; unscoped counts the
         # whole store, which is the same set of projects it just counted rows for.
-        prefix = projects[0].external_id if scope.is_pinned else None
+        prefix = readable[0].external_id if scope.is_pinned else None
 
     # Outside the session on purpose: this forks git, and holding the one pooled
     # connection open across a subprocess buys nothing.
+    #
+    # The unreadable line counts as one of the two: it prints above every count,
+    # so once it and one other condition have fired the dirty count could not be
+    # shown anyway, and forking git to compute an unprintable number is waste.
     dirty = 0
-    if sum(1 for count in (total, review_due, inbox) if count) < MAX_NOTICES:
+    fired = (len(scan.unreadable), total, review_due, inbox)
+    if sum(1 for count in fired if count) < MAX_NOTICES:
         dirty = dirty_count(prefix)
 
     return NoticeCounts(
@@ -225,6 +263,7 @@ async def gather_notice_counts(scope: "ReadScope") -> NoticeCounts:
         top_reason=top_reason,
         review_due=review_due,
         inbox=inbox,
+        unreadable=scan.unreadable,
         dirty=dirty,
         pinned=scope.is_pinned,
     )
