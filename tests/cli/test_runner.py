@@ -1,8 +1,8 @@
-"""Tests for CLI command utilities."""
+"""`cli/runner.py` — the event loop every DB-touching CLI verb runs on."""
 
 import basic_memory.db as db
 import basic_memory.index.local_schedulers as local_schedulers
-from basic_memory.cli.commands.command_utils import run_with_cleanup
+from basic_memory.cli.runner import run_with_cleanup
 
 
 def test_run_with_cleanup_drains_pending_work_before_db_shutdown(monkeypatch):

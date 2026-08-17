@@ -476,3 +476,35 @@ def test_an_unscoped_lookup_finds_a_record_in_any_project() -> None:
 
     assert result.exit_code == 0, result.output
     assert result.stdout.strip().endswith(FINDING["file_path"])
+
+
+# --- one id, two projects ---
+
+
+def test_an_id_in_two_projects_is_an_error_that_names_both() -> None:
+    """An unscoped lookup that resolves twice must refuse, not pick one.
+
+    Ids are per-project, so the same permalink can legitimately exist in two
+    projects. Printing either one would send `bm show` and `$EDITOR "$(bm path
+    …)"` at a file the caller did not ask for (contract rule 6: one stderr line).
+    """
+    seed({MAIN: [TASK], BETA: [TASK]})
+
+    for verb in ("show", "path"):
+        result = runner.invoke(app, [verb, "tnd-aaaa1111"])
+
+        assert result.exit_code == 1, result.output
+        assert result.stderr.strip() == (
+            f"Error: 'tnd-aaaa1111' is in more than one project ({BETA}, {MAIN}) — name one with -p"
+        )
+        assert result.stdout.strip() == ""
+
+
+def test_naming_the_project_resolves_the_same_duplicated_id() -> None:
+    """Positive control for the refusal above: `-p` is the fix the error names."""
+    seeded = seed({MAIN: [TASK], BETA: [TASK]})
+
+    result = runner.invoke(app, ["path", "tnd-aaaa1111", "--project", BETA])
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout.strip() == str(seeded.file(BETA, TASK["file_path"]))

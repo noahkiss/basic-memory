@@ -19,9 +19,17 @@ import pytest
 # crossed. api.app/mcp.tools are the seconds-scale offenders; fastapi and
 # dateparser are the leaf imports that used to ride in through the service
 # layer (search_service annotation, entity_parser.parse_date).
+#
+# mcp.async_client and mcp.clients are the client graph every verb used to pay
+# for through `command_utils.run_with_cleanup` and through `project`, `status`
+# and `orphans`' module-level imports (GAPS.md T30). They are the line that
+# keeps that fix in place: the runner lives in `cli/runner.py` now, and nothing
+# a native verb imports may reach them.
 BANNED_MODULES = (
     "basic_memory.api.app",
     "basic_memory.mcp.tools",
+    "basic_memory.mcp.async_client",
+    "basic_memory.mcp.clients",
     "fastapi",
     "dateparser",
 )
@@ -31,7 +39,17 @@ BANNED_MODULES = (
 # alembic costs ~0.17 s of import beyond SQLAlchemy (GAPS.md B4).
 WARM_ONLY_BANNED = BANNED_MODULES + ("alembic",)
 
-PROBE_SOURCE = textwrap.dedent(
+# The record the ls/show/path probes read. The body's last line is what the
+# `show` probe matches on, and the file path is what the `path` probe matches.
+RECORD_ID = "tnd-guard0001"
+RECORD_FILE = "tasks/tnd-guard0001--seed.md"
+RECORD_BODY = f"---\nid: {RECORD_ID}\ntype: task\n---\n\nseeded for the import guard\n"
+
+# The constants are prepended rather than interpolated: the probe body is full
+# of dict literals, and an f-string would need every brace in it doubled.
+PROBE_SOURCE = (
+    f"RECORD_ID = {RECORD_ID!r}\nRECORD_FILE = {RECORD_FILE!r}\nRECORD_BODY = {RECORD_BODY!r}\n"
+) + textwrap.dedent(
     """
     import json
     import sys
@@ -69,6 +87,61 @@ PROBE_SOURCE = textwrap.dedent(
         directory = store_path() / external_id
         directory.mkdir(parents=True, exist_ok=True)
         (directory / "vocabulary.yml").write_text("types: [task, guide]\\n")
+
+    if command[0] in ("ls", "show", "path"):
+        # The record verbs need a record: `show` and `path` exit 1 without one,
+        # so an unseeded probe would prove nothing about their import path. The
+        # row is written through the same repository the verbs read, because a
+        # hand-rolled INSERT would drift from the model.
+        import asyncio
+        from datetime import datetime, timezone
+        from pathlib import Path
+
+        async def seed_one_record():
+            from basic_memory import db
+            from basic_memory.config import ConfigManager
+            from basic_memory.repository.entity_repository import EntityRepository
+            from basic_memory.repository.project_repository import ProjectRepository
+
+            config = ConfigManager().config
+            _, session_maker = await db.get_or_create_db(config.database_path, config=config)
+            try:
+                async with db.scoped_session(session_maker) as session:
+                    project = sorted(
+                        await ProjectRepository().find_all(session), key=lambda row: row.id
+                    )[0]
+                    entities = EntityRepository(project_id=project.id)
+                    stamped = datetime.now(timezone.utc)
+                    # The cold and warm runs share one config directory, so the
+                    # second pass finds the row the first one wrote.
+                    if await entities.get_by_permalink(session, RECORD_ID) is None:
+                        await entities.create(
+                            session,
+                            {
+                                "project_id": project.id,
+                                "title": "Seeded record",
+                                "note_type": "task",
+                                "permalink": RECORD_ID,
+                                "file_path": RECORD_FILE,
+                                "content_type": "text/markdown",
+                                "entity_metadata": {
+                                    "id": RECORD_ID,
+                                    "permalink": RECORD_ID,
+                                    "type": "task",
+                                    "title": "Seeded record",
+                                    "status": "open",
+                                },
+                                "created_at": stamped,
+                                "updated_at": stamped,
+                            },
+                        )
+                    target = Path(project.path) / RECORD_FILE
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_text(RECORD_BODY, encoding="utf-8")
+            finally:
+                await db.shutdown_db()
+
+        asyncio.run(seed_one_record())
 
     if command[0] == "mine":
         # `bm mine` reads transcripts off disk and nothing else, so the guard
@@ -108,13 +181,17 @@ PROBE_SOURCE = textwrap.dedent(
 # is the hygiene section's empty-result line rather than a count. `brief` has an
 # empty tail because it prints nothing on an empty corpus by design — it is the
 # most latency-sensitive verb in the tree, so it is guarded despite carrying no
-# payload to match against.
+# payload to match against. `show` matches the seeded file's last body line and
+# `path` its file path, because neither verb prints a count (VERBS_PLAN D9).
 NATIVE_COMMANDS = (
     (["project", "list"], " projects"),
     (["types", "--quiet"], " types"),
     (["mine", "sqlite", "--quiet"], " turns"),
     (["doctor", "--quiet"], "No issues"),
     (["brief"], ""),
+    (["ls", "--quiet"], " records"),
+    (["show", RECORD_ID, "--quiet"], "seeded for the import guard"),
+    (["path", RECORD_ID], RECORD_FILE),
 )
 
 
@@ -149,7 +226,9 @@ def _probe(tmp_path, banned, command=("project", "list"), tail=" projects"):
 
 
 @pytest.mark.parametrize(
-    "command,tail", NATIVE_COMMANDS, ids=["project-list", "types", "mine", "doctor", "brief"]
+    "command,tail",
+    NATIVE_COMMANDS,
+    ids=["project-list", "types", "mine", "doctor", "brief", "ls", "show", "path"],
 )
 def test_native_command_stays_off_api_and_mcp(tmp_path, command, tail):
     """A native command must not import the banned modules — alembic included once warm.
@@ -164,11 +243,14 @@ def test_native_command_stays_off_api_and_mcp(tmp_path, command, tail):
     assert warm == [], f"warm native command imported banned modules: {warm}"
 
 
-def test_guard_probe_detects_a_crossing(tmp_path):
+@pytest.mark.parametrize("banned_module", ["fastapi", "basic_memory.mcp.async_client"])
+def test_guard_probe_detects_a_crossing(tmp_path, banned_module):
     """Positive control: the probe must report a banned module that IS loaded.
 
     Without this, an empty result could mean "probe broken" rather than
     "boundary held" — the class of false negative the evidence rules exist for.
+    Both ban families are controlled: the seconds-scale one the guard was built
+    for, and the MCP client graph T30 added.
     """
     env = os.environ.copy()
     env.pop("BASIC_MEMORY_ENV", None)
@@ -177,7 +259,7 @@ def test_guard_probe_detects_a_crossing(tmp_path):
     env["BASIC_MEMORY_CONFIG_DIR"] = str(tmp_path / ".basic-memory")
 
     # Force one banned module in, then run the same probe body.
-    source = "import fastapi\n" + PROBE_SOURCE
+    source = f"import {banned_module}\n" + PROBE_SOURCE
     completed = subprocess.run(
         [
             sys.executable,
@@ -199,4 +281,4 @@ def test_guard_probe_detects_a_crossing(tmp_path):
 
     assert completed.returncode == 0, completed.stderr
     loaded = json.loads(completed.stdout.strip().splitlines()[-1])
-    assert "fastapi" in loaded
+    assert banned_module in loaded

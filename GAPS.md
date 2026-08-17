@@ -660,7 +660,8 @@ re-reproduced before building: both shapes exited 1 on this tree. What shipped i
   of `_single_alembic_head`). A stamp the shipped tree has never seen raises `NewerSchemaError`
   with the actionable message; every doubtful case (unparseable files, no stamp table) falls
   through to the real migration run. No alembic import — the import guard stays satisfied.
-- `run_with_cleanup` (`cli/commands/command_utils.py`) catches `NewerSchemaError`: message on its
+- `run_with_cleanup` (`cli/runner.py` since T30; `cli/commands/command_utils.py` when this shipped)
+  catches `NewerSchemaError`: message on its
   own line, exit 1 (W20 rule 6). One catch covers every DB-touching CLI verb.
 - **Found while verifying: the advertised way out was circular.** `bm reset` runs two pre-delete
   reads (`_flush_unflushed_note_content`, `_snapshot_registry`) through `get_or_create_db`, which
@@ -672,7 +673,8 @@ Verified end-to-end in a scratch config stamped `zzznewer999`: `bm project list`
 each print the three-line message, exit 1, no traceback; `echo y | bm reset --reindex` exits 0,
 restamps at head (`n7i8j9k0l1m2`), and `project list` works after. Tests:
 `tests/db/test_migration_head_stamp.py` (guard raises on unknown stamp, passes on fresh and
-stale-known), `tests/cli/test_command_utils.py` (exit 1 + message + cleanup still runs).
+stale-known), `tests/cli/test_runner.py` (exit 1 + message + cleanup still runs; the file was
+`tests/cli/test_command_utils.py` until T30 moved the runner).
 
 ### T12 — `bm reset` claims your markdown is safe while unflushed writes live only in the DB — **SHIPPED 2026-07-31 (guard + O6 write-through root fix)**
 **Found:** 2026-07-27, in `.forked/release-design.md` §2. Both sites re-verified before recording.
@@ -1996,8 +1998,10 @@ being coincidence: after `import basic_memory.cli.commands.command_utils`, `sys.
 `httpx`.
 
 So ~0.25 s of the ~0.95 s warm floor (`AGENTS.md`, "Measured baseline") is an MCP client graph that
-`project list`, `types`, `mine` and now `doctor` never call. The import guard does not catch it:
-`mcp.async_client` is not `mcp.tools`, and the banned list names the seconds-scale offenders.
+`project list`, `types`, `mine` and now `doctor` never call. **This 0.25 s is wrong — see the
+correction in the close block below; the real marginal cost is ~0.04 s.** The import guard does not
+catch it: `mcp.async_client` is not `mcp.tools`, and the banned list names the seconds-scale
+offenders.
 
 **Fix:** split `run_with_cleanup` (and `NewerSchemaError` handling) into a module that imports
 nothing from `basic_memory.mcp`, and leave the client-routed helpers where they are. Then add
@@ -2005,6 +2009,78 @@ nothing from `basic_memory.mcp`, and leave the client-routed helpers where they 
 
 Not fixed in W5 item 5: `command_utils` is shared by every verb including the client-routed ones,
 so the split is its own change with its own blast radius, and item 5 already moved a command.
+
+**SHIPPED 2026-08-17.** `run_with_cleanup` and the `NewerSchemaError` catch moved to
+`src/basic_memory/cli/runner.py`, which imports nothing from `basic_memory.mcp` or
+`basic_memory.api`. `command_utils` keeps only the client-routed helpers. Thirteen verb modules
+and `test-int/cli/test_project_commands_integration.py` were repointed;
+`tests/cli/test_command_utils.py` became `tests/cli/test_runner.py`.
+
+**The split alone was not the fix, and the fix diagnosis above was incomplete.** `cli/main.py`
+imports every command module on every invocation, and `project.py`, `orphans.py` and `status.py`
+each imported `basic_memory.mcp.async_client` / `mcp.clients` at module level. Those three now
+defer the import into the client-routed function that uses it. `bm project info` reaches its
+helper as `command_utils.get_project_info`, so the module attribute a test can patch still exists
+(`tests/cli/test_project_info_errors.py`).
+
+`basic_memory.mcp.async_client` and `basic_memory.mcp.clients` are in the guard's
+`BANNED_MODULES`, and `ls`, `show` and `path` joined `NATIVE_COMMANDS` — the guard now covers all
+eight native verbs, cold and warm, and its positive control is parametrized over both ban families.
+
+**Correction: this entry's headline saving was wrong, and the corrected number is ~0.04 s, not
+~0.25 s.** Measured on this tree after the fix (`.venv` python, warm page cache, three reps):
+
+```
+$ python -c "import time; t=time.perf_counter(); import basic_memory.cli.main; print('%.3fs' % (time.perf_counter()-t))"
+0.212s / 0.209s / 0.211s
+
+# the same process, plus the three mcp modules — the old startup set
+$ python -c "import time; t=time.perf_counter(); import basic_memory.cli.main, basic_memory.mcp.async_client, basic_memory.mcp.clients, basic_memory.mcp.project_context; print('%.3fs' % (time.perf_counter()-t))"
+0.261s / 0.245s / 0.268s
+
+# marginal cost of the mcp graph AFTER cli.main is already imported
+$ python -c "import basic_memory.cli.main, time; t=time.perf_counter(); import basic_memory.mcp.async_client, basic_memory.mcp.clients, basic_memory.mcp.project_context; print('%.3fs' % (time.perf_counter()-t))"
+0.038s / 0.039s / 0.039s
+```
+
+Re-run in review on a loaded host: 0.048 / 0.046 / 0.065 s marginal. Wall clock moves with load,
+the conclusion does not — the graph costs tens of milliseconds, not a quarter second.
+
+The 0.248 s above was a fresh-interpreter measurement of the mcp modules alone. It counted
+`rich`, `typer`, `pydantic` and `loguru`, which the CLI pays for anyway — so most of it was never
+a saving. Same class of error as T18's inherited table: a figure measured in isolation, then
+quoted as a cost of the thing that shares its dependencies.
+
+**Positive control** for the structural claim: `sys.modules` after `import basic_memory.cli.main`
+now holds none of `basic_memory.mcp.async_client`, `basic_memory.mcp.clients`,
+`basic_memory.api.app`, `fastapi`, `httpx`, `dateparser`. Before the change it held the first two
+and `httpx`.
+
+**What still justifies the change** is structural, not the stopwatch: eight new verbs would each
+have inherited a client graph they never call, and the ban line is what keeps that from drifting
+back. The latency claim is retired.
+
+### T31 — `command_utils.run_project_index` has no callers and never had any on this tree
+
+**Found 2026-08-17** while reviewing T30. `command_utils` is now documented as "helpers for the CLI
+verbs that route through the in-process API client", and one of its two helpers is reached by
+nobody. Reproduction, on this tree and on `HEAD` before T30:
+
+```
+$ git grep -n 'run_project_index\b' -- src tests test-int
+src/basic_memory/cli/commands/command_utils.py:22:async def run_project_index(
+$ git grep -n 'run_project_index\b' HEAD -- src/basic_memory/cli
+HEAD:src/basic_memory/cli/commands/command_utils.py:58:async def run_project_index(
+```
+
+Positive control: the sibling helper matches its call site in the same grep —
+`get_project_info` returns `cli/commands/project.py:328`. So the empty result is the query working,
+not the query being wrong. `run_project_index` is not an entry point and not a plugin, so the
+import-grep caveat (T19) does not apply.
+
+**Not deleted here.** A review pass fixing a stated defect is the wrong place to remove a public
+helper, and `bm reindex` is the obvious future caller. Delete it, or wire `bm reindex` to it,
+whichever the next pass over that module decides.
 
 ---
 
@@ -3514,7 +3590,7 @@ Found in: sweep-prior-art.md:49, sweep-beans.md:19.
   version; every consumer is in-repo and in-process, so a wire version field is speculative
   flexibility. Revisit only if an external consumer appears.
 
-### W8 — a bounded, pointer-shaped session primer — **DECIDED 2026-08-03: `bm brief` is the home; extend it, then close**
+### W8 — a bounded, pointer-shaped session primer — **CLOSED 2026-08-17: both items shipped in `bm brief`**
 Nothing puts prior state into an agent's context: the `SessionStart` hook was deliberately unwired and
 kept unwired, so recall now depends on an agent choosing to read a file. BM writes no
 `AGENTS.md`/`CLAUDE.md` equivalent — grepping the package returns no hits — and its
@@ -3662,6 +3738,41 @@ this entry's open items are discharged, and W8 stays open on one:
   rather than a generalization: W4's type set shares no member with the hardcoded trio, and the
   amendment's own rule — derive *sections* from the vocabulary, not *rows* uniformly from it —
   has to be designed per type. That is the whole of what W8 still owes.
+
+**CLOSED 2026-08-17 — items 1 and 2 shipped; W8 is done.** `bm brief` now derives its sections
+from the vocabulary and carries a pointer-shaped search. What changed, in
+`src/basic_memory/cli/commands/brief.py`:
+
+- **Item 1 — `--query/-q <text>`.** Pointer rows only: permalink and title, one per line, never
+  `content_snippet`. It reaches FTS through `SQLiteSearchRepository` on the direct path, respects
+  the W5-C read scope, and shares the brief's `MAX_ROWS` cap across every project it covered. A
+  search replaces the sections rather than joining them.
+- **Item 2 — sections from `vocabulary.yml`.** The `task`/`decision`/`session` trio is gone.
+  `SECTION_RULES` holds the per-type row rule the 2026-08-04 amendment demanded: `task`
+  (non-terminal) and `state` unconditionally, `finding` only the `review-by`-expired subset,
+  `inbox` a count and no rows, `guide`/`profile` nothing. A declared type absent from that table
+  contributes nothing, so a human-added type is silent rather than guessed at. Unscoped, the
+  declared types union across projects.
+
+Judgment calls taken, all reversible:
+
+- **A count line for `inbox`, not rows.** The pile's contents are not orientation, and W5-B's
+  notice already names it with the command that lists it.
+- **Terminal statuses are a constant (`done`, `dropped`), not a vocabulary key.** The vocabulary
+  declares statuses but marks none of them terminal, so the set has to live somewhere; brief is
+  where it lives until a vocabulary key exists. The predicate is *not* terminal rather than *is*
+  declared-open, so a task with a missing or undeclared status is still shown — hiding open work
+  over a schema fault the notice already reports would be the worse error.
+- **The ungoverned fallback is `task` + `state`.** W4 decided an absent `vocabulary.yml` means
+  unchecked, not typeless, and records still carry a frontmatter `type`. Brief assumes only the
+  two types whose rows are unconditional; it never applies `DEFAULT_VOCABULARY`.
+- **Section order is `SECTION_RULES`' order, not the file's.** An unscoped roll-up spans several
+  vocabulary files with no single order between them.
+- **`--query` with no hits prints `0 results`; a bare brief with nothing open still prints
+  nothing.** A search someone typed is a question, and contract rule 5 answers questions; the
+  standing brief has been asked nothing.
+- **`--days` is removed.** It existed only to bound the `session` section, and `session` is not a
+  type in W4's vocabulary. A flag that no longer bounds anything is worse than no flag.
 
 **Note — the `beans prime` comparison figures in this entry are no longer reproducible.** Probed
 2026-08-06 on the installed build: `beans prime` prints nothing and exits 0 outside a beans project,
@@ -4367,9 +4478,10 @@ D10; the user may revisit:**
    The predicate is the `$.type` mirror the hygiene queries already read.
 2. **`--limit` fetches one row more than it prints.** That row is the whole evidence for the
    `more records match` notice, so an honest count costs no second `COUNT` over the same predicate.
-3. **The direct-path wiring (`load_records`, `load_record`) lives in `records.py`, not
-   `cli/direct.py`.** It is the same deferred-import shape `direct.py` uses and belongs there;
-   `direct.py` was open in a concurrent change. **Owed:** move it, and delete this note when done.
+3. ~~**The direct-path wiring (`load_records`, `load_record`) lives in `records.py`, not
+   `cli/direct.py`.**~~ **Paid 2026-08-17 by T30.** Both moved into `cli/direct.py` as
+   `direct_record_listing` and `direct_record`, with the record dataclasses and the two lookup
+   errors. `records.py` is now scope, render, and exit shape only.
 
 **Fixed in review (2026-08-17):** `bm show` read its payload with `Path.read_text`, which
 translates CRLF to LF and raises `UnicodeDecodeError` on a file that is not valid UTF-8 — the first
@@ -4377,11 +4489,16 @@ breaks "raw content is byte-exact", the second turns rule 6's one stderr line in
 now writes `Path.read_bytes()` through `click.echo`, guarded by a regression test carrying both
 cases.
 
-**Also owed by this item, and deliberately not done here:** `ls`, `show`, and `path` are not yet in
-`tests/cli/test_native_command_import_guard.py`'s `NATIVE_COMMANDS`, so nothing yet fails if one of
-them pulls `fastapi` or the MCP tool layer onto its path. That file was open in a concurrent change;
-the affordances-and-guard item picks it up. Until then the boundary is a convention here, not a
-guard — which is exactly the state T18 was found in.
+~~**Also owed by this item, and deliberately not done here:** `ls`, `show`, and `path` are not yet
+in `tests/cli/test_native_command_import_guard.py`'s `NATIVE_COMMANDS`.~~ **Paid 2026-08-17 by
+T30.** All three are in `NATIVE_COMMANDS` and run cold and warm against the ban list, which now
+also carries `basic_memory.mcp.async_client` and `basic_memory.mcp.clients`. The probe seeds one
+record first, because `show` and `path` exit 1 without one and would otherwise prove nothing.
+
+**Also closed 2026-08-17:** the three `except typer.Exit: raise` clauses in `ls`, `show` and `path`
+were dead — `typer.Exit` is neither `ValueError` nor `LookupError`, so it already propagated past
+the handlers they guarded. A regression test now covers one id seeded into two projects, which is
+the `AmbiguousRecord` path `show` and `path` share, plus its positive control (`-p` resolves it).
 
 ---
 
@@ -4721,11 +4838,12 @@ budget conversation (12 ms/commit was called cheap; 80 ms for durability on a lo
   inline; delete `_MaterializationWorkerPool`, `_materialization_pool`,
   `_schedule_materialization`, `drain_pending_materializations`, the `test_mode` /
   `materialization_workers` fields, and the cloud-parity docstring.
-- Drain call sites: `api/app.py`, `mcp/server.py`, `cli/commands/command_utils.py`
+- Drain call sites: `api/app.py`, `mcp/server.py`, `cli/runner.py` (was
+  `cli/commands/command_utils.py` before T30)
   (`drain_background_tasks` stays — vector sync and relation resolution remain scheduled).
 - `deps/services.py` provider wiring; `config_models.py` `materialization_workers` field.
 - Tests of the pool/drain in `tests/index/test_note_content_materialization.py`,
-  `tests/cli/test_command_utils.py`, `tests/mcp/test_server_lifespan_branches.py`, plus any
+  `tests/cli/test_runner.py`, `tests/mcp/test_server_lifespan_branches.py`, plus any
   fixture that set `materialization_workers`.
 
 **What this closes:** the observable accept→flush window. When any v2 write/edit/move returns,

@@ -31,7 +31,7 @@ from loguru import logger
 import typer
 
 from basic_memory.cli.app import app
-from basic_memory.cli.commands.command_utils import run_with_cleanup
+from basic_memory.cli.runner import run_with_cleanup
 from basic_memory.cli.direct import STALE_STATE_DAYS, direct_doctor_report
 from basic_memory.cli.notices import emit_notices
 from basic_memory.cli.scope import resolve_read_scope

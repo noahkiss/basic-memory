@@ -6,12 +6,10 @@ from pathlib import Path
 import typer
 
 from basic_memory.cli.app import app
-from basic_memory.cli.commands.command_utils import get_project_info, run_with_cleanup
 from basic_memory.cli.direct import direct_project_service
 from basic_memory.cli.notices import emit_notices
+from basic_memory.cli.runner import run_with_cleanup
 from basic_memory.cli.scope import ReadScope
-from basic_memory.mcp.async_client import get_client
-from basic_memory.mcp.clients import ProjectClient
 from basic_memory.schemas.project_info import ProjectItem, ProjectList
 from basic_memory.utils import generate_permalink
 
@@ -105,6 +103,14 @@ def add_project(
     # Resolve to absolute path
     resolved_path = Path(os.path.abspath(os.path.expanduser(path))).as_posix()
 
+    # Deferred: the MCP client graph costs ~0.04 s of import beyond what the CLI
+    # already pays, and only the client-routed project subcommands need it.
+    # `cli/main.py` imports this module for every invocation, so a module-level
+    # import would put that cost on `project list` and every native verb
+    # (GAPS.md T30).
+    from basic_memory.mcp.async_client import get_client
+    from basic_memory.mcp.clients import ProjectClient
+
     async def _add_project():
         async with get_client() as client:
             data = {"name": name, "path": resolved_path, "set_default": set_default}
@@ -138,6 +144,13 @@ def remove_project(
     ),
 ) -> None:
     """Remove a project."""
+    # Deferred: the MCP client graph costs ~0.04 s of import beyond what the CLI
+    # already pays, and only the client-routed project subcommands need it.
+    # `cli/main.py` imports this module for every invocation, so a module-level
+    # import would put that cost on `project list` and every native verb
+    # (GAPS.md T30).
+    from basic_memory.mcp.async_client import get_client
+    from basic_memory.mcp.clients import ProjectClient
 
     async def _remove_project():
         async with get_client() as client:
@@ -165,6 +178,13 @@ def set_default_project(
     name: str = typer.Argument(..., help="Name of the project to set as CLI default"),
 ) -> None:
     """Set the project that bm uses when a command names no project."""
+    # Deferred: the MCP client graph costs ~0.04 s of import beyond what the CLI
+    # already pays, and only the client-routed project subcommands need it.
+    # `cli/main.py` imports this module for every invocation, so a module-level
+    # import would put that cost on `project list` and every native verb
+    # (GAPS.md T30).
+    from basic_memory.mcp.async_client import get_client
+    from basic_memory.mcp.clients import ProjectClient
 
     async def _set_default():
         async with get_client() as client:
@@ -196,6 +216,14 @@ def move_project(
     """
     # Resolve to absolute path
     resolved_path = Path(os.path.abspath(os.path.expanduser(new_path))).as_posix()
+
+    # Deferred: the MCP client graph costs ~0.04 s of import beyond what the CLI
+    # already pays, and only the client-routed project subcommands need it.
+    # `cli/main.py` imports this module for every invocation, so a module-level
+    # import would put that cost on `project list` and every native verb
+    # (GAPS.md T30).
+    from basic_memory.mcp.async_client import get_client
+    from basic_memory.mcp.clients import ProjectClient
 
     async def _move_project():
         async with get_client() as client:
@@ -292,8 +320,12 @@ def display_project_info(
     quiet: bool = typer.Option(False, "--quiet", help="Hide the status lines and next-step hints"),
 ):
     """Show the settings, the counts, and the system details for one project."""
+    # Deferred for the reason above: `project info` is the one read here that
+    # routes through the API client, and it must not tax the native verbs.
+    from basic_memory.cli.commands import command_utils
+
     try:
-        info = run_with_cleanup(get_project_info(name))
+        info = run_with_cleanup(command_utils.get_project_info(name))
     except typer.Exit:
         raise
     except Exception as e:  # pragma: no cover

@@ -1,7 +1,11 @@
-"""utility functions for commands"""
+"""Helpers for the CLI verbs that route through the in-process API client.
 
-import asyncio
-from typing import Optional, TypeVar, Coroutine, Any
+Importing this module pulls the MCP client graph, so a native verb must not
+import it. The event-loop helper every verb needs lives in `cli/runner.py`,
+which imports nothing from `basic_memory.mcp` (GAPS.md T30).
+"""
+
+from typing import Optional
 
 import typer
 
@@ -13,46 +17,6 @@ from basic_memory.mcp.project_context import get_active_project
 from basic_memory.project_marker import resolve_cli_project
 
 console = Console()
-
-T = TypeVar("T")
-
-
-def run_with_cleanup(coro: Coroutine[Any, Any, T]) -> T:
-    """Run an async coroutine with proper database cleanup.
-
-    This helper ensures database connections are cleaned up before the
-    event loop closes, preventing process hangs in CLI commands.
-
-    Args:
-        coro: The coroutine to run
-
-    Returns:
-        The result of the coroutine
-    """
-    # Deferred: basic_memory.db pulls SQLAlchemy + Alembic, which must not load
-    # at CLI import time — only when a command actually runs (#886).
-    from basic_memory import db
-    from basic_memory.index.local_schedulers import drain_background_tasks
-
-    async def _with_cleanup() -> T:
-        try:
-            return await coro
-        finally:
-            # Note writes materialize inline, but the follow-up work they
-            # scheduled (vector sync, relation resolution) is still deferred:
-            # cancelling it at loop close would leave semantic search and
-            # inbound wikilinks stale until a later reindex.
-            await drain_background_tasks()
-            await db.shutdown_db()
-
-    try:
-        return asyncio.run(_with_cleanup())
-    except db.NewerSchemaError as e:
-        # Every DB-touching CLI verb funnels through here, so one catch turns
-        # "older build over a newer DB" into the contract's error shape —
-        # message on its own line, exit 1 (GAPS T11, W20 rule 6).
-        typer.echo(str(e), err=True)
-        raise typer.Exit(1)
 
 
 async def run_project_index(

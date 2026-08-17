@@ -123,10 +123,17 @@ subcommand must talk to the repository/service layer directly and must not reach
 tool layer.** `basic_memory.mcp.tools` and `basic_memory.api.app` are each seconds of import time.
 
 The boundary is structural now, not aspirational: `basic_memory.cli.direct` is the supported way
-for a native command to reach the service layer, `project list` / `project ls` run on it, and
-`tests/cli/test_native_command_import_guard.py` runs `project list` in a subprocess and fails if
-`api.app`, `mcp.tools`, `fastapi`, or `dateparser` ever enter `sys.modules`. Model new fast verbs
-on `fetch_project_list` in `cli/commands/project.py`. The *other* project subcommands (`add`,
+for a native command to reach the service layer, and
+`tests/cli/test_native_command_import_guard.py` runs each native verb — `project list`, `types`,
+`mine`, `doctor`, `brief`, `ls`, `show`, `path` — in a subprocess, cold and warm, and fails if
+`api.app`, `mcp.tools`, `mcp.async_client`, `mcp.clients`, `fastapi`, or `dateparser` ever enter
+`sys.modules`. Model new fast verbs on `fetch_project_list` in `cli/commands/project.py`.
+
+Two rules follow from that ban list (GAPS.md T30). A native verb takes its event loop from
+**`basic_memory.cli.runner`**, never from `cli/commands/command_utils.py` — importing
+`command_utils` pulls the MCP client graph. And a command module that *is* client-routed must
+defer its `basic_memory.mcp` imports into the function that uses them, because `cli/main.py`
+imports every command module on every invocation. The *other* project subcommands (`add`,
 `remove`, `default`, `move`, `info`) still route through the in-process ASGI app and cost ~3.5 s —
 they are mutations or one-shots where correctness, not latency, is the constraint.
 

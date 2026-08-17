@@ -9,7 +9,7 @@ from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
 from basic_memory.cli.app import app
-from basic_memory.cli.commands.command_utils import run_with_cleanup
+from basic_memory.cli.runner import run_with_cleanup
 from basic_memory.config import ConfigManager, get_project_config
 from basic_memory.file_utils import format_file
 from basic_memory.runtime.storage import runtime_file_path_is_markdown_note

@@ -15,10 +15,6 @@ from loguru import logger
 from basic_memory.cli.app import app
 from basic_memory.cli.notices import emit_notices
 from basic_memory.cli.scope import resolve_read_scope
-from basic_memory.mcp.async_client import get_client
-from basic_memory.mcp.clients import ProjectClient
-from basic_memory.mcp.clients.knowledge import KnowledgeClient
-from basic_memory.mcp.project_context import get_active_project
 from basic_memory.schemas.v2.graph import GraphNode
 
 
@@ -30,6 +26,14 @@ async def run_orphans(
     ``projects`` names the projects to report. ``None`` means every registered
     project, which is what an unscoped read resolves to (GAPS W5-C).
     """
+    # Deferred: the MCP client graph costs ~0.04 s of import beyond what the CLI
+    # already pays, and `cli/main.py` imports this module for every invocation —
+    # a module-level import would put that cost on every native verb (GAPS.md T30).
+    from basic_memory.mcp.async_client import get_client
+    from basic_memory.mcp.clients import ProjectClient
+    from basic_memory.mcp.clients.knowledge import KnowledgeClient
+    from basic_memory.mcp.project_context import get_active_project
+
     # One client for every project in scope — reconnecting per project would pay
     # the ASGI setup cost once per section.
     async with get_client() as client:
@@ -84,7 +88,7 @@ def orphans(
     every project unless `--project` or a `.bm.yml` above the working directory
     pins one.
     """
-    from basic_memory.cli.commands.command_utils import run_with_cleanup
+    from basic_memory.cli.runner import run_with_cleanup
 
     # Deferred: ToolError lives in the mcp SDK, which must not load at CLI startup (#886).
     from mcp.server.fastmcp.exceptions import ToolError

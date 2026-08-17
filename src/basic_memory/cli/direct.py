@@ -9,14 +9,19 @@ repository → service with none of the API/MCP import graph on the path.
 
 The boundary is guarded structurally: a test runs a native command in a
 subprocess and asserts that ``basic_memory.api.app``, ``basic_memory.mcp.tools``,
-``fastapi``, and ``dateparser`` never enter ``sys.modules``.
+``basic_memory.mcp.async_client``, ``basic_memory.mcp.clients``, ``fastapi``,
+and ``dateparser`` never enter ``sys.modules``.
 """
 
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
+from pathlib import Path
 from typing import TYPE_CHECKING, Sequence
 
 if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from basic_memory.models import Entity, Project
     from basic_memory.repository.entity_repository import (
         HygieneRecord,
         PermalinkIntegrityIssue,
@@ -274,3 +279,204 @@ async def direct_doctor_report(
                 )
             )
         return reports
+
+
+# --- Records: what `bm ls`, `bm show` and `bm path` read ---
+#
+# Identity is verified, never inferred (GAPS T9/T10, `.forked/schema.md` §8):
+# BM's resolver legitimately matches on title and file path, so a row that came
+# back is not by itself the row that was asked for.
+
+# The relation that carries supersession. One direction only: the successor owns
+# the edge and the predecessor is never touched (`.forked/schema.md` §5).
+SUPERSEDES = "supersedes"
+
+# What a record with no value in a column prints. A blank would make the columns
+# ambiguous to read; a sentinel that looks like data would be worse.
+NO_VALUE = "-"
+
+
+class RecordNotFound(LookupError):
+    """No record in scope carries the requested id."""
+
+
+class AmbiguousRecord(LookupError):
+    """The id resolves in more than one project, and no project was named."""
+
+
+@dataclass(frozen=True, slots=True)
+class RecordRow:
+    """One printed row of `bm ls`."""
+
+    project: str
+    record_id: str
+    note_type: str
+    status: str
+    title: str
+
+
+@dataclass(frozen=True, slots=True)
+class RecordListing:
+    """What `bm ls` found, and whether `--limit` cut the answer short."""
+
+    rows: list[RecordRow]
+    truncated: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class Supersession:
+    """A successor record that supersedes the one being shown."""
+
+    record_id: str
+    event_date: str
+
+    def describe(self) -> str:
+        when = f" ({self.event_date})" if self.event_date else ""
+        return f"superseded by {self.record_id}{when}"
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedRecord:
+    """One record, located: which project holds it, where its file is, and its successors."""
+
+    project: str
+    record_id: str
+    path: Path
+    superseded_by: tuple[Supersession, ...] = ()
+
+
+async def _projects_in_scope(session: "AsyncSession", project_name: str | None) -> list["Project"]:
+    """Every registered project, or the one named. Ordered by id, which is stable.
+
+    Raises ValueError for an unknown name: a request that cannot be scoped is an
+    addressing failure, never an empty result (contract rule 5).
+    """
+    from basic_memory.repository.project_repository import ProjectRepository
+
+    repository = ProjectRepository()
+    if project_name is None:
+        return sorted(await repository.find_all(session), key=lambda row: row.id)
+
+    project = await repository.get_by_name(session, project_name)
+    if project is None:
+        raise ValueError(f"Project not found: '{project_name}'")
+    return [project]
+
+
+async def direct_record_listing(
+    project_name: str | None,
+    *,
+    note_type: str | None = None,
+    status: str | None = None,
+    area: str | None = None,
+    limit: int | None = None,
+) -> RecordListing:
+    """Gather the rows `bm ls` prints, across one project or all of them."""
+    # Deferred: the service layer pulls SQLAlchemy + Alembic, which must not
+    # load at CLI import time — only when a command actually runs (#886).
+    from basic_memory import db
+    from basic_memory.config import ConfigManager
+    from basic_memory.repository.entity_repository import list_records
+    from basic_memory.services.initialization import ensure_project_registry
+
+    config = ConfigManager().config
+    _, session_maker = await db.get_or_create_db(config.database_path, config=config)
+    await ensure_project_registry(config)
+
+    async with db.scoped_session(session_maker) as session:
+        projects = await _projects_in_scope(session, project_name)
+        names = {project.id: project.name for project in projects}
+        # One row past the limit: that row is the whole evidence for "more
+        # records match", and it costs a row rather than a second COUNT.
+        found = await list_records(
+            session,
+            list(names),
+            note_type=note_type,
+            status=status,
+            area=area,
+            limit=None if limit is None else limit + 1,
+        )
+
+    truncated = limit is not None and len(found) > limit
+    kept = found[:limit] if truncated else found
+    return RecordListing(
+        rows=[
+            RecordRow(
+                project=names[row.project_id],
+                record_id=row.permalink,
+                note_type=row.note_type,
+                status=row.status or NO_VALUE,
+                title=row.title,
+            )
+            for row in kept
+        ],
+        truncated=truncated,
+    )
+
+
+async def direct_record(project_name: str | None, record_id: str) -> ResolvedRecord:
+    """Locate one record by id, verifying identity (GAPS T9/T10).
+
+    Raises RecordNotFound when no project in scope holds that permalink, and
+    AmbiguousRecord when an unscoped lookup finds it in more than one.
+    """
+    # Deferred: the service layer pulls SQLAlchemy + Alembic, which must not
+    # load at CLI import time — only when a command actually runs (#886).
+    from basic_memory import db
+    from basic_memory.config import ConfigManager
+    from basic_memory.repository.entity_repository import EntityRepository
+    from basic_memory.services.initialization import ensure_project_registry
+
+    config = ConfigManager().config
+    _, session_maker = await db.get_or_create_db(config.database_path, config=config)
+    await ensure_project_registry(config)
+
+    async with db.scoped_session(session_maker) as session:
+        found: list[ResolvedRecord] = []
+        for project in await _projects_in_scope(session, project_name):
+            entity = await EntityRepository(project_id=project.id).get_by_permalink(
+                session, record_id
+            )
+            # Trigger: a lookup that returned a row whose permalink is not the id.
+            # Why: BM's resolver legitimately matches on title and file path, so a
+            #     non-empty result is not by itself proof of identity (GAPS T10).
+            # Outcome: treat it as not-found rather than as a near-match.
+            if entity is None or entity.permalink != record_id:
+                continue
+            found.append(
+                ResolvedRecord(
+                    project=project.name,
+                    # `record_id`, not `entity.permalink`: the guard above proves
+                    # they are equal, and the column is nullable in the model.
+                    record_id=record_id,
+                    path=Path(project.path) / entity.file_path,
+                    superseded_by=_supersessions(entity),
+                )
+            )
+
+    if not found:
+        raise RecordNotFound(record_id)
+    if len(found) > 1:
+        raise AmbiguousRecord(", ".join(sorted(record.project for record in found)))
+    return found[0]
+
+
+def _supersessions(entity: "Entity") -> tuple[Supersession, ...]:
+    """The successors that supersede ``entity``, oldest first.
+
+    Derived from the incoming edge, never stored on this record: a
+    `superseded-by:` field would be a second copy of an edge the successor
+    already owns, and the two drift the moment one is written without the other
+    (`.forked/schema.md` §5).
+    """
+    successors = [
+        Supersession(
+            record_id=relation.from_entity.permalink,
+            event_date=str((relation.from_entity.entity_metadata or {}).get("event-date") or ""),
+        )
+        for relation in entity.incoming_relations
+        if relation.relation_type == SUPERSEDES
+        and relation.from_entity is not None
+        and relation.from_entity.permalink
+    ]
+    return tuple(sorted(successors, key=lambda item: (item.event_date, item.record_id)))

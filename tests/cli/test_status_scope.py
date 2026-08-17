@@ -9,6 +9,9 @@ import pytest
 import typer
 
 import basic_memory.cli.commands.status as status_module
+import basic_memory.mcp.async_client as async_client_module
+import basic_memory.mcp.clients as clients_module
+import basic_memory.mcp.project_context as project_context_module
 from basic_memory.cli.scope import ReadScope
 from basic_memory.project_marker import MarkerError
 from basic_memory.schemas import ProjectIndexObservedFileResponse, ProjectIndexStatusResponse
@@ -66,8 +69,12 @@ async def test_run_status_unscoped_reports_every_project(monkeypatch):
             asked.append(external_id)
             return _status(len(asked))
 
-    monkeypatch.setattr(status_module, "get_client", lambda **kwargs: _FakeClientContext())
-    monkeypatch.setattr(status_module, "ProjectClient", FakeProjectClient)
+    # `status`/`orphans`/`project` import the MCP client graph inside the
+    # function body, not at module scope, so CLI startup stays off it
+    # (GAPS.md T30). The command module therefore holds no such attribute;
+    # patch the source module, which the local import resolves at call time.
+    monkeypatch.setattr(async_client_module, "get_client", lambda **kwargs: _FakeClientContext())
+    monkeypatch.setattr(clients_module, "ProjectClient", FakeProjectClient)
 
     reports = await status_module.run_status(None)
 
@@ -95,9 +102,13 @@ async def test_run_status_pinned_asks_for_one_project(monkeypatch):
     async def fake_get_active_project(client, project, context):
         return _project(1, project)
 
-    monkeypatch.setattr(status_module, "get_client", lambda **kwargs: _FakeClientContext())
-    monkeypatch.setattr(status_module, "ProjectClient", FakeProjectClient)
-    monkeypatch.setattr(status_module, "get_active_project", fake_get_active_project)
+    # `status`/`orphans`/`project` import the MCP client graph inside the
+    # function body, not at module scope, so CLI startup stays off it
+    # (GAPS.md T30). The command module therefore holds no such attribute;
+    # patch the source module, which the local import resolves at call time.
+    monkeypatch.setattr(async_client_module, "get_client", lambda **kwargs: _FakeClientContext())
+    monkeypatch.setattr(clients_module, "ProjectClient", FakeProjectClient)
+    monkeypatch.setattr(project_context_module, "get_active_project", fake_get_active_project)
 
     reports = await status_module.run_status(["alpha"])
 

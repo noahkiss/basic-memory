@@ -13,10 +13,7 @@ from loguru import logger
 from basic_memory.cli.app import app
 from basic_memory.cli.notices import emit_notices
 from basic_memory.cli.scope import resolve_read_scope
-from basic_memory.mcp.async_client import get_client
-from basic_memory.mcp.clients import ProjectClient
 from basic_memory.schemas import ProjectIndexStatusResponse
-from basic_memory.mcp.project_context import get_active_project
 
 
 def display_project_index_status(
@@ -74,6 +71,13 @@ async def run_status(
 
     Returns [(project_name, project_index_status)] for the caller to render.
     """
+    # Deferred: the MCP client graph costs ~0.04 s of import beyond what the CLI
+    # already pays, and `cli/main.py` imports this module for every invocation —
+    # a module-level import would put that cost on every native verb (GAPS.md T30).
+    from basic_memory.mcp.async_client import get_client
+    from basic_memory.mcp.clients import ProjectClient
+    from basic_memory.mcp.project_context import get_active_project
+
     # Trigger: --wait on any scope.
     # Why: the event-based index exposes no pending counter to poll for, so waiting
     #      would sleep against a number that never moves.
@@ -129,7 +133,7 @@ def status(
     The --wait flag is kept for compatibility. It reports the current counts at
     once and waits for nothing.
     """
-    from basic_memory.cli.commands.command_utils import run_with_cleanup
+    from basic_memory.cli.runner import run_with_cleanup
 
     # Deferred: ToolError lives in the mcp SDK, which must not load at CLI startup (#886).
     from mcp.server.fastmcp.exceptions import ToolError

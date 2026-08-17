@@ -2,7 +2,9 @@
 
 import pytest
 
-import basic_memory.cli.commands.status as status_module
+import basic_memory.mcp.async_client as async_client_module
+import basic_memory.mcp.clients as clients_module
+import basic_memory.mcp.project_context as project_context_module
 from basic_memory.cli.commands.status import run_status
 from basic_memory.schemas import ProjectIndexObservedFileResponse, ProjectIndexStatusResponse
 from basic_memory.schemas.project_info import ProjectItem
@@ -48,9 +50,13 @@ async def test_status_wait_returns_current_project_index_observation(monkeypatch
     async def fake_get_active_project(client, project, context):
         return project_item
 
-    monkeypatch.setattr(status_module, "get_client", lambda **kwargs: FakeClientContext())
-    monkeypatch.setattr(status_module, "get_active_project", fake_get_active_project)
-    monkeypatch.setattr(status_module, "ProjectClient", FakeProjectClient)
+    # `status`/`orphans`/`project` import the MCP client graph inside the
+    # function body, not at module scope, so CLI startup stays off it
+    # (GAPS.md T30). The command module therefore holds no such attribute;
+    # patch the source module, which the local import resolves at call time.
+    monkeypatch.setattr(async_client_module, "get_client", lambda **kwargs: FakeClientContext())
+    monkeypatch.setattr(project_context_module, "get_active_project", fake_get_active_project)
+    monkeypatch.setattr(clients_module, "ProjectClient", FakeProjectClient)
 
     reports = await run_status(
         ["scratch"],

@@ -11,7 +11,12 @@ from basic_memory.mcp.clients.project import ProjectClient
 from basic_memory.schemas.project_info import ProjectStatusResponse
 
 # Importing registers project subcommands on the shared app instance.
-import basic_memory.cli.commands.project as project_cmd  # noqa: F401
+import basic_memory.cli.commands.project  # noqa: F401
+
+# `project` imports the MCP client graph inside the function body, not at
+# module scope, so CLI startup stays off it (GAPS.md T30). Patch the source
+# module, which the function-local import resolves against at call time.
+import basic_memory.mcp.async_client as async_client_module
 
 
 @pytest.fixture
@@ -80,7 +85,7 @@ def test_project_add_sends_resolved_absolute_path(runner, mock_config, monkeypat
             }
         )
 
-    monkeypatch.setattr(project_cmd, "get_client", fake_get_client)
+    monkeypatch.setattr(async_client_module, "get_client", fake_get_client)
     monkeypatch.setattr(ProjectClient, "create_project", fake_create_project)
 
     result = runner.invoke(app, ["project", "add", "test-project", "~/test-project"])
@@ -129,7 +134,7 @@ def test_project_add_announces_when_the_default_moves(runner, mock_config, monke
             }
         )
 
-    monkeypatch.setattr(project_cmd, "get_client", fake_get_client)
+    monkeypatch.setattr(async_client_module, "get_client", fake_get_client)
     monkeypatch.setattr(ProjectClient, "create_project", fake_create_project)
 
     result = runner.invoke(app, ["project", "add", "q3test", str(project_dir)])

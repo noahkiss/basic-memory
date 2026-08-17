@@ -16,7 +16,7 @@ import typer
 from loguru import logger
 
 from basic_memory.cli.app import app
-from basic_memory.cli.commands.command_utils import run_with_cleanup
+from basic_memory.cli.runner import run_with_cleanup
 from basic_memory.project_marker import resolve_cli_project
 
 # MCP tool functions are imported inside each command: importing

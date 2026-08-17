@@ -76,11 +76,11 @@ def _invoke_status(status: ProjectIndexStatusResponse, *args: str):
             return_value=_PINNED_SCOPE,
         ),
         patch(
-            "basic_memory.cli.commands.status.get_active_project",
+            "basic_memory.mcp.project_context.get_active_project",
             new_callable=AsyncMock,
             return_value=_MOCK_PROJECT_ITEM,
         ),
-        patch("basic_memory.cli.commands.status.get_client", side_effect=_fake_get_client),
+        patch("basic_memory.mcp.async_client.get_client", side_effect=_fake_get_client),
         patch.object(ProjectClient, "get_status", AsyncMock(return_value=status)),
     ):
         return runner.invoke(cli_app, ["status", *args])
@@ -138,11 +138,11 @@ def test_status_wait_reads_the_observation_once():
             return_value=_PINNED_SCOPE,
         ),
         patch(
-            "basic_memory.cli.commands.status.get_active_project",
+            "basic_memory.mcp.project_context.get_active_project",
             new_callable=AsyncMock,
             return_value=_MOCK_PROJECT_ITEM,
         ),
-        patch("basic_memory.cli.commands.status.get_client", side_effect=_fake_get_client),
+        patch("basic_memory.mcp.async_client.get_client", side_effect=_fake_get_client),
         patch.object(ProjectClient, "get_status", get_status),
     ):
         result = runner.invoke(cli_app, ["status", "--wait"])

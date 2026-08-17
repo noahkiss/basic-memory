@@ -151,9 +151,9 @@ def test_orphans_tool_error(mock_run_orphans):
 
 
 @pytest.mark.asyncio
-@patch("basic_memory.cli.commands.orphans.get_active_project", new_callable=AsyncMock)
-@patch("basic_memory.cli.commands.orphans.get_client")
-@patch("basic_memory.cli.commands.orphans.KnowledgeClient")
+@patch("basic_memory.mcp.project_context.get_active_project", new_callable=AsyncMock)
+@patch("basic_memory.mcp.async_client.get_client")
+@patch("basic_memory.mcp.clients.knowledge.KnowledgeClient")
 async def test_run_orphans_pins_to_the_named_project(
     mock_knowledge_cls, mock_get_client, mock_get_active
 ):
@@ -171,9 +171,9 @@ async def test_run_orphans_pins_to_the_named_project(
 
 
 @pytest.mark.asyncio
-@patch("basic_memory.cli.commands.orphans.ProjectClient")
-@patch("basic_memory.cli.commands.orphans.get_client")
-@patch("basic_memory.cli.commands.orphans.KnowledgeClient")
+@patch("basic_memory.mcp.clients.ProjectClient")
+@patch("basic_memory.mcp.async_client.get_client")
+@patch("basic_memory.mcp.clients.knowledge.KnowledgeClient")
 async def test_run_orphans_unscoped_asks_the_registry_for_every_project(
     mock_knowledge_cls, mock_get_client, mock_project_cls
 ):

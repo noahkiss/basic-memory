@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Annotated, Tuple
 
 import typer
 from basic_memory.cli.app import import_app
-from basic_memory.cli.commands.command_utils import run_with_cleanup
+from basic_memory.cli.runner import run_with_cleanup
 from basic_memory.config import ConfigManager, get_project_config
 from loguru import logger
 from rich.console import Console

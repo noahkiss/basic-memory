@@ -16,7 +16,12 @@ from basic_memory.cli.app import app
 from basic_memory.mcp.clients.project import ProjectClient
 
 # Importing registers project subcommands on the shared app instance.
-import basic_memory.cli.commands.project as project_cmd  # noqa: F401
+import basic_memory.cli.commands.project  # noqa: F401
+
+# `project` imports the MCP client graph inside the function body, not at
+# module scope, so CLI startup stays off it (GAPS.md T30). Patch the source
+# module, which the function-local import resolves against at call time.
+import basic_memory.mcp.async_client as async_client_module
 
 
 @pytest.fixture
@@ -64,7 +69,7 @@ def failing_resolve(monkeypatch):
     async def fake_resolve_project(self, identifier):
         raise state["error"]
 
-    monkeypatch.setattr(project_cmd, "get_client", fake_get_client)
+    monkeypatch.setattr(async_client_module, "get_client", fake_get_client)
     monkeypatch.setattr(ProjectClient, "resolve_project", fake_resolve_project)
     return state
 
