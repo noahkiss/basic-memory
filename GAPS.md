@@ -2136,6 +2136,28 @@ module's only helper and keeps every remaining import.
 
 ## BLOCKERS / gaps in capability
 
+### T32 — a `.bm.yml` in the checkout broke 73 CLI tests — **FIXED 2026-08-17**
+
+**Found 2026-08-17**, the first time `bm` was used from this repo for real. `bm project add
+basic-memory` plus a `.bm.yml` (`project: basic-memory`) at the repo root — the intended daily
+setup — turned 42 unit tests and 31 integration tests red on the next full run, all with one error:
+
+```
+Error: Project marker <repo>/.bm.yml names 'basic-memory', which is not a registered project (see 'bm project list')
+```
+
+Every `bm tool …` test invokes the CLI in-process with the developer's cwd, and marker resolution
+walks up from `Path.cwd()`. The test config never registers that project, so the marker refuses.
+The suite was hermetic about `HOME`, `BASIC_MEMORY_HOME` and the DB and not about cwd — the one
+input the fork's own verbs added.
+
+**Fix:** `tests/cli/conftest.py::isolated_home` and `test-int/conftest.py::config_home` now
+`monkeypatch.chdir(tmp_path)`. Tests that need a marker write one under `tmp_path` and chdir there
+themselves, as they already did. 0 tests added or removed; 73 went from red to green.
+
+**Positive control:** with the marker present and the fixture change reverted, the 73 fail; with
+the marker deleted, they pass either way.
+
 ### B1 — no `contains` operator in metadata filters; multi-value is AND-only — **RESOLVED 2026-07-31: `$contains` and `$in` exist (since `43d1a3a4`); verified live**
 **Found:** 2026-07-26.
 
@@ -6064,7 +6086,7 @@ are exact and actionable (`only a task carries a status; '<id>' is a finding`; `
 status this project declares. Allowed values: open, doing, blocked, done, dropped.`; `no record
 '<id>' in scope`).
 
-### U1 — `bm new` cannot state a date it did not invent, and stamps `date-source: inline` to say so — **OPEN**
+### U1 — `bm new` cannot state a date it did not invent, and stamps `date-source: inline` to say so — **FIXED 2026-08-17**
 
 **This is the entry that matters.** `bm new` has no flag for `opened`, `event-date`, `date-source`,
 `date-confidence` or `review-by`. It sets the date to today and writes `date-source: inline`
@@ -6129,7 +6151,53 @@ set-once by design.
 the honest default, not `inline`), plus `--date-ref` where the vocabulary requires one and
 `--review-by` for a finding or guide whose review is not twelve months from the migration run.
 
-### U2 — record output has no trailing newline, so the body runs into the notice — **OPEN**
+**Closed 2026-08-17.** `bm new` takes six date flags, and the date it invents no longer claims the
+source text carried it.
+
+- **Flags:** `--opened` (task), `--event-date` (finding), `--review-by` (finding, guide),
+  `--date-source`, `--date-confidence`, `--date-ref`. Each date field is named rather than a single
+  `--date`, because the field name *is* the type check — `--opened` on a finding is refused, naming
+  both the field's owner and this record's type.
+- **A stated date requires `--date-source`.** That is the flag's whole purpose; accepting a stated
+  date without it would stamp the default rung on a date the writer did know the origin of, which
+  reopens this entry through the other door.
+- **The default rung is now `inferred`, not `inline`.** *Judgment call:* the ladder has no rung for
+  "read off the clock", so per this entry's own Fix line the lowest truthful rung stands. The cost
+  is deliberate and was previously the argument against it — `bm doctor`'s hygiene group reports
+  every inferred date — but that pile is now the correct signal, because the flags to state a real
+  date exist. `date-confidence` stays `day`: confidence is how precise a date is, not how it was
+  learned.
+- **`--date-ref` was added beyond the flag list above** because without it the `git` and
+  `transcript` rungs — the two most useful ones for a migration — are unreachable. The verb
+  requires it for those two and refuses it for the other three, so the rule holds in an ungoverned
+  project too, where no checker runs.
+- **The two ladders had two homes and one of them was prose.** `checker.py` held them as private
+  tuples and `glossary.py` spelled the same values out in `FIELD_MEANINGS`. Both now live in
+  `vocabulary/glossary.py` as `DATE_SOURCES` / `DATE_CONFIDENCES` / `REF_BEARING_SOURCES`; the
+  checker aliases them, the glossary's prose interpolates them, and `bm new` reads them for both
+  validation and `--help`. `glossary.py` is stdlib-only, so the fast CLI path pays nothing.
+
+Files: `src/basic_memory/cli/commands/new.py`, `src/basic_memory/vocabulary/glossary.py`,
+`src/basic_memory/vocabulary/checker.py`, `README.md` (a new *Dates on a record* subsection),
+`tests/cli/test_new_command.py`.
+
+Tests added to `tests/cli/test_new_command.py` (11):
+`test_new_writes_a_stated_event_date_and_its_source`,
+`test_new_writes_a_stated_opened_date_on_a_task`,
+`test_new_writes_a_stated_review_by_instead_of_the_default`,
+`test_new_writes_a_date_ref_on_a_ref_bearing_rung`,
+`test_new_refuses_a_stated_date_with_no_date_source`,
+`test_new_refuses_a_date_flag_the_type_does_not_carry`,
+`test_new_refuses_a_review_by_on_a_type_that_has_none`,
+`test_new_refuses_provenance_on_a_type_with_no_date_field`,
+`test_new_refuses_a_malformed_date`,
+`test_new_refuses_a_date_source_off_the_ladder`,
+`test_new_refuses_a_ref_bearing_rung_with_no_ref_and_a_ref_without_one`.
+
+None removed. `test_new_writes_the_type_date_with_its_provenance` changed its expectation from
+`date-source: inline` to `inferred` — that assertion was the defect, written down.
+
+### U2 — record output has no trailing newline, so the body runs into the notice — **FIXED 2026-08-17**
 
 `bm show` and the note file on disk both end without a newline, so the last word of the body butts
 against whatever bm prints next.
@@ -6155,7 +6223,63 @@ newline shows the last line as changed.
 **Fix:** terminate the body with a newline on write, and again before notices and affordances are
 printed.
 
-### U3 — a superseded finding is indistinguishable from a live one — **OPEN**
+**Closed 2026-08-17.** The culprit was `file_utils.dump_frontmatter`, which returned
+`f"---\n{yaml}---\n\n{post.content}"` with no terminator, over content that
+`markdown/utils.schema_to_markdown` had already stripped via `remove_frontmatter`.
+`cli/record_notes.record_markdown` was terminating correctly all along and was never the cause.
+
+- **`file_utils.ensure_trailing_newline`** is the new one-line invariant: exactly one `\n`, and
+  empty content stays empty. Applied at both `dump_frontmatter` returns, and at the top of
+  `services/note_preparation._build_prepared_write` — the single point every accepted create,
+  replace and edit funnels through *while the bytes, the checksum and the parsed entity are still
+  one string*. An edit needs the second site: its content comes back from `apply_edit_operation`
+  without passing through `dump_frontmatter`.
+- **`index/local_moves.merged_frontmatter_markdown`** is the one other writer that builds its bytes
+  by hand rather than through `dump_frontmatter`, and it calls `body.strip()` first. Terminated
+  there too, or a move that rewrote a permalink would undo the fix on the file it touched.
+- **`dump_frontmatter`'s no-metadata branch is deliberately left alone**: a post with no metadata is
+  not a note, no note-writing path reaches it, and `_build_prepared_write` terminates anything that
+  does become a file. Terminating it would only change a documented pass-through.
+- **`bm show`** prints one newline after the payload, and only when the file lacks one, so
+  byte-exactness (contract: raw content is byte-exact) still holds for a round trip.
+- **A reindex does not see every old file as changed.** Checked, because that was the risk: every
+  "has this file changed" decision hashes the bytes on disk and compares them to the stored
+  `entity.checksum` (`indexing/change_planning.py`, `indexing/file_index_planning.py`,
+  `index/local_dependencies.py`). Nothing re-renders a database row to compare against a stored
+  checksum, and `bm status` does no checksum comparison at all — it tests path membership. An
+  untouched newline-less file still hashes to its stored value; it gains the newline only when
+  something rewrites it.
+
+Files: `src/basic_memory/file_utils.py`, `src/basic_memory/services/note_preparation.py`,
+`src/basic_memory/index/local_moves.py`, `src/basic_memory/cli/commands/records.py`.
+
+Tests added (3): `test_new_writes_a_file_that_ends_with_exactly_one_newline`
+(`tests/cli/test_new_command.py`), `test_edit_leaves_the_file_ending_in_exactly_one_newline`
+(`tests/cli/test_record_write_commands.py`),
+`test_show_separates_a_body_with_no_final_newline_from_the_notice`
+(`tests/cli/test_record_read_commands.py`). None removed.
+
+Seven existing tests changed their expectation, found by a grep sweep for exact note-content
+equality (the sweep's own positive control was
+`tests/services/test_entity_service_write_result.py`, which already expected the newline):
+
+- `tests/services/test_entity_service.py` — `test_create_entity_file_exists`,
+  `test_update_entity_content`, `test_update_with_content` (twice). Four stale literals: three of
+  them built the expectation with `dedent(...).strip()`, which is what removed the newline.
+- `tests/services/test_entity_service_prepare.py` —
+  `test_prepare_edit_entity_content_prepend_without_frontmatter_uses_simple_prepend`, one stale
+  literal.
+- `tests/services/test_entity_service_prepare.py` —
+  `..._metadata_only_edit_preserves_body_exactly` and `..._metadata_only_edit_skips_append_newline`.
+  **These two encoded the opposite invariant on purpose** (PR #1090 review: "a missing final newline
+  … must round-trip byte-exact") and are a real conflict rather than a stale literal. U2 wins:
+  adding the file's terminator is not a reflow — nothing inside the body moves — and the promise
+  those tests exist to keep is that a frontmatter-only edit does not touch the body's *own* shape.
+  Both now assert the body up to the terminator, plus a new assertion each that the hard-break
+  spaces and the blank runs inside the body are still exact and that no second newline was
+  appended. Their docstrings say which half is which.
+
+### U3 — a superseded finding is indistinguishable from a live one — **FIXED 2026-08-17**
 
 `--supersedes` works, and it writes the relation into the SUCCESSOR:
 
@@ -6185,7 +6309,40 @@ replacedness is invisible.
 relation, or hide superseded findings behind a flag. The relation is already in the graph, so this
 is a read-side change.
 
-### U4 — `bm brief`'s section headings report the row count, not the real count — **OPEN**
+**Closed 2026-08-17.** `bm ls` prints `superseded` in the status column for any record some other
+record supersedes.
+
+- **The marker, not a trailing `← <successor-id>`.** *Judgment call, three reasons.* The status
+  column is where a reader already asks "is this row still live", and a superseded record is not.
+  It needs no successor id, so the query stays one correlated `EXISTS` — a join would multiply a
+  record with two successors into two rows and `--limit` would then cut in the wrong place. And
+  `docs/OUTPUT_CONTRACT.md` rule 1 fixes the *column order* per verb; a value in an existing column
+  adds no column, where a variable-width suffix on the title would make the last field two fields.
+- **One query, not N+1:** `RecordListRow.superseded` comes from a correlated `EXISTS` on the inbound
+  `supersedes` relation inside `list_records`, so a listing costs the same whether or not anything
+  in it is superseded. It is deliberately not a filter — `--status superseded` asks for records
+  whose frontmatter says so, and no record's frontmatter ever does.
+- **A record carrying both a status and a successor** takes the marker. Unreachable in a governed
+  project (only a finding may be superseded, and a finding may not carry a status), and where it is
+  reachable "not live" is the more important of the two facts. `bm show` prints both.
+- **`bm show`'s direction was already right** and needed no change: `cli/direct._supersessions`
+  reads `entity.incoming_relations`, so the notice lands on the record that was replaced, not on the
+  successor that replaced it. That is the naive-implementation trap this entry could have walked
+  into, so it is now asserted in both directions rather than left to inspection.
+- **Side effect:** `"supersedes"` was spelled out in four modules and this needed a fifth. It moved
+  to `vocabulary/glossary.py` as `SUPERSEDES_RELATION`, read from there by `checker.py`,
+  `cli/record_notes.py`, `cli/direct.py` and `repository/entity_repository.py`.
+
+Files: `src/basic_memory/repository/entity_repository.py`, `src/basic_memory/cli/direct.py`,
+`src/basic_memory/cli/commands/records.py`, `src/basic_memory/vocabulary/glossary.py`,
+`src/basic_memory/vocabulary/checker.py`, `src/basic_memory/cli/record_notes.py`, `README.md`.
+
+Tests added to `tests/cli/test_record_read_commands.py` (3):
+`test_ls_marks_a_superseded_record_in_the_status_column`,
+`test_ls_leaves_an_unsuperseded_record_unmarked`,
+`test_show_notices_supersession_on_the_replaced_record_not_the_successor`. None removed.
+
+### U4 — `bm brief`'s section headings report the row count, not the real count — **FIXED 2026-08-17**
 
 With 23 open tasks in the project:
 
@@ -6213,7 +6370,31 @@ out for some legitimate reason: all 23 carry `status: open`, none carries `not-b
 **Fix:** print the real count in the heading and say the list is capped — `## Open tasks (23, showing 5)`
 — or drop the parenthetical entirely and let `bm ls` own counting.
 
-### U5 — `bm doctor` flags a deliberate `inbox` record with a demand no verb can satisfy — **OPEN**
+**Closed 2026-08-17**, taking the first option. A heading now reads `## Open tasks (23, showing 5)`
+when `MAX_ROWS` cut the list and `## Open tasks (5)` when it did not, so the number in the
+parenthetical is always the real count. *Judgment call:* the form above is this entry's own, chosen
+over a `(showing N of M)` paraphrase because it leads with the true count, which is the thing rule 3
+is about.
+
+- `base()` in `cli/commands/brief.py` no longer applies `.limit(MAX_ROWS)`. Each row-section now
+  runs one `COUNT` over the same predicate with the ordering cleared, for `Section.total`, then the
+  capped `SELECT` for the rows. Two indexed queries per section, three sections at most — counting
+  in Python instead would make a session-start hook's cost grow with the corpus, which is what
+  `MAX_ROWS` exists to prevent.
+- The count-only `inbox` section already counted honestly and is untouched.
+
+**Left open, and filed below as U6:** `bm brief --query`'s heading and its `N results` tail both
+count hits *returned*, capped per project, rather than total FTS matches. That needs a real search
+count, which is a different change from this one.
+
+Files: `src/basic_memory/cli/commands/brief.py`.
+
+Tests added to `tests/cli/test_brief.py` (4): `test_a_capped_section_carries_the_real_total`,
+`test_an_uncapped_section_totals_exactly_its_rows`,
+`test_the_total_counts_only_what_the_rule_matches`,
+`test_render_states_the_real_count_and_says_the_list_is_capped`. None removed.
+
+### U5 — `bm doctor` flags a deliberate `inbox` record with a demand no verb can satisfy — **FIXED 2026-08-17**
 
 ```
 $ bm new inbox "Not migrated item by item — the six archived design documents" --source ".forked/archive/"
@@ -6239,6 +6420,68 @@ output the acceptance gate for a migration; a gate that cannot be closed is not 
 **Fix:** either accept a bare `inbox` as clean and reserve the flag for records that DO carry a
 rejected type (rename the check to something like "unpromoted proposal"), or let `bm new inbox` and
 `bm edit` take the proposal explicitly.
+
+**Closed 2026-08-17**, and by neither option as written — both were wrong for the same reason.
+
+The row itself is right: the W5-B notice counts *every* inbox record as unfiled and points the
+reader at `bm doctor --only hygiene`, so a doctor that showed nothing for a plain inbox record would
+contradict the notice that sent them there. Accepting a bare `inbox` as clean would have made the
+two surfaces disagree, which is worse than an awkward message. Letting `bm new inbox` take a
+proposal is the other direction: a record filed as `inbox` *on purpose* has no type it wants to
+become, so the field would be there to satisfy a check rather than to record anything.
+
+So the row stays and the demand changes. A record carrying `proposed-type` still reports
+`proposes '<type>'`; one that carries none now reports
+`unfiled — file it with 'bm new <type>' or leave it`. That is satisfiable, including by deciding to
+leave it, which for a genuinely unclassifiable note is a real answer rather than a deferral.
+
+The W5-B count is unchanged and still counts a plain inbox record, which is the half of this that
+was already correct.
+
+Files: `src/basic_memory/cli/commands/doctor.py` (the render line and the decision comment).
+
+Tests added (2): `test_doctor_asks_a_plain_inbox_record_for_something_it_can_do`
+(`tests/cli/test_doctor_command.py`),
+`test_the_inbox_count_includes_a_record_that_proposes_nothing`
+(`tests/cli/test_notices.py` — locking the half that must not move). None removed.
+`test_doctor_hygiene_section_lists_every_check` changed one expected line from `proposes no type` to
+the new message; that line was the defect, written down.
+
+### U6 — `bm brief --query` counts the hits it printed, not the hits there are — **OPEN**
+
+Found while closing U4, which fixed the same defect in the standing sections. The search path still
+has it: `search_pointers` asks each in-scope project's FTS index for `MAX_ROWS` hits, keeps the best
+`MAX_ROWS` across all of them, and then both the section heading and the closing `N results` line
+report `len(rows)`.
+
+So a query matching forty notes prints `5 results` and says nothing about the other thirty-five,
+which is exactly what U4 called indistinguishable from a true count. It is a smaller wound than U4's
+— a search is a question the reader just asked, so they know they may be seeing a sample — but the
+number is still wrong rather than absent.
+
+**Fix:** either count the matches (an unlimited `COUNT` over the same FTS predicate, per project,
+summed) and print `(40, showing 5)` the way the standing sections now do, or drop the number and say
+`more results available` as a notice, which is what `docs/OUTPUT_CONTRACT.md` rule 3 prescribes for a
+count that is not known. The second is cheaper and the contract already names it; the first is
+better and costs one query per project.
+
+### Migrating a repo's tracking files
+
+The procedure the 2026-08-17 pass followed. Every entry above came out of it.
+
+1. **Read the vocabulary first** — `bm types`. Everything below picks from it; nothing invents.
+2. **Inventory:** `STATUS*.local.md`, `HANDOFF*`, `PLAN*`, `.forked/**`, `TODO*`, `DECISIONS*`. Read
+   each in full first — a record written from a skim needs its source re-read to be trusted.
+3. **Map by temporal shape, not topic.** Dated decision or lesson → `finding`, with `--event-date`
+   and `--date-source`. Open next-step → `task`, with `--opened`. Kept-current document → `guide`.
+   Current state → *one* `state`. Unclassifiable → `inbox`, which is what it is for.
+4. **A long design document becomes one `guide` pointing at the file**, never a record per section:
+   decomposing it loses the connective tissue and the file is still there to read.
+5. **Reversals go in as pairs**, the later one with `--supersedes`. The abandoned position is the
+   half worth keeping; that is why the pair exists.
+6. **Run the writes sequentially** — they allocate ids against one database.
+7. **Finish with `bm ls`, `bm brief`, `bm doctor`, `bm history dirty`.** Those four are the gate.
+8. **File every rough edge here in the same session.** A return visit does not happen.
 
 ## Docs swept
 
