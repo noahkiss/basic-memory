@@ -141,9 +141,10 @@ class ProjectInfoRequest(BaseModel):
         default=None, description="Import source directory; omit to use the store"
     )
     set_default: bool = Field(..., description="Set the project as the default")
-    # Opt-in, because the default vocabulary declares the six record types and
-    # `write_note` defaults to `type: note` — governing every new project would
-    # refuse the primary agent write path (verbs decision D8, reversed).
+    # Opt-in, because an absent `vocabulary.yml` means ungoverned (GAPS W4) and
+    # declaring one is the human's act. The MCP breakage that first forced this
+    # reversal is fixed: the default vocabulary declares `note`, `write_note`'s
+    # default type, so governing a project keeps that path working (D8).
     governed: bool = Field(
         default=False, description="Write the default record vocabulary into the project's store"
     )

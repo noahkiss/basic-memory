@@ -826,10 +826,11 @@ async def test_add_project_without_a_path_is_homed_in_the_store(project_service:
 async def test_add_project_is_ungoverned_by_default(project_service: ProjectService):
     """A new project writes no vocabulary, so its records are unchecked (W4).
 
-    This default is a reversal of D8's first shape, and the reason is concrete:
-    the default vocabulary declares the six record types, MCP's `write_note`
-    defaults to `type: note`, and the checker refuses a type the project does not
-    declare. Governing every new project refused the primary agent write path.
+    This default is a reversal of D8's first shape. The breakage that forced the
+    reversal is fixed — `DEFAULT_VOCABULARY` declares `note`, MCP's `write_note`
+    default, so governing a project no longer refuses the primary agent write
+    path — but the default stays ungoverned on the W4 rule itself: an absent file
+    means ungoverned, and declaring a vocabulary is the human's act to take.
     """
     from basic_memory.vocabulary.model import load_vocabulary, vocabulary_path
 
@@ -870,11 +871,13 @@ async def test_add_project_governed_writes_the_default_vocabulary(
 
 @pytest.mark.asyncio
 async def test_a_governed_project_refuses_an_undeclared_type(project_service: ProjectService):
-    """The positive control for the reversal: governing really does refuse `type: note`.
+    """Governing does refuse a type the vocabulary does not declare — but not `note`.
 
-    Without this, "ungoverned by default" reads as caution. It is not — it is the
-    difference between `write_note` working and every MCP caller failing on its
-    next write. The funnel is checked directly, which is the layer that refuses.
+    Both halves matter and they are the D8 follow-up. `note` is MCP's default
+    write type and `DEFAULT_VOCABULARY` declares it, so `--governed` no longer
+    breaks `write_note`; `runbook` is undeclared and is refused, so governing
+    still means something. The funnel is checked directly, which is the layer
+    that refuses.
     """
     from basic_memory.services.exceptions import VocabularyViolationError
     from basic_memory.services.vocabulary_enforcement import enforce_vocabulary
@@ -888,23 +891,25 @@ async def test_a_governed_project_refuses_an_undeclared_type(project_service: Pr
 
     with pytest.raises(VocabularyViolationError):
         enforce_vocabulary(
-            {**note, "type": "note"},
+            {**note, "type": "runbook"},
             project_external_id=project.external_id,
             mode="reject",
             file_path="notes/a-note.md",
         )
 
     # A declared type on the same project is accepted, so the refusal is about
-    # the type and not about the record being malformed.
-    assert (
-        enforce_vocabulary(
-            {**note, "type": "state"},
-            project_external_id=project.external_id,
-            mode="reject",
-            file_path="states/a-note.md",
+    # the type and not about the record being malformed. `note` is one of them
+    # (GAPS D8): MCP's default write survives governance.
+    for accepted in ("state", "note"):
+        assert (
+            enforce_vocabulary(
+                {**note, "type": accepted},
+                project_external_id=project.external_id,
+                mode="reject",
+                file_path=f"notes/a-{accepted}.md",
+            )
+            == []
         )
-        == []
-    )
 
 
 @pytest.mark.asyncio

@@ -240,7 +240,7 @@ async def test_plan_moved_file_content_still_sets_a_first_permalink_on_a_governe
 
     The positive control for the skip above: same project, same policy, and the
     only difference is that this note carries no permalink to change. An
-    unrelated violation — ``type: note`` is off-vocabulary — is recorded and
+    unrelated violation — ``type: runbook`` is off-vocabulary — is recorded and
     changes nothing, which is what makes the skip narrow rather than blanket.
     """
     _govern("governed-project")
@@ -248,7 +248,7 @@ async def test_plan_moved_file_content_still_sets_a_first_permalink_on_a_governe
     _write_moved_note(
         tmp_path,
         moved_file,
-        "---\ntype: note\ntitle: Fresh\n---\n\n# Fresh\n",
+        "---\ntype: runbook\ntitle: Fresh\n---\n\n# Fresh\n",
     )
     updater = _updater(
         tmp_path,
@@ -313,11 +313,11 @@ async def test_plan_moved_file_content_persists_violations_when_it_rewrites(
     later index pass re-checks it (GAPS T23).
 
     The note carries no permalink to change, so the rewrite goes ahead, and its
-    ``type: note`` is off-vocabulary, so the check has a row to store.
+    ``type: runbook`` is off-vocabulary, so the check has a row to store.
     """
     _govern("governed-project")
     moved_file = _moved_file()
-    _write_moved_note(tmp_path, moved_file, "---\ntype: note\ntitle: Fresh\n---\n\n# Fresh\n")
+    _write_moved_note(tmp_path, moved_file, "---\ntype: runbook\ntitle: Fresh\n---\n\n# Fresh\n")
     updater = _updater(
         tmp_path,
         StaticMoveEntityService(app_config=MovePermalinkConfig()),

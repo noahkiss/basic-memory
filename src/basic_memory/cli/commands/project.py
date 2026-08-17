@@ -111,9 +111,9 @@ def add_project(
 
     `--governed` writes the default record vocabulary into the project, which
     turns the schema checks on for every write to it. Without it the project is
-    ungoverned and records are written unchecked — which is what a project holding
-    ordinary notes wants, because the record types are a closed set that plain
-    notes do not belong to.
+    ungoverned and records are written unchecked. The default vocabulary declares
+    `note` alongside the six record types, so an ordinary note still has a home in
+    a governed project — what governance costs is that every write is checked.
 
     Example:
         bm project add research

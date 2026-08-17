@@ -1593,7 +1593,7 @@ async def test_local_project_index_move_records_nothing_when_permalink_updates_a
 # Off-vocabulary in exactly one way. `type` short-circuits the checker, so this
 # note produces one violation and the count is unambiguous.
 UNGOVERNABLE_NOTE = """---
-type: note
+type: runbook
 id: tnd-w5-0001
 permalink: tnd-w5-0001
 title: Hand Written

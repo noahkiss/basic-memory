@@ -73,7 +73,8 @@ def govern_project(test_project):
         path = vocabulary_path(test_project.external_id)
         path.parent.mkdir(parents=True, exist_ok=True)
         # An empty mapping is a present, deliberate opt-in: it governs with the
-        # default six types and five statuses.
+        # default vocabulary — the six record types plus `note` (GAPS D8) — and
+        # five statuses.
         path.write_text(yaml.safe_dump(content), encoding="utf-8")
         return path
 
@@ -142,12 +143,15 @@ async def test_service_write_records_an_off_vocabulary_type_and_still_writes(
         EntitySchema(
             title="Off Vocabulary",
             directory="notes",
-            note_type="note",
+            # `runbook` is off vocabulary; `note` is not, since `DEFAULT_VOCABULARY`
+            # declares it so that governing a project does not refuse MCP's own
+            # default write (GAPS D8).
+            note_type="runbook",
             content=note_content("Body", **BASE_FRONTMATTER),
         )
     )
 
-    assert created.note_type == "note"
+    assert created.note_type == "runbook"
     assert list((file_service.base_path / "notes").glob("*.md"))
     assert any("is not in this project's vocabulary" in line for line in logged_warnings)
 
@@ -166,7 +170,7 @@ async def test_sync_path_records_the_violation_and_still_indexes(
     now = datetime.now(timezone.utc)
     markdown = EntityMarkdown(
         frontmatter=EntityFrontmatter(
-            metadata={"title": "Hand Edited", "type": "note", "permalink": "hand-edited"}
+            metadata={"title": "Hand Edited", "type": "runbook", "permalink": "hand-edited"}
         ),
         content="Body a human typed",
         created=now,
@@ -180,7 +184,7 @@ async def test_sync_path_records_the_violation_and_still_indexes(
     )
 
     assert entity.permalink == "hand-edited"
-    assert entity.note_type == "note"
+    assert entity.note_type == "runbook"
     assert await entity_service.get_by_permalink("hand-edited")
 
 

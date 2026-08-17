@@ -53,7 +53,8 @@ def govern_project(test_project):
         path = vocabulary_path(test_project.external_id)
         path.parent.mkdir(parents=True, exist_ok=True)
         # An empty mapping is a present, deliberate opt-in: it governs with the
-        # default six types and five statuses.
+        # default vocabulary — the six record types plus `note` (GAPS D8) — and
+        # five statuses.
         path.write_text(yaml.safe_dump(content), encoding="utf-8")
         return path
 
@@ -89,10 +90,11 @@ FINDING_FRONTMATTER: dict[str, str] = {
 async def test_write_note_is_refused_and_writes_no_file(app, test_project, govern_project):
     """The reproduction from GAPS T22, now refused instead of accepted.
 
-    ``type: note`` is the default every write carries, and under a vocabulary it
-    is an off-vocabulary type like any other: there is no ungoverned seventh
-    type. Before this fix the write landed on disk with exit 0 and the violation
-    was logged afterwards by the indexer.
+    ``runbook`` is a type no vocabulary here declares. It is stated rather than
+    arrived at by omission because the write default, ``note``, is now declared by
+    ``DEFAULT_VOCABULARY`` (GAPS D8) — governing a project must not refuse MCP's
+    own default write. Before T22 this write landed on disk with exit 0 and the
+    violation was logged afterwards by the indexer.
     """
     govern_project()
 
@@ -101,7 +103,7 @@ async def test_write_note_is_refused_and_writes_no_file(app, test_project, gover
             project=test_project.name,
             title="Off Vocabulary",
             directory="notes",
-            content=note_content("Just a note.", **BASE_FRONTMATTER),
+            content=note_content("Just a note.", **BASE_FRONTMATTER, type="runbook"),
         )
 
     message = str(excinfo.value)
@@ -115,6 +117,33 @@ async def test_write_note_is_refused_and_writes_no_file(app, test_project, gover
     # A rejection must leave nothing behind: a refused write that still wrote the
     # file is worse than no rejection at all.
     assert written_notes(test_project) == []
+
+
+@pytest.mark.asyncio
+async def test_write_note_accepts_the_default_type_under_the_default_vocabulary(
+    app, test_project, govern_project
+):
+    """A governed project accepts ``type: note``, MCP's default (GAPS D8).
+
+    This is the breakage that forced `bm project add --governed` to be opt-in:
+    `write_note` carries `type: note` unless told otherwise, and a default
+    vocabulary that did not declare it refused every existing MCP caller on its
+    next write. `--governed` stays opt-in — an absent file means ungoverned
+    (GAPS W4) — but governing a project no longer breaks the primary write path.
+    """
+    govern_project()
+
+    result = await write_note(
+        project=test_project.name,
+        title="An Ordinary Note",
+        directory="notes",
+        content=note_content("Just a note.", **BASE_FRONTMATTER),
+        output_format="json",
+    )
+
+    assert isinstance(result, dict)
+    assert result["action"] == "created"
+    assert [path.name for path in written_notes(test_project)] == ["An Ordinary Note.md"]
 
 
 @pytest.mark.asyncio
@@ -224,7 +253,9 @@ async def test_edit_note_is_refused_on_an_off_vocabulary_note(app, test_project,
         project=test_project.name,
         title="Written Ungoverned",
         directory="notes",
-        content="Body written before the vocabulary existed.",
+        # `runbook`, not the default `note`: the default is on vocabulary now
+        # (GAPS D8), so the off-vocabulary type has to be stated.
+        content=note_content("Body written before the vocabulary existed.", type="runbook"),
         output_format="json",
     )
     assert isinstance(written, dict)
@@ -612,7 +643,8 @@ async def test_a_refused_write_persists_no_violation(
             project=test_project.name,
             title="Off Vocabulary",
             directory="notes",
-            content=note_content("Just a note.", **BASE_FRONTMATTER),
+            # `runbook`, not the default `note`: the default is on vocabulary now.
+            content=note_content("Just a note.", **BASE_FRONTMATTER, type="runbook"),
         )
 
     async with db.scoped_session(session_maker) as session:

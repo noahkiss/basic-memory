@@ -98,9 +98,10 @@ def test_project_add_takes_no_path(runner, mock_config, monkeypatch, tmp_path):
 def test_project_add_governed_flag_reaches_the_api(runner, mock_config, monkeypatch, tmp_path):
     """`--governed` is what turns the schema checks on, so it must survive the hop.
 
-    The default is off: the default vocabulary declares the six record types and
-    `write_note` defaults to `type: note`, so governing every project would refuse
-    the primary agent write path (verbs decision D8, reversed).
+    The default is off because an absent `vocabulary.yml` means ungoverned (GAPS
+    W4) and declaring one is the human's act. It is no longer off because it
+    broke MCP: `DEFAULT_VOCABULARY` declares `note`, `write_note`'s default type,
+    so governing a project keeps that path working (verbs decision D8).
     """
     calls: list[dict] = []
 

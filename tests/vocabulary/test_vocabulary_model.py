@@ -243,7 +243,21 @@ def test_error_message_names_the_source():
 
 
 def test_default_vocabulary_matches_the_schema_block():
-    assert DEFAULT_VOCABULARY.types == ("task", "guide", "finding", "profile", "state", "inbox")
+    """The six record types, plus `note` — MCP's `write_note` default (GAPS D8).
+
+    `note` is declared so that governing a project does not refuse the primary
+    agent write path. It is not a seventh record type: it has no picking question
+    and no glossary summary, so `bm new` never offers it.
+    """
+    assert DEFAULT_VOCABULARY.types == (
+        "task",
+        "guide",
+        "finding",
+        "profile",
+        "state",
+        "inbox",
+        "note",
+    )
     assert DEFAULT_VOCABULARY.statuses == ("open", "doing", "blocked", "done", "dropped")
     assert DEFAULT_VOCABULARY.areas == ()
     assert DEFAULT_VOCABULARY.review_months == 12

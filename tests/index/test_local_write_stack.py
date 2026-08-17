@@ -250,8 +250,10 @@ async def test_rejected_write_leaves_no_file_and_no_row(
 ):
     """A vocabulary rejection must leave nothing behind.
 
-    `type: note` is the default every write carries, and under a vocabulary it is
-    an off-vocabulary type like any other.
+    `runbook` is a type no default vocabulary declares. The default *write* type,
+    `note`, is declared by `DEFAULT_VOCABULARY` (GAPS D8) so that governing a
+    project does not refuse MCP's own default — so an off-vocabulary type has to
+    be stated here rather than arrived at by omission.
     """
     govern_project()
 
@@ -261,6 +263,7 @@ async def test_rejected_write_leaves_no_file_and_no_row(
             data=EntitySchema(
                 title="Off Vocabulary",
                 directory="notes",
+                note_type="runbook",
                 content=note_content("Just a note.", **BASE_FRONTMATTER),
             ),
         )
