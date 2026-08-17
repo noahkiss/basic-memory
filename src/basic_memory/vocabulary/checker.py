@@ -106,6 +106,12 @@ _SET_ONCE: tuple[str, ...] = (
     "area",
 )
 
+# Public because a verb has to refuse a set-once field *before* it writes: the
+# checker's own rule fires only once the replacement has been built, and
+# `bm edit --set` needs the same answer one step earlier (GAPS V-J1). One list,
+# read from two places — two lists would drift.
+SET_ONCE_FIELDS: frozenset[str] = frozenset(_SET_ONCE)
+
 # Every key any rule already judges. A schema key on the wrong type is reported
 # once, as `field-not-on-type` — never also as an unknown key.
 _SCHEMA_KEYS: frozenset[str] = frozenset(

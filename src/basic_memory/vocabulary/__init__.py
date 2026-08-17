@@ -10,6 +10,7 @@ fast CLI path can reach it.
 from basic_memory.vocabulary.checker import (
     HISTORY_DERIVED_RULES,
     RELATION_DERIVED_RULES,
+    SET_ONCE_FIELDS,
     Severity,
     Violation,
     check_frontmatter,
@@ -36,6 +37,7 @@ __all__ = [
     "DEFAULT_VOCABULARY",
     "HISTORY_DERIVED_RULES",
     "RELATION_DERIVED_RULES",
+    "SET_ONCE_FIELDS",
     "TERMINAL_STATUSES",
     "VOCABULARY_FILENAME",
     "DeclaredField",

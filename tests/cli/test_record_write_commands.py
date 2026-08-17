@@ -102,8 +102,17 @@ class SeededProject:
     path: Path
 
 
-def seed_project(name: str = GOVERNED, *, governed: bool = True) -> SeededProject:
-    """Register one project homed at `store/<external_id>/`, as `bm project add` does."""
+def seed_project(
+    name: str = GOVERNED,
+    *,
+    governed: bool = True,
+    fields: dict[str, Any] | None = None,
+) -> SeededProject:
+    """Register one project homed at `store/<external_id>/`, as `bm project add` does.
+
+    ``fields`` declares the project's optional extras, which is what makes
+    `bm edit --set` reachable at all (GAPS V-J1).
+    """
 
     async def _seed() -> SeededProject:
         import uuid
@@ -137,7 +146,7 @@ def seed_project(name: str = GOVERNED, *, governed: bool = True) -> SeededProjec
                             "statuses": list(DEFAULT_VOCABULARY.statuses),
                             "areas": [],
                             "review_months": DEFAULT_VOCABULARY.review_months,
-                            "fields": {},
+                            "fields": dict(fields or {}),
                         },
                         sort_keys=False,
                     ),
@@ -343,6 +352,151 @@ def test_edit_on_an_unknown_id_exits_one() -> None:
 
     found = runner.invoke(app, ["edit", record_id, "-b", "x", "-p", GOVERNED, "--quiet"])
     assert found.exit_code == 0, found.output
+
+
+# --- bm edit --set: a profile's declared fields (GAPS V-J1) ---
+
+# One project's declared extras, one of each kind the vocabulary allows.
+PROFILE_FIELDS: dict[str, Any] = {
+    "owner": {"kind": "string"},
+    "commissioned": {"kind": "date"},
+    "tier": {"kind": "enum", "values": ["gold", "silver"]},
+}
+
+
+def test_edit_sets_declared_fields_on_a_profile_and_merges_later_ones() -> None:
+    """A profile accretes facts, and its declared fields are where they land (§4 item 4).
+
+    Two claims in one run because they are the same claim from both sides: a
+    `--set` writes the field, and a *later* `--set` on one field leaves the other
+    alone — the frontmatter is merged, not replaced.
+    """
+    project = seed_project(fields=PROFILE_FIELDS)
+    record_id = create(GOVERNED, "profile", "The Mail Server")
+
+    first = runner.invoke(
+        app,
+        [
+            "edit",
+            record_id,
+            "--set",
+            "owner=platform",
+            "--set",
+            "tier=gold",
+            "-p",
+            GOVERNED,
+            "--quiet",
+        ],
+    )
+
+    assert first.exit_code == 0, first.output
+    path = payload_path(first.stdout)
+    metadata = frontmatter_of(path)
+    assert metadata["owner"] == "platform"
+    assert metadata["tier"] == "gold"
+    # The body and the file are untouched: `--set` states a field, nothing else.
+    assert "Original body." in path.read_text(encoding="utf-8")
+    assert path.parent.parent == project.path
+
+    second = runner.invoke(
+        app, ["edit", record_id, "--set", "owner=storage", "-p", GOVERNED, "--quiet"]
+    )
+
+    assert second.exit_code == 0, second.output
+    after = frontmatter_of(payload_path(second.stdout))
+    assert after["owner"] == "storage"
+    assert after["tier"] == "gold"
+
+
+def test_edit_refuses_a_set_on_a_type_that_is_not_a_profile() -> None:
+    """Only a profile has declared fields; on a guide the frontmatter is what `bm new` wrote."""
+    seed_project(fields=PROFILE_FIELDS)
+    record_id = create(GOVERNED, "guide", "A Guide")
+
+    result = runner.invoke(app, ["edit", record_id, "--set", "owner=platform", "-p", GOVERNED])
+
+    assert result.exit_code == 1
+    assert "only a profile carries declared fields" in result.stderr
+    assert result.stdout.strip() == ""
+
+
+def test_edit_refuses_a_field_the_project_does_not_declare() -> None:
+    """Agents select from the vocabulary; they never extend it from a write (GAPS W4).
+
+    The positive control is the second run: a declared field on the same record
+    succeeds, so the refusal is about the name and not about `--set` itself.
+    """
+    seed_project(fields=PROFILE_FIELDS)
+    record_id = create(GOVERNED, "profile", "The Mail Server")
+
+    result = runner.invoke(app, ["edit", record_id, "--set", "invented=x", "-p", GOVERNED])
+
+    assert result.exit_code == 1
+    assert "is not a field project 'governed' declares" in result.stderr
+    assert "commissioned, owner, tier" in result.stderr
+    assert result.stdout.strip() == ""
+
+    allowed = runner.invoke(
+        app, ["edit", record_id, "--set", "owner=platform", "-p", GOVERNED, "--quiet"]
+    )
+    assert allowed.exit_code == 0, allowed.output
+
+
+def test_edit_refuses_a_set_once_field() -> None:
+    """`--set` must not become a way back into the fields `bm new` owns (§4)."""
+    seed_project(fields=PROFILE_FIELDS)
+    record_id = create(GOVERNED, "profile", "The Mail Server")
+    before = frontmatter_of(
+        payload_path(runner.invoke(app, ["path", record_id, "-p", GOVERNED]).stdout + "\n")
+    )
+
+    result = runner.invoke(app, ["edit", record_id, "--set", "source=invented", "-p", GOVERNED])
+
+    assert result.exit_code == 1
+    assert "'source' is set once and cannot change" in result.stderr
+    after = frontmatter_of(
+        payload_path(runner.invoke(app, ["path", record_id, "-p", GOVERNED]).stdout + "\n")
+    )
+    assert after["source"] == before["source"]
+
+
+def test_edit_refuses_a_declared_value_the_vocabulary_does_not_allow() -> None:
+    """The checker still judges the *value* on the accepted write path (GAPS V-J1).
+
+    `--set` checks the field's name and its mutability; whether `bronze` is a
+    legal `tier` is the funnel's rule, and this proves the write reaches it.
+    """
+    seed_project(fields=PROFILE_FIELDS)
+    record_id = create(GOVERNED, "profile", "The Mail Server")
+
+    result = runner.invoke(app, ["edit", record_id, "--set", "tier=bronze", "-p", GOVERNED])
+
+    assert result.exit_code == 1
+    assert "bronze" in result.stderr
+    assert result.stdout.strip() == ""
+
+
+def test_edit_refuses_a_set_argument_that_is_not_a_pair() -> None:
+    """`--set since` and `--set owner=` both look like a change and are not one."""
+    seed_project(fields=PROFILE_FIELDS)
+    record_id = create(GOVERNED, "profile", "The Mail Server")
+
+    for argument in ("owner", "owner="):
+        result = runner.invoke(app, ["edit", record_id, "--set", argument, "-p", GOVERNED])
+        assert result.exit_code == 1, result.output
+        assert "--set takes 'name=value'" in result.stderr
+
+
+def test_edit_refuses_a_set_on_an_ungoverned_project() -> None:
+    """An absent vocabulary declares no fields, so there is no declared field to set (W4)."""
+    seed_project(UNGOVERNED, governed=False)
+    record_id = create(UNGOVERNED, "profile", "The Mail Server")
+
+    result = runner.invoke(app, ["edit", record_id, "--set", "owner=platform", "-p", UNGOVERNED])
+
+    assert result.exit_code == 1
+    assert "declares no vocabulary" in result.stderr
+    assert "bm types" in result.stderr
 
 
 # --- bm mark and bm done ---

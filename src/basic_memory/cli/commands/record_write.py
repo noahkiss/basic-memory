@@ -9,6 +9,11 @@ what they print. What differs is one rule each, and each rule is a decision:
   `bm done`/`bm mark`; on a `finding` it names supersession. A finding is
   provisional by construction, so correcting one in place destroys the evidence
   the record existed to hold.
+- **`--set name=value` writes a declared field, and only on a `profile`**
+  (`.forked/schema.md` §4 item 4, GAPS V-J1). A profile is the one type that
+  accretes facts, and its project's declared fields are where they land. Every
+  set-once field is refused by name, so the flag cannot become a way back into
+  the fields `bm new` owns.
 - **`bm mark` sets `status`, on a `task`, and nothing else** (D5). Status is one
   of exactly four mutable things in the schema; widening `mark` to any other
   field reopens set-once through the back door.
@@ -29,6 +34,7 @@ place item A put them.
 from __future__ import annotations
 
 import sys
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Annotated, Any, Coroutine, Optional
 
@@ -52,6 +58,11 @@ MARK_AFFORDANCE = "bm ls --status open what is still open · bm new record what 
 # vocabulary: a type is kept current or it is not, and that is a property of the
 # type's temporal shape rather than of any one project's declarations.
 KEPT_CURRENT_TYPES: tuple[str, ...] = ("guide", "profile", "state", "inbox")
+
+# The one type whose declared fields are mutable (`.forked/schema.md` §1 table and
+# §4 item 4). A profile accretes facts about a subject; on every other type the
+# frontmatter is what `bm new` wrote and nothing else (GAPS V-J1).
+FIELD_BEARING_TYPE = "profile"
 
 # The status `bm done` sets. `done` rather than `dropped`: closing work and
 # abandoning it are different outcomes, and only the first has a verb.
@@ -181,6 +192,73 @@ def _refuse_edit(record: "ExistingRecord") -> None:
     )
 
 
+def parse_field_assignments(assignments: Sequence[str]) -> dict[str, str]:
+    """Turn `--set name=value` arguments into the frontmatter they write.
+
+    Later assignments to the same name win, the way a repeated flag reads. The
+    value is taken verbatim after the first `=`, so a date or a URL survives.
+
+    Trigger: an argument with no `=`, no name, or no value.
+    Why: `--set since` and `--set owner=` both look like a change and are not
+        one. An empty value cannot clear the field either — the update path
+        merges keys and never drops them, so it would write `owner: ''` and
+        leave a key the checker reads as absent.
+    Outcome: refuse, showing the shape expected.
+    """
+    fields: dict[str, str] = {}
+    for assignment in assignments:
+        name, separator, value = assignment.partition("=")
+        if not separator or not name.strip() or not value.strip():
+            raise RecordVerbError(f"--set takes 'name=value', got '{assignment}'")
+        fields[name.strip()] = value.strip()
+    return fields
+
+
+def _refuse_field_updates(
+    record: "ExistingRecord", project: "WriteProject", fields: Mapping[str, str]
+) -> None:
+    """Refuse a `--set` the schema or the project's vocabulary does not allow.
+
+    Four refusals, each naming what to do instead. The *values* are not judged
+    here: the accepted write path runs `check_frontmatter`, which owns the date
+    and enum rules, and a second copy of them here would be a second answer to
+    the same question (GAPS V-J1).
+    """
+    from basic_memory.vocabulary.checker import SET_ONCE_FIELDS
+    from basic_memory.vocabulary.model import load_vocabulary
+
+    if record.note_type != FIELD_BEARING_TYPE:
+        raise RecordVerbError(
+            f"only a {FIELD_BEARING_TYPE} carries declared fields; "
+            f"'{record.record_id}' is a {record.note_type}"
+        )
+
+    # An absent vocabulary means ungoverned, never "use the defaults" (GAPS W4),
+    # and an ungoverned project declares no fields — so there is no such thing as
+    # a declared field to set, and inventing one here would write a key nothing
+    # in the project ever validates.
+    vocabulary = load_vocabulary(project.external_id)
+    if vocabulary is None:
+        raise RecordVerbError(
+            f"project '{project.name}' declares no vocabulary, so it declares no fields — "
+            f"run 'bm types' to see what a governed project declares"
+        )
+
+    for name in fields:
+        if name in SET_ONCE_FIELDS:
+            raise RecordVerbError(
+                f"'{name}' is set once and cannot change. Set-once fields are written once, "
+                f"by 'bm new', and never edited."
+            )
+        if name not in vocabulary.fields:
+            declared = ", ".join(sorted(vocabulary.fields)) or "none"
+            raise RecordVerbError(
+                f"'{name}' is not a field project '{project.name}' declares "
+                f"(declared: {declared}) — run 'bm types', and declare it in "
+                f"vocabulary.yml if it belongs there"
+            )
+
+
 def _next_body(current: str, body: Optional[str], *, may_open_editor: bool) -> str:
     """The body an edit writes: the flag, stdin, `$EDITOR`, or what is already there.
 
@@ -205,9 +283,18 @@ def _next_body(current: str, body: Optional[str], *, may_open_editor: bool) -> s
 
 
 async def edit_record(
-    *, project_name: str, record_id: str, title: Optional[str], body: Optional[str]
+    *,
+    project_name: str,
+    record_id: str,
+    title: Optional[str],
+    body: Optional[str],
+    fields: Sequence[str] = (),
 ) -> WriteOutcome:
-    """Replace a kept-current record's title and body, keeping everything else."""
+    """Replace a kept-current record's title, body and declared fields.
+
+    Only a `profile` has declared fields, and `fields` is the only frontmatter
+    this verb writes — every set-once field stays as `bm new` wrote it.
+    """
     from pathlib import Path
 
     from basic_memory.cli.record_notes import RecordNote
@@ -215,6 +302,10 @@ async def edit_record(
 
     stack, project, record = await _open_record(project_name, record_id)
     _refuse_edit(record)
+
+    updates = parse_field_assignments(fields)
+    if updates:
+        _refuse_field_updates(record, project, updates)
 
     on_disk = Path(project.path, record.file_path)
     # Trigger: the record is indexed but its file is not on disk.
@@ -238,7 +329,12 @@ async def edit_record(
             note_type=record.note_type,
             directory=Path(record.file_path).parent.as_posix(),
             record_file_path=record.file_path,
-            content=_next_body(current, body, may_open_editor=title is None),
+            content=_next_body(current, body, may_open_editor=title is None and not updates),
+            # Merged over the record's existing frontmatter by
+            # `prepare_update_entity_content`, so an unmentioned field keeps the
+            # value it had. `None` rather than `{}`: an empty mapping would still
+            # take the metadata branch for no reason.
+            entity_metadata=updates or None,
         ),
     )
     return WriteOutcome(
@@ -268,6 +364,17 @@ def edit(
             ),
         ),
     ] = None,
+    set_fields: Annotated[
+        Optional[list[str]],
+        typer.Option(
+            "--set",
+            metavar="NAME=VALUE",
+            help=(
+                "Set a field this project declares, on a profile. Repeatable; "
+                "run 'bm types' to see the declared fields."
+            ),
+        ),
+    ] = None,
     project: Annotated[
         Optional[str],
         typer.Option("--project", "-p", help="Project to write to. Defaults to .bm.yml."),
@@ -279,9 +386,10 @@ def edit(
 ) -> None:
     """Change a record that is kept current: a guide, profile, state, or inbox note.
 
-    Only the title and the body move. Every field set at creation stays set —
-    a task is closed with `bm done`, and a finding is replaced by a successor
-    written with `bm new --supersedes`.
+    The title and the body move, and `--set` writes a declared field on a
+    profile. Every field set at creation stays set — a task is closed with
+    `bm done`, and a finding is replaced by a successor written with
+    `bm new --supersedes`.
     """
     from basic_memory.cli.record_notes import write_project_name
 
@@ -290,15 +398,21 @@ def edit(
     except ValueError as exc:
         raise fail(f"Error: {exc}")
 
-    # Trigger: neither --title nor --body, and no terminal to open $EDITOR on.
+    # Trigger: no --title, --body or --set, and no terminal to open $EDITOR on.
     # Why: the edit would rewrite the record with exactly what it already says,
     #     which is a no-op write the caller did not ask for and cannot see.
-    # Outcome: an addressing failure naming both ways to state the change.
-    if title is None and body is None and not sys.stdin.isatty():
-        raise fail("Error: nothing to change — pass --title or --body")
+    # Outcome: an addressing failure naming every way to state the change.
+    if title is None and body is None and not set_fields and not sys.stdin.isatty():
+        raise fail("Error: nothing to change — pass --title, --body or --set")
 
     outcome = _write(
-        edit_record(project_name=project_name, record_id=record_id, title=title, body=body),
+        edit_record(
+            project_name=project_name,
+            record_id=record_id,
+            title=title,
+            body=body,
+            fields=set_fields or (),
+        ),
         quiet=quiet,
     )
     emit_notices(_write_scope(outcome), quiet=quiet, command="edit")
