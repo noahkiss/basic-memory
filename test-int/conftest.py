@@ -219,6 +219,9 @@ def config_home(tmp_path, monkeypatch) -> Path:
         monkeypatch.setenv("USERPROFILE", str(tmp_path))
     # Set BASIC_MEMORY_HOME to the test directory
     monkeypatch.setenv("BASIC_MEMORY_HOME", str(tmp_path / "basic-memory"))
+    # A `.bm.yml` in the checkout would otherwise pin every CLI run here to a
+    # project this config never registers (GAPS T32).
+    monkeypatch.chdir(tmp_path)
     return tmp_path
 
 

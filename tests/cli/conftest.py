@@ -34,6 +34,12 @@ def isolated_home(tmp_path, monkeypatch) -> Path:
     # Set to tmp_path directly (not tmp_path/basic-memory) so default project
     # home is tmp_path - tests expect to find imported files there
     monkeypatch.setenv("BASIC_MEMORY_HOME", str(tmp_path))
+    # The verbs resolve their project from the nearest `.bm.yml` above the
+    # working directory. A developer who runs `bm` from this checkout keeps
+    # one there, and it names a project no test config registers — so a test
+    # that inherits the repo root as cwd fails on the marker, not on its
+    # subject. Every CLI test starts in tmp_path (GAPS T32).
+    monkeypatch.chdir(tmp_path)
     return tmp_path
 
 
