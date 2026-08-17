@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import NoReturn, Protocol
+from typing import Any, NoReturn, Protocol
 from uuid import UUID
 
 from sqlalchemy.exc import IntegrityError
@@ -31,7 +32,8 @@ from basic_memory.indexing.accepted_note_write_runner import (
 )
 from basic_memory.models import Entity, NoteContent, Project
 from basic_memory.repository import NoteContentVersionConflict
-from basic_memory.services.exceptions import EntityAlreadyExistsError
+from basic_memory.services.exceptions import EntityAlreadyExistsError, VocabularyViolationError
+from basic_memory.services.vocabulary_enforcement import enforce_vocabulary
 from basic_memory.runtime.note_content import (
     RuntimeAcceptedNoteChange,
     RuntimeAcceptedNoteWriteConflictKind,
@@ -342,6 +344,51 @@ def reject_stale_base_checksum(current_db_checksum: str | None) -> NoReturn:
     )
 
 
+# --- Vocabulary enforcement (GAPS W4, moved here by GAPS T22) ---
+#
+# This runner is the accepted-state write path: every note write an agent can
+# reach — MCP write_note/edit_note/move_note, the v2 API, `bm tool` — lands in
+# one of the four functions below, and each of them calls this helper before it
+# accepts anything. The sync/watcher path never comes through here; it keeps
+# record mode inside EntityService, which is correct because a hand-edited file
+# refused an index is on disk, unfindable, and silent.
+
+
+def enforce_accepted_note_vocabulary(
+    *,
+    project: Project,
+    metadata: Mapping[str, Any] | None,
+    file_path: RuntimeFilePath,
+    previous: Mapping[str, Any] | None = None,
+) -> None:
+    """Refuse an accepted note write whose frontmatter is off vocabulary.
+
+    Called after prepare and before persist. Prepare derives the markdown the
+    note will carry, which is the only thing worth judging.
+
+    Prepare is not read-only: it stamps the accepted fields onto the entity row
+    and flushes. What makes a rejection here still mean "nothing happened" is the
+    transaction, not the ordering — the whole mutation runs inside
+    ``accepted_note_transaction``'s ``session.begin()``, so the raise rolls back
+    every flush, and file materialization runs only after the mutation returns.
+    """
+    try:
+        enforce_vocabulary(
+            metadata,
+            project_external_id=project.external_id,
+            mode="reject",
+            file_path=file_path,
+            previous=previous,
+        )
+    except VocabularyViolationError as error:
+        # 400, not 409: the content is wrong, and retrying the same content
+        # against the same vocabulary will fail the same way.
+        reject_accepted_note_mutation(
+            AcceptedNoteMutationRejectKind.bad_request,
+            str(error),
+        )
+
+
 async def run_accepted_note_create(
     session: AsyncSession,
     *,
@@ -480,6 +527,13 @@ async def _run_accepted_note_create(
     )
 
     prepared = prepared_write.prepared
+    # `previous` is None: a create has no prior frontmatter, so no set-once field
+    # can have changed.
+    enforce_accepted_note_vocabulary(
+        project=project,
+        metadata=prepared.entity_markdown.frontmatter.metadata,
+        file_path=prepared.file_path.as_posix(),
+    )
     entity = await create_accepted_pending_entity(
         session,
         prepared=prepared,
@@ -533,6 +587,11 @@ async def _run_accepted_note_update(
     )
     created = entity is None
     existing_file_path = entity.file_path if entity is not None else None
+    # Read before prepare copies the replacement's frontmatter onto the row: this
+    # is the only record of what the note said before this write, and it is what
+    # the set-once rule compares against. None on a PUT-as-create, which has no
+    # prior frontmatter.
+    previous_metadata = entity.entity_metadata if entity is not None else None
 
     await reject_conflicting_accepted_note_file_path(
         session,
@@ -645,6 +704,12 @@ async def _run_accepted_note_update(
             reject_accepted_note_mutation(AcceptedNoteMutationRejectKind.bad_request, str(error))
 
     prepared = prepared_write.prepared
+    enforce_accepted_note_vocabulary(
+        project=project,
+        metadata=prepared.entity_markdown.frontmatter.metadata,
+        file_path=prepared.file_path.as_posix(),
+        previous=previous_metadata,
+    )
     persisted = await persist_accepted_note_snapshot(
         session,
         entity=entity,
@@ -686,6 +751,8 @@ async def _run_accepted_note_edit(
         entity_external_id=request.entity_external_id,
         dependencies=dependencies,
     )
+    # Read before prepare copies the edited frontmatter onto the row.
+    previous_metadata = entity.entity_metadata
     preparer = dependencies.preparer_factory.create_note_preparer(project)
     try:
         prepared_write = await prepare_accepted_note_edit(
@@ -706,6 +773,16 @@ async def _run_accepted_note_edit(
         reject_accepted_note_mutation(AcceptedNoteMutationRejectKind.bad_request, str(error))
 
     prepared = prepared_write.prepared
+    # An edit does not change frontmatter, so a set-once violation cannot
+    # originate here — but the note's existing frontmatter may already be off
+    # vocabulary from a hand edit, and refusing to build on it is the intended
+    # outcome. MCP `edit_note` lands here.
+    enforce_accepted_note_vocabulary(
+        project=project,
+        metadata=prepared.entity_markdown.frontmatter.metadata,
+        file_path=prepared.file_path.as_posix(),
+        previous=previous_metadata,
+    )
     persisted = await persist_accepted_note_snapshot(
         session,
         entity=entity,
@@ -751,6 +828,8 @@ async def _run_accepted_note_move(
         dependencies=dependencies,
     )
     existing_file_path = entity.file_path
+    # Read before prepare stamps the new path and permalink onto the row.
+    previous_metadata = entity.entity_metadata
     # Same-path moves fail fast everywhere by decision (2026-07-14): cloud's
     # pre-unification route returned a 200 no-op, local rejected — the unified
     # runner keeps the rejection so a mistaken identity move surfaces instead
@@ -793,6 +872,21 @@ async def _run_accepted_note_move(
         )
     except (ParseError, ValueError) as error:
         reject_accepted_note_mutation(AcceptedNoteMutationRejectKind.bad_request, str(error))
+
+    # A move rewrites at most one frontmatter field, the permalink — and permalink
+    # is the strictest set-once field, the one every edge binds to. So a governed
+    # project refuses a move that would rewrite it. Judged against the prepared
+    # permalink rather than the policy flag, because the policy decides whether
+    # the field moves and the checker decides whether it may.
+    prospective_metadata = dict(previous_metadata or {})
+    if prepared_move.permalink is not None:
+        prospective_metadata["permalink"] = prepared_move.permalink
+    enforce_accepted_note_vocabulary(
+        project=project,
+        metadata=prospective_metadata,
+        file_path=prepared_move.file_path,
+        previous=previous_metadata,
+    )
 
     persisted = await persist_accepted_note_move(
         session,

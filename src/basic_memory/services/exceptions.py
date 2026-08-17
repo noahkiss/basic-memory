@@ -56,10 +56,10 @@ class DirectoryOperationError(Exception):
 class VocabularyViolationError(ValueError):
     """Raised when a write is refused because its frontmatter is off vocabulary.
 
-    Only the *reject* mode of ``EntityService._enforce_vocabulary`` raises this —
-    the verb, MCP, and API write paths. The sync path records violations and
-    indexes anyway, because a file refused an index is invisible to search and
-    to ``bm doctor`` alike (GAPS W4).
+    Only the *reject* mode of ``enforce_vocabulary`` raises this — the verb, MCP,
+    and API write paths. The sync path records violations and indexes anyway,
+    because a file refused an index is invisible to search and to ``bm doctor``
+    alike (GAPS W4).
 
     A ``ValueError`` because that is what the CLI and API boundaries already
     render as a user-facing rejection rather than a 500.
@@ -72,8 +72,11 @@ class VocabularyViolationError(ValueError):
         # Advisories never block a write, so listing one here would name a
         # reason that is not in fact the reason (GAPS W4).
         blocking = [violation for violation in violations if violation.severity == "error"]
-        detail = "\n".join(f"  - {violation.message}" for violation in blocking)
-        super().__init__(f"{file_path} is off this project's vocabulary:\n{detail}")
+        # One line, because this message travels: it becomes an HTTP 400 detail,
+        # then an MCP ToolError, then a `bm tool` stderr line — and rule 6 of
+        # docs/OUTPUT_CONTRACT.md puts an error message on its own single line.
+        detail = " ".join(violation.message for violation in blocking)
+        super().__init__(f"{file_path} is off this project's vocabulary: {detail}")
 
 
 class SyncFatalError(Exception):

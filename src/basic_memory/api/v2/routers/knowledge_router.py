@@ -11,6 +11,7 @@ Key improvements:
 """
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 from hashlib import sha256
 import os
 import pathlib
@@ -20,6 +21,12 @@ from fastapi import APIRouter, Header, HTTPException, Response, Path, status
 from loguru import logger
 
 from basic_memory import db
+from basic_memory.indexing.non_note_move_runner import (
+    NonNoteMoveRejected,
+    move_non_note_entity,
+)
+from basic_memory.repository.accepted_note_repositories import AcceptedNoteRepositories
+from basic_memory.runtime.storage import runtime_content_type_is_markdown
 from basic_memory.services.exceptions import AmbiguousIdentifierError
 from basic_memory.services.directory_deletes import DirectoryDeleteServiceError
 from basic_memory.services.note_content_writes import NoteContentMutationServiceError
@@ -29,7 +36,6 @@ from basic_memory.ignore_utils import (
     should_ignore_path,
 )
 from basic_memory.deps import (
-    EntityServiceV2ExternalDep,
     FileServiceV2ExternalDep,
     SearchServiceV2ExternalDep,
     LinkResolverV2ExternalDep,
@@ -70,7 +76,7 @@ from basic_memory.schemas.v2 import (
     OrphanEntitiesResponse,
     IndexFileRequest,
 )
-from basic_memory.schemas.response import DirectoryMoveResult
+from basic_memory.schemas.response import DirectoryMoveError, DirectoryMoveResult
 from basic_memory.utils import validate_project_path
 
 router = APIRouter(prefix="/knowledge", tags=["knowledge-v2"])
@@ -828,14 +834,68 @@ async def move_entity(
 ## Move directory endpoint
 
 
+@dataclass(frozen=True, slots=True)
+class _PlannedDirectoryMove:
+    """One entity's move, read out of the DB before any of them run."""
+
+    entity_external_id: str
+    entity_id: int
+    is_markdown: bool
+    source_path: str
+    destination_path: str
+
+
+async def _move_non_note_entity_in_directory(
+    planned: _PlannedDirectoryMove,
+    *,
+    entity_repository,
+    file_service,
+    session_maker,
+) -> None:
+    """Move one non-markdown entity in its own transaction.
+
+    ``AcceptedNoteRepositories`` is stateless and built here rather than injected:
+    only this arm needs it, and a new FastAPI dependency for one call site would
+    be more wiring than the call.
+    """
+    async with db.scoped_session(session_maker) as session:
+        entity = await entity_repository.get_by_id(session, planned.entity_id)
+        if entity is None:  # pragma: no cover
+            raise NonNoteMoveRejected(f"Entity row not found: {planned.source_path}")
+        await move_non_note_entity(
+            session,
+            entity=entity,
+            destination_path=planned.destination_path,
+            file_service=file_service,
+            entity_repository=entity_repository,
+            write_repositories=AcceptedNoteRepositories(),
+        )
+
+
+def _directory_move_destination(file_path: str, source: str, destination: str) -> str:
+    """Return where one note under ``source`` lands under ``destination``.
+
+    Only the first occurrence of the prefix is replaced: a note at
+    ``notes/notes/a.md`` moved out of ``notes`` keeps its inner directory.
+    """
+    prefix = f"{source}/"
+    if file_path.startswith(prefix):
+        return file_path.replace(prefix, f"{destination}/", 1)
+    return f"{destination}/{file_path}"
+
+
 @router.post("/move-directory", response_model=DirectoryMoveResult)
 async def move_directory(
     data: MoveDirectoryRequestV2,
     project_id: ProjectExternalIdPathDep,
-    entity_service: EntityServiceV2ExternalDep,
-    project_config: ProjectConfigV2ExternalDep,
+    project_external_id: Annotated[
+        str, Path(alias="project_id", description="Project external UUID")
+    ],
+    entity_repository: EntityRepositoryV2ExternalDep,
+    file_service: FileServiceV2ExternalDep,
+    note_content_mutation_service: NoteContentMutationServiceDep,
+    note_content_materialization_provider: NoteContentMaterializationProviderDep,
     app_config: AppConfigDep,
-    search_service: SearchServiceV2ExternalDep,
     vector_sync_scheduler: EntityVectorSyncSchedulerDep,
     relation_resolution_scheduler: RelationResolutionSchedulerDep,
     session_maker: SessionMakerDep,
@@ -843,8 +903,18 @@ async def move_directory(
     """Move all entities in a directory to a new location.
 
     V2 API uses project external_id in the URL path for stable references.
-    Moves all files within a source directory to a destination directory,
-    updating database records and optionally updating permalinks.
+
+    A markdown note goes through ``move_note``, the same accepted-state path the
+    single-note move endpoint uses. This endpoint was the last writer reaching
+    ``EntityService`` instead, which left the vocabulary funnel with two entry
+    layers to keep in step (GAPS T22).
+
+    A directory also holds non-markdown files, and the accepted path refuses
+    those with a 415. They take a path-only move instead, which is what the old
+    ``EntityService`` loop did for them (GAPS T26).
+
+    Per-entity failures are collected rather than raised, so one refused note
+    does not strand the rest of the batch half-moved.
 
     Args:
         project_id: Project external ID from URL path
@@ -857,38 +927,92 @@ async def move_directory(
         f"API v2 request: move_directory source='{data.source_directory}', destination='{data.destination_directory}'"
     )
 
-    try:
-        # Move the directory using the service
-        result = await entity_service.move_directory(
-            source_directory=data.source_directory,
-            destination_directory=data.destination_directory,
-            project_config=project_config,
-            app_config=app_config,
+    source_directory = data.source_directory.strip("/")
+    destination_directory = data.destination_directory.strip("/")
+
+    # Read the batch out as plain values inside the session: the ORM rows would
+    # otherwise be expired by the time each move opens its own transaction.
+    async with db.scoped_session(session_maker) as session:
+        entities = await entity_repository.find_by_directory_prefix(session, source_directory)
+        planned_moves = [
+            _PlannedDirectoryMove(
+                entity_external_id=entity.external_id,
+                entity_id=entity.id,
+                is_markdown=runtime_content_type_is_markdown(entity),
+                source_path=entity.file_path,
+                destination_path=_directory_move_destination(
+                    entity.file_path, source_directory, destination_directory
+                ),
+            )
+            for entity in entities
+        ]
+
+    if not planned_moves:
+        logger.warning(f"No entities found in directory: {source_directory}")
+        return DirectoryMoveResult(
+            total_files=0,
+            successful_moves=0,
+            failed_moves=0,
+            moved_files=[],
+            errors=[],
         )
 
-        # Reindex moved entities
-        for file_path in result.moved_files:
-            async with db.scoped_session(session_maker) as session:
-                entity = await entity_service.link_resolver.resolve_link(file_path, session=session)
-            if entity:
-                await search_service.index_entity(entity)
-                _schedule_post_write_followups(
-                    vector_sync_scheduler=vector_sync_scheduler,
-                    relation_resolution_scheduler=relation_resolution_scheduler,
-                    app_config=app_config,
-                    entity_id=entity.id,
-                    project_id=project_id,
+    moved_files: list[str] = []
+    errors: list[DirectoryMoveError] = []
+
+    for planned in planned_moves:
+        if not planned.is_markdown:
+            try:
+                await _move_non_note_entity_in_directory(
+                    planned,
+                    entity_repository=entity_repository,
+                    file_service=file_service,
+                    session_maker=session_maker,
                 )
+            except NonNoteMoveRejected as error:
+                errors.append(DirectoryMoveError(path=planned.source_path, error=str(error)))
+                logger.error(f"Failed to move file {planned.source_path}: {error}")
+                continue
+            moved_files.append(planned.destination_path)
+            logger.debug(f"Moved file: {planned.source_path} -> {planned.destination_path}")
+            continue
 
-        logger.info(
-            f"API v2 response: move_directory "
-            f"total={result.total_files}, success={result.successful_moves}, failed={result.failed_moves}"
+        try:
+            accepted = await note_content_mutation_service.move_note(
+                project_external_id=project_external_id,
+                entity_external_id=planned.entity_external_id,
+                destination_path=planned.destination_path,
+                user_profile_id=None,
+                source="api",
+            )
+        except NoteContentMutationServiceError as error:
+            errors.append(DirectoryMoveError(path=planned.source_path, error=str(error.detail)))
+            logger.error(f"Failed to move entity {planned.source_path}: {error.detail}")
+            continue
+
+        accepted = await note_content_materialization_provider.materialize_write_change(accepted)
+        result = entity_response_from_note_content_payload(accepted.payload)
+        _schedule_post_write_followups(
+            vector_sync_scheduler=vector_sync_scheduler,
+            relation_resolution_scheduler=relation_resolution_scheduler,
+            app_config=app_config,
+            entity_id=result.id,
+            project_id=project_id,
         )
-        return result
+        moved_files.append(planned.destination_path)
+        logger.debug(f"Moved entity: {planned.source_path} -> {planned.destination_path}")
 
-    except Exception as e:
-        logger.error(f"Error moving directory: {e}")
-        raise HTTPException(status_code=400, detail=str(e))
+    logger.info(
+        f"API v2 response: move_directory "
+        f"total={len(planned_moves)}, success={len(moved_files)}, failed={len(errors)}"
+    )
+    return DirectoryMoveResult(
+        total_files=len(planned_moves),
+        successful_moves=len(moved_files),
+        failed_moves=len(errors),
+        moved_files=moved_files,
+        errors=errors,
+    )
 
 
 ## Delete directory endpoint

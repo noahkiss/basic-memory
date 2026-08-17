@@ -167,6 +167,26 @@ def test_unknown_type_short_circuits_every_other_rule():
     assert rules(check(record)) == ["unknown-type"]
 
 
+def test_unknown_type_still_reports_the_set_once_change_it_is():
+    """Changing `type` to an undeclared value breaks two rules, and both are real.
+
+    Every other rule is keyed on the type and would be noise, so the short circuit
+    is right for them. Set-once compares field by field and never consults the
+    type, so it stays decidable — and dropping it would hide the violation from
+    the table W5 builds (GAPS T22 close block).
+    """
+    violations = check(GUIDE | {"type": "runbook"}, previous=GUIDE)
+
+    assert rules(violations) == ["unknown-type", "set-once-changed"]
+    assert violations[1].field == "type"
+    assert "'guide'" in violations[1].message and "'runbook'" in violations[1].message
+
+
+def test_an_unknown_type_on_a_creation_reports_only_the_type():
+    """Positive control for the pairing above: no `previous` means no set-once."""
+    assert rules(check(GUIDE | {"type": "runbook"})) == ["unknown-type"]
+
+
 def test_human_added_type_falls_back_to_the_bare_name():
     vocabulary = Vocabulary(
         types=("task", "runbook"),

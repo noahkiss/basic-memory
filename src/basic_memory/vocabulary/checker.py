@@ -119,9 +119,23 @@ def check_frontmatter(
 
     # --- 1. Type. Everything after this is keyed on it, so an unknown type
     # short-circuits: the rest would be noise about rules that may not apply.
+    #
+    # Set-once is the one exception, and it is reported alongside. That rule
+    # compares this write against the previous one field by field and never
+    # consults the type, so it is decidable when nothing else is — and a write
+    # that changes `type` to an undeclared value breaks *both* rules at once.
+    # Reporting only the first would hide the set-once violation from the table
+    # GAPS W5 builds (recorded there as owed; closed here with GAPS T22).
     record_type = metadata.get("type")
     if not isinstance(record_type, str) or record_type not in vocabulary.types:
-        return [_unknown_type(record_type, vocabulary)]
+        unknown = [_unknown_type(record_type, vocabulary)]
+        if previous is None:
+            return unknown
+        return unknown + _check_set_once(
+            metadata,
+            previous,
+            record_type if isinstance(record_type, str) else "",
+        )
 
     date_field = _TYPE_DATE_FIELD.get(record_type)
 

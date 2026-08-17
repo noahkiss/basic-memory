@@ -1314,7 +1314,76 @@ the smaller, safer change** and matches the fail-fast rule — routing means the
 which names are columns, and gets it wrong the moment a note legitimately carries an
 `updated_at:` frontmatter key.
 
-### T22 — W4's reject mode is unreachable: no note write goes through `EntityService`
+### T22 — W4's reject mode is unreachable: no note write goes through `EntityService` — **CLOSED 2026-08-16: the funnel moved wholesale to the accepted-state write path**
+
+**Close block, 2026-08-16.** Enforcement **moved**; it was not duplicated. The user's decision was
+one funnel, one layer, and this is what that cost.
+
+- **One implementation, two entry points.** `services/vocabulary_enforcement.py` holds
+  `enforce_vocabulary(...)` and `apply_vocabulary(...)`. The checker, the loader, the glossary, and
+  every message are unchanged — T22 was never a defect in any of them.
+- **Reject mode now lives in `indexing/accepted_note_mutation_runner.py`.** All four write runners
+  (`_run_accepted_note_create` / `_update` / `_edit` / `_move`) call
+  `enforce_accepted_note_vocabulary` **after prepare and before persist**. Prepare derives the
+  markdown the note will carry, which is the only thing worth judging. Prepare is not read-only —
+  it stamps the accepted fields onto the entity row and flushes — so what makes a rejection mean
+  "nothing happened" is the transaction, not the ordering: the whole mutation sits inside
+  `accepted_note_transaction`'s `session.begin()`, the raise rolls back every flush, and file
+  materialization, which runs only after the mutation returns, never happens.
+- **The funnel no longer takes a session, and cannot deadlock.** A project's vocabulary is a file
+  keyed by `external_id`, and every runner already holds the `Project` row. W4's 30 s
+  nested-acquire hazard is now structurally impossible on this path rather than avoided by
+  discipline.
+- **`move_directory` stopped being a second entry layer.** The endpoint used to call
+  `EntityService.move_directory`, which looped `move_entity`. It now reads the batch out of one
+  session and loops `note_content_mutation_service.move_note` — the same call the single-note move
+  endpoint makes. Per-note rejections become `DirectoryMoveError` rows instead of raising, so one
+  refused note does not strand the batch half-moved. `EntityService.move_directory` is deleted.
+  The endpoint's `search_service.index_entity` loop went with it: materialization reindexes each
+  moved file synchronously, so that loop was doing the same work twice (see **T25**, which filed
+  its removal as a regression and was closed on that finding). Non-markdown entities in the
+  directory take a path-only arm, because the accepted path is markdown-only (**T26**).
+- **`EntityService` keeps record mode and nothing else.** `_enforce_vocabulary` is now
+  `_record_vocabulary_violations` and has no mode parameter; the four reject call sites and the
+  `vocabulary_checked=True` delegations at those sites are gone. Behaviour on the sync path is
+  unchanged. The per-instance vocabulary cache is kept deliberately — a reindex must not re-read
+  the file per note, and W5 still owes the revalidation trigger W4 recorded.
+- **The guard moved to the layer callers use.** `tests/services/test_entity_service_funnel_guard.py`
+  became `tests/services/test_vocabulary_funnel_guard.py`: it now guards the runner's four write
+  paths for reject mode *and* `EntityService`'s public mutators for record mode, with a positive
+  control for each of the two AST walks. `move_entity` is allowlisted — it is no longer on any
+  agent path.
+- **The regression drives the real caller path**, which is the whole lesson of this entry.
+  `tests/mcp/test_tool_vocabulary_enforcement.py` calls `write_note`, `edit_note`, and `move_note`
+  over the live ASGI app: the T22 reproduction is refused with nothing on disk, an on-vocabulary
+  write of the same shape succeeds, an ungoverned project still accepts `type: note`, `overwrite`
+  is refused on a set-once change, an edit of an off-vocabulary note is refused, a move that would
+  rewrite the permalink is refused while one that would not succeeds, and a directory move reports
+  the refused note as a failed move. Nine tests; every refusal has its positive control.
+
+**Judgment calls, both stated rather than silent.**
+
+1. **The rejection message is now one line.** `VocabularyViolationError` joined violations with
+   newlines and a bullet each. That string travels: HTTP 400 detail → MCP `ToolError` → `bm tool`
+   stderr. `docs/OUTPUT_CONTRACT.md` rule 6 puts an error message on its own line, so the
+   violations are joined with a space instead. No message text changed.
+2. **`EntityService.move_entity` is kept, not deleted.** It has no production caller left, but 21
+   test references, and removing it is a change of a different size. Recorded as **T24** below.
+
+**Found while closing this, and fixed here** (it would have made the fix untestable on the
+`overwrite=True` path): `mcp/tools/write_note.py` masked the replacement's own failure. On a
+create-409 it retried as an update and, if the update failed, re-raised the *original* conflict —
+so a vocabulary rejection on an overwrite surfaced as "note already exists". Both lines carried
+`# pragma: no cover`, which is why nothing had seen it. It now raises the update's error with the
+conflict on the exception chain.
+
+**Also closed here, though it was owed to W5:** the checker short-circuited on `unknown-type` and
+lost `set-once-changed`. Set-once compares this write against the previous one field by field and
+never consults the type, so it is decidable when nothing else is — and a write that changes `type`
+to an undeclared value breaks both rules at once. It now reports both.
+
+---
+
 **Opened 2026-08-10**, found by running the shipped W4 build against a real project rather than a
 fixture. W4 ships a funnel whose central promise is *"the caller declares the mode — **reject**
 (verbs, MCP, API) or **record-violation** (the sync path)"*. **Reject never fires.** Every note
@@ -1410,6 +1479,210 @@ A hand-move is a human act, so **reject is the wrong answer here** — §4 says 
 by hand is not an error. The right answer is that this path must reach the funnel in **record**
 mode, which in turn needs the violation to survive the checksum stamp that suppresses re-indexing.
 That is the real work, and it is why this is not a one-line fix.
+
+### T24 — `EntityService.move_entity` has no production caller left
+**Opened 2026-08-16** while closing T22. Every note move now goes through
+`indexing/accepted_note_mutation_runner.py`: the single-note endpoint always did, and
+`move_directory` was rewritten to. `EntityService.move_directory`, its last caller, is deleted.
+
+**Reproduction**, verbatim:
+
+```
+$ git grep -n "\.move_entity(" -- src/
+src/basic_memory/mcp/tools/move_note.py:926:            result = await knowledge_client.move_entity(resolved_entity_id, destination_path)
+```
+
+The one hit is `KnowledgeClient.move_entity`, an HTTP call to the v2 endpoint of the same name — not
+`EntityService.move_entity`. **Positive control**, the same grep shape for a method that *is* live:
+
+```
+$ git grep -n "\.upsert_entity_from_markdown(" -- src/
+src/basic_memory/indexing/batch_indexer.py:613:            entity = await self.entity_service.upsert_entity_from_markdown(
+src/basic_memory/services/entity_service.py:479:            entity = await self.upsert_entity_from_markdown(
+src/basic_memory/services/entity_service.py:542:            entity = await self.upsert_entity_from_markdown(
+src/basic_memory/services/entity_service.py:1067:            entity = await self.upsert_entity_from_markdown(
+```
+
+An external caller plus internal ones is what a live service method looks like. `move_entity` has
+neither.
+
+**Not deleted in the T22 pass on purpose:** 21 test references, so removing it is a change of a
+different size, and T22's diff was already the funnel move plus a router rewrite. It is dead
+production code and this fork deletes those (`AGENTS.md`: *"Don't spend tokens on code we will
+never run"*). The work is: delete the method, delete or repoint the tests that exercise it, and
+drop `move_entity` from `PATH_ONLY_WRITE` in `tests/services/test_vocabulary_funnel_guard.py`.
+
+Note the method is **not** guarded by the vocabulary funnel any more — it is allowlisted in that
+guard file. So it must not acquire a caller; if one is ever wanted, route it through the runner
+instead.
+
+### T25 — "an accepted note move deletes the note's observation and relation search rows" — **CLOSED 2026-08-16, no code change: the premise was wrong**
+
+**Opened and closed the same day.** Filed during review of the T22 diff, on the grounds that
+`AcceptedNoteSearchRepository.refresh_entity` deletes every `search_index` row for an entity and
+inserts one back, so a move would strip the note's `OBSERVATION` and `RELATION` rows — and that
+T22's `move_directory` rewrite had dropped the router loop that used to repair them.
+
+The first half is true and the second half does not matter. **The accept path already reindexes
+the file it materializes, synchronously, in the same request:**
+
+```
+$ sed -n '383,388p' src/basic_memory/index/note_content_materialization.py
+        file_path = note_content_payload_file_path(accepted.payload)
+        if file_path is not None and self.file_indexer is not None:
+            await self.file_indexer.index_file(
+                file_path,
+                source="note-content-materialization",
+            )
+```
+
+`index_file` runs the full file-index path, which reaches
+`SearchService.index_entity_markdown` — "Index an entity and all its observations and relations".
+So the rows are rebuilt a moment after `refresh_entity` clears them, on every accepted write, move
+included. The router loop T22 removed was doing the same work a second time.
+
+**A runner-side rebuild was built for this and then reverted.** Keeping it would have meant two
+mechanisms for one job, with the redundant one carrying a widened `AcceptedNoteSearchRow`, a second
+repository insert method, and two more row builders to keep in step with `index_entity_markdown` —
+the exact "two paths writing different rows for the same note" hazard it was written to avoid.
+
+**What survives:** `tests/mcp/test_tool_move_note_search_rows.py`
+`test_move_keeps_observation_and_relation_search_rows`, kept as a behaviour test. Nothing else
+asserts that a move leaves no stale `file_path` on those rows —
+`test-int/mcp/test_move_directory_integration.py` only queries body text, which lives on the entity
+row.
+
+**The lesson**, stated in full in **T27**, which this entry produced: the review stopped at
+`refresh_entity` and never followed the request past the mutation into materialization. A claim
+that a write path loses state has to follow the request to its end, not to the end of the function
+being read.
+
+### T26 — a directory move now refuses every non-markdown entity in the directory — **CLOSED 2026-08-16: non-markdown entities take a path-only arm**
+
+**Close block, 2026-08-16.** Found in review of the T22 diff and fixed in the same commit. The
+entry's first question — should a directory move carry non-markdown entities at all — is answered
+**yes**: it did before T22, and a move that silently leaves the images behind while the notes go is
+a worse answer than either alternative the entry offered.
+
+- `src/basic_memory/indexing/non_note_move_runner.py` is the second arm: move the file, restamp the
+  entity row's `file_path`, `checksum`, and `updated_at`, refresh its single search row. It never
+  touches note_content, because there is none.
+- **No vocabulary check on that arm, deliberately.** The funnel judges frontmatter; a binary has
+  none. This is not a hole in T22's funnel — it is the funnel's subject not existing.
+- The permalink is left alone. A binary has no frontmatter to derive one from, and rewriting it
+  would orphan every relation bound to it for no gain.
+- The router's loop branches on `runtime_content_type_is_markdown(entity)` and now carries a
+  `_PlannedDirectoryMove` dataclass rather than a positional tuple, because the branch made the
+  third element ambiguous to read.
+
+`move_note` on a single non-markdown entity still returns 415, unchanged. That is right: there is
+no note content to accept, and the caller named one file rather than a directory.
+
+**Regression test:** `tests/mcp/test_tool_move_note_search_rows.py`
+`test_directory_move_carries_a_non_markdown_file` puts an indexed PNG beside a note, moves the
+directory over the real MCP path, and asserts both moved — file on disk at the new path, entity row
+repointed, permalink unchanged.
+
+---
+
+**Opened 2026-08-16** during review of the T22 diff. `move_directory` selects the batch with
+`EntityRepository.find_by_directory_prefix`, which filters on path and nothing else:
+
+```
+$ sed -n '640,646p' src/basic_memory/repository/entity_repository.py
+        pattern = f"{directory_prefix}/%"
+
+        query = self.select().where(Entity.file_path.like(pattern))
+
+        # Skip eager loading - we only need basic entity fields for directory trees
+        result = await self.execute_query(session, query, use_query_options=False)
+        return list(result.scalars().all())
+```
+
+Every row it returns is now handed to `note_content_mutation_service.move_note`, which refuses a
+non-markdown entity with 415:
+
+```
+$ sed -n '957,961p' src/basic_memory/indexing/accepted_note_mutation_runner.py
+    if not runtime_content_type_is_markdown(entity):
+        reject_accepted_note_mutation(
+            AcceptedNoteMutationRejectKind.unsupported_media_type,
+            "Only markdown note mutations are supported by the note-content path.",
+        )
+```
+
+So a directory holding an indexed PDF or image reports that entity as a failed move and leaves it
+behind, where `EntityService.move_entity` moved any file. **Positive control** that the old path
+was content-type-blind: it took `identifier` and `destination_path` and never consulted
+`content_type` — its only file work was `file_service.move_file`.
+
+This hits governed and ungoverned projects alike; it has nothing to do with the vocabulary. It is
+the cost of routing the batch through the note-content path, and it was not a stated decision.
+
+**The work:** decide whether a directory move should carry non-markdown entities at all. If it
+should, the batch needs a second arm for them — a path-only move that does not enter the
+note-content runner. If it should not, say so in the endpoint's docstring and in `move_note`'s
+tool description, so the refusal reads as a rule rather than a bug.
+
+---
+
+### T27 — an accepted create, update, or edit never builds observation or relation search rows — **WITHDRAWN 2026-08-16, same day: the premise is false**
+**Withdrawn 2026-08-16**, in the second review pass of the same diff that opened it. Kept rather
+than deleted because the reasoning that produced it is the reasoning that produced T25, and both
+need the same correction on the record.
+
+**The claim was that a note written through `write_note` has no observation search rows until some
+later file pass.** It does have them, within the same HTTP request. The accept path materializes
+the file and then indexes it synchronously:
+
+```
+$ sed -n '384,388p' src/basic_memory/index/note_content_materialization.py
+        if file_path is not None and self.file_indexer is not None:
+            await self.file_indexer.index_file(
+                file_path,
+                source="note-content-materialization",
+            )
+```
+
+`file_indexer` is never `None` on this runtime — `get_note_content_materialization_provider`
+(`deps/services.py:461-475`) takes `file_indexer: IndexFileExecutorV2ExternalDep` as a required
+parameter and passes it straight through, so every route write has one. The chain
+from there rebuilds all three row kinds:
+
+`LocalMarkdownFileIndexer.index_markdown_file` → `index_current_markdown_file(index_search=True)`
+→ `BatchIndexer.index_markdown_file(index_search=True)` → `_refresh_search_index`
+(`indexing/batch_indexer.py:576`) → `SearchService.index_entity_data` → `index_entity_markdown`,
+whose own docstring is *"Index an entity and all its observations and relations."*
+
+**Positive control, and it is the decisive one** — an existing test that has been passing all
+along, which could not pass if the claim held:
+
+```
+$ sed -n '29,32p' test-int/mcp/test_observation_permalink_collision_integration.py
+async def test_duplicate_category_content_observations_both_searchable(
+    mcp_server, app, test_project
+):
+    """Both observations must be indexed even when their synthetic permalinks collide."""
+```
+
+It calls `write_note` and then `search_notes` with `entity_types: ["observation"]`, and asserts
+both observations come back. No reindex anywhere in it.
+
+**What the original entry got wrong, and how.** It reasoned from the accepted-write transaction
+alone — where `refresh_entity` really does delete every row and insert one — and never followed the
+router past `move_note` into `materialize_write_change`. The `search_index` DELETE is real; the
+conclusion drawn from it is not, because a second, synchronous pass reinserts everything a few
+milliseconds later in the same request. **The lesson is the house rule verbatim: a claim without a
+reproduction is not a finding.** T25 and T27 were both filed off a code read, and the grep pasted
+into T27 as its "reproduction" only proved where a new function is called — it never showed a note
+missing an observation row.
+
+**What is still true, and is the only part worth carrying forward:** if materialization returns any
+status other than `written`, `index_file` is skipped, and then the accepted write's own search rows
+are all the note has — the entity row and nothing else. That window is uncovered on every accepted
+path, move included, because the runner-side rebuild that briefly covered it on moves was reverted
+with T25. It is a question about that failure window, not about the missing rows this entry
+claimed, and it wants a reproduction before anyone builds for it.
 
 ---
 
@@ -2052,13 +2325,16 @@ tests/cli/test_history_command.py); int 329/3 unchanged; doctor skipped — noth
 the file↔DB loop. Live scratch smoke: `history dirty` empty case, per-file listing, path commit,
 `--all` sweep with trailer-free message all conform.
 
-### W4 — closed record vocabulary enforced in the write path — **SHIPPED 2026-08-10, but see T22**
+### W4 — closed record vocabulary enforced in the write path — **SHIPPED 2026-08-10; reject mode relocated 2026-08-16 (T22)**
 
-> **T22 and T23, opened the same day.** Reject mode is unreachable: no note write in this fork goes
-> through `EntityService`, so the agent write path accepts off-vocabulary records and the violation
-> is only logged afterward by the indexer (**T22**). A watcher move rewrites the set-once
-> `permalink` with no funnel contact in any mode (**T23**). Record mode on the indexer's own path
-> works end-to-end. Read both before building on this.
+> **Where enforcement lives, as of 2026-08-16.** One implementation in
+> `services/vocabulary_enforcement.py`, two entry points. **Reject** is in
+> `indexing/accepted_note_mutation_runner.py`, which is where every agent-facing write lands;
+> **record** is in `EntityService`, which is the sync path and nothing else. The text below still
+> says `entity_service.py` is the agent write path — **it is not, and was not by the time W4
+> shipped**; that is the whole of **T22**, whose close block states what moved. **T23 is still
+> open**: a watcher move rewrites the set-once `permalink` with no funnel contact in any mode.
+> Read T22's close block before building on this.
 
 **Close block, 2026-08-10.** Shipped in four commits: `2e62e726` (`vocabulary.yml` + the bespoke
 checker), `ee5bc1a4` (the shared glossary), `2310dc87` (the funnel), `63ad4fba` (`bm types`).

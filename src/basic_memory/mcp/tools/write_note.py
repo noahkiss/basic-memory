@@ -279,9 +279,16 @@ async def write_note(
                     )
                     result = await knowledge_client.update_entity(entity_id, entity.model_dump())
                     action = "Updated"
-                except Exception as update_error:  # pragma: no cover
-                    # Re-raise the original error if update also fails
-                    raise e from update_error  # pragma: no cover
+                except Exception as update_error:
+                    # Trigger: the create 409'd and the replacement failed too.
+                    # Why: the replacement's own failure is the actionable one.
+                    #      Re-raising the create's "note already exists" reports a
+                    #      condition the caller asked for with overwrite=True, and
+                    #      hides why replacing it was refused — a vocabulary
+                    #      rejection, for one (GAPS W4 / T22).
+                    # Outcome: the caller sees the replacement's reason, with the
+                    #      conflict still on the exception chain.
+                    raise update_error from e
             else:
                 # Re-raise if it's not a conflict error
                 raise  # pragma: no cover

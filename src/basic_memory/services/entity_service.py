@@ -3,7 +3,7 @@
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, List, Literal, Optional, Sequence, Tuple, Union
+from typing import Any, List, Optional, Sequence, Tuple, Union
 
 from loguru import logger
 from sqlalchemy import select
@@ -28,8 +28,6 @@ from basic_memory.runtime.note_move import normalize_note_move_destination_path
 from basic_memory.schemas import Entity as EntitySchema
 from basic_memory.schemas.base import Permalink
 from basic_memory.schemas.response import (
-    DirectoryMoveResult,
-    DirectoryMoveError,
     DirectoryDeleteResult,
     DirectoryDeleteError,
 )
@@ -38,7 +36,6 @@ from basic_memory.services.exceptions import (
     EntityAlreadyExistsError,
     EntityCreationError,
     EntityNotFoundError,
-    VocabularyViolationError,
 )
 from basic_memory.services.link_resolver import LinkResolver
 from basic_memory.services.note_preparation import (
@@ -54,7 +51,8 @@ from basic_memory.services.note_preparation import (
     replace_section_content as replace_note_section_content,
 )
 from basic_memory.services.search_service import SearchService
-from basic_memory.vocabulary.checker import Violation, check_frontmatter, has_errors
+from basic_memory.services.vocabulary_enforcement import apply_vocabulary
+from basic_memory.vocabulary.checker import Violation
 from basic_memory.vocabulary.model import Vocabulary, load_vocabulary
 
 __all__ = [
@@ -66,14 +64,6 @@ __all__ = [
 ]
 
 _fenced_code_line_flags = _note_fenced_code_line_flags
-
-# What the *caller* declares a violation means. Static per mutator: the write's
-# origin decides, never the content it carries (GAPS W4).
-#   reject — verbs, MCP, the API. The write does not happen.
-#   record — the sync/watcher path, reading a file a human may have hand-edited.
-#            It always indexes: a file refused an index is invisible to search
-#            and to `bm doctor` alike.
-type EnforcementMode = Literal["reject", "record"]
 
 
 @dataclass(frozen=True)
@@ -130,13 +120,14 @@ class EntityService(BaseService[EntityModel]):
         self._vocabulary_cache: Vocabulary | None = None
         self._vocabulary_loaded = False
 
-    # --- Vocabulary enforcement (GAPS W4) ---
+    # --- Vocabulary enforcement, sync path only (GAPS W4, narrowed by GAPS T22)
     #
-    # Every entity mutator passes through _enforce_vocabulary and nothing else
-    # validates frontmatter. A new mutator that skips the funnel is a bug, not a
-    # policy choice: hooking only the paths someone remembered is how the
-    # predecessor tool ended up rejecting a type in its CLI while its API wrote
-    # the same type to disk (.forked/decisions.md R5).
+    # EntityService reaches the funnel in **record** mode and no other. It is the
+    # sync/watcher path: it reads files a human may have hand-edited, and a file
+    # refused an index is on disk, unfindable, and silent. Reject mode lives in
+    # `indexing/accepted_note_mutation_runner.py`, which is where every
+    # agent-facing write actually lands — see GAPS T22 for how the two came
+    # apart. Both call one implementation in `vocabulary_enforcement.py`.
 
     async def _project_external_id(self, session: AsyncSession) -> str:
         """Return this service's project ``external_id``, the store directory key.
@@ -190,56 +181,30 @@ class EntityService(BaseService[EntityModel]):
             self._vocabulary_loaded = True
         return self._vocabulary_cache
 
-    async def _enforce_vocabulary(
+    async def _record_vocabulary_violations(
         self,
         metadata: Mapping[str, Any] | None,
         *,
-        mode: EnforcementMode,
         file_path: str,
         session: AsyncSession,
         previous: Mapping[str, Any] | None = None,
     ) -> list[Violation]:
-        """Check one write's frontmatter against the project's vocabulary.
+        """Record, never refuse, what one indexed file breaks.
 
         ``previous`` is the record's frontmatter before this write, and ``None``
-        means a creation; it feeds the set-once rule and nothing else. Both sides
-        are normalized first so a native YAML date on the incoming side and the
-        ISO string already stored on the previous side compare equal.
+        means a creation; it feeds the set-once rule and nothing else.
 
-        ``session`` is required, not optional: the funnel runs inside a mutator's
+        ``session`` is required, not optional: the lookup runs inside a mutator's
         open transaction, and the one-connection pool deadlocks if this opens a
-        second one. Passing the caller's session also means the vocabulary lookup
-        sees the same uncommitted state the write does.
+        second one.
         """
-        vocabulary = await self._project_vocabulary(session)
-        # No vocabulary.yml means the project is not governed, so no rule applies
-        # and the checker must not run — an absent file is not the defaults.
-        if vocabulary is None:
-            return []
-
-        violations = check_frontmatter(
-            normalize_frontmatter_metadata(dict(metadata or {})),
-            vocabulary,
-            previous=None if previous is None else normalize_frontmatter_metadata(dict(previous)),
+        return apply_vocabulary(
+            metadata,
+            await self._project_vocabulary(session),
+            mode="record",
+            file_path=file_path,
+            previous=previous,
         )
-
-        if mode == "reject" and has_errors(violations):
-            # Raised before the caller writes anything: a rejection that leaves a
-            # written file on disk is worse than no rejection.
-            raise VocabularyViolationError(file_path, violations)
-
-        # Logged, not persisted. GAPS W5 mechanism A writes these rows to a table
-        # keyed by entity so `bm doctor` can query them; that table, its Alembic
-        # migration, and the revalidation trigger are W5's scope and are
-        # deliberately not built here.
-        for violation in violations:
-            message = f"Vocabulary violation in {file_path}: {violation.message}"
-            if violation.severity == "error":
-                logger.warning(message, rule=violation.rule, field=violation.field)
-            else:
-                logger.debug(message, rule=violation.rule, field=violation.field)
-
-        return violations
 
     async def detect_file_path_conflicts(
         self,
@@ -505,16 +470,6 @@ class EntityService(BaseService[EntityModel]):
             # Derive the canonical markdown/entity fields before touching the filesystem.
             prepared = await self.prepare_create_entity_content(schema, session=session)
             self._sync_prepared_schema_state(schema, prepared)
-            # --- Enforce The Vocabulary Before Anything Is Written ---
-            # This is the agent write path, so it rejects. The prepared markdown's
-            # frontmatter is what the file will carry, which is the only thing
-            # worth judging — schema.entity_metadata is a request, not the result.
-            await self._enforce_vocabulary(
-                prepared.entity_markdown.frontmatter.metadata,
-                mode="reject",
-                file_path=prepared.file_path.as_posix(),
-                session=session,
-            )
             # --- Persist File, Then Indexable DB State ---
             # Local mode still writes the file immediately; the prepare object keeps semantics separate
             # from that persistence step.
@@ -526,7 +481,6 @@ class EntityService(BaseService[EntityModel]):
                 prepared.entity_markdown,
                 is_new=True,
                 session=session,
-                vocabulary_checked=True,
             )
             updated = await self.repository.update(session, entity.id, {"checksum": checksum})
             if not updated:  # pragma: no cover
@@ -567,16 +521,6 @@ class EntityService(BaseService[EntityModel]):
                 session=session,
             )
             self._sync_prepared_schema_state(schema, prepared)
-            # Agent write path: reject, before the file is written. `previous` is
-            # the stored frontmatter, which is what makes the set-once rule real
-            # on a full replacement.
-            await self._enforce_vocabulary(
-                prepared.entity_markdown.frontmatter.metadata,
-                mode="reject",
-                file_path=prepared.file_path.as_posix(),
-                session=session,
-                previous=entity.entity_metadata,
-            )
             previous_file_path = Path(entity.file_path)
             # Trigger: a full replacement also renames the note to a different canonical path.
             # Why: Path.replace() overwrites existing files, so the destination must be conflict-free
@@ -601,7 +545,6 @@ class EntityService(BaseService[EntityModel]):
                 is_new=False,
                 existing_entity=entity,
                 session=session,
-                vocabulary_checked=True,
             )
             if prepared.file_path.as_posix() != previous_file_path.as_posix():
                 # Trigger: a full replacement changed the canonical note path.
@@ -708,8 +651,6 @@ class EntityService(BaseService[EntityModel]):
         file_path: Path,
         markdown: EntityMarkdown,
         session: AsyncSession | None = None,
-        *,
-        vocabulary_checked: bool = False,
     ) -> EntityModel:
         """Create entity and observations only.
 
@@ -717,10 +658,6 @@ class EntityService(BaseService[EntityModel]):
         Relations will be added in second pass.
 
         Uses UPSERT approach to handle permalink/file_path conflicts cleanly.
-
-        ``vocabulary_checked`` is for delegation only: a caller passes True when
-        it has already run the funnel for this same write, so one logical write
-        produces exactly one check.
         """
         logger.debug(f"Creating entity: {markdown.frontmatter.title} file_path: {file_path}")
 
@@ -743,13 +680,11 @@ class EntityService(BaseService[EntityModel]):
             # unfindable, and silent (GAPS W4). Inside the session block so the
             # lookup reuses this transaction rather than deadlocking on the
             # single-connection pool.
-            if not vocabulary_checked:
-                await self._enforce_vocabulary(
-                    markdown.frontmatter.metadata,
-                    mode="record",
-                    file_path=file_path.as_posix(),
-                    session=active_session,
-                )
+            await self._record_vocabulary_violations(
+                markdown.frontmatter.metadata,
+                file_path=file_path.as_posix(),
+                session=active_session,
+            )
 
             # Use UPSERT to handle conflicts cleanly
             try:
@@ -765,15 +700,11 @@ class EntityService(BaseService[EntityModel]):
         *,
         existing_entity: EntityModel | None = None,
         session: AsyncSession | None = None,
-        vocabulary_checked: bool = False,
     ) -> EntityModel:
         """Update entity fields and observations.
 
         Updates everything except relations and sets null checksum
         to indicate sync not complete.
-
-        ``vocabulary_checked`` is for delegation only: a caller passes True when
-        it has already run the funnel for this same write.
         """
         logger.debug(f"Updating entity and observations: {file_path}")
 
@@ -796,14 +727,12 @@ class EntityService(BaseService[EntityModel]):
             # Read before _apply_markdown_entity_fields overwrites entity_metadata
             # below — this row is the only record of what the note said before
             # this write, which is what the set-once rule compares against.
-            if not vocabulary_checked:
-                await self._enforce_vocabulary(
-                    markdown.frontmatter.metadata,
-                    mode="record",
-                    file_path=file_path.as_posix(),
-                    session=active_session,
-                    previous=db_entity.entity_metadata,
-                )
+            await self._record_vocabulary_violations(
+                markdown.frontmatter.metadata,
+                file_path=file_path.as_posix(),
+                session=active_session,
+                previous=db_entity.entity_metadata,
+            )
 
             # Observations are owned by the markdown file, so re-indexing replaces the old set.
             # We only need the entity id here; loading the old relationship collection is wasted work.
@@ -871,7 +800,6 @@ class EntityService(BaseService[EntityModel]):
         resolve_relations: bool = True,
         reload_entity: bool = True,
         session: AsyncSession | None = None,
-        vocabulary_checked: bool = False,
     ) -> EntityModel:
         """Create/update entity and relations from parsed markdown.
 
@@ -886,7 +814,6 @@ class EntityService(BaseService[EntityModel]):
                     file_path,
                     markdown,
                     session=active_session,
-                    vocabulary_checked=vocabulary_checked,
                 )
             else:
                 created = await self.update_entity_and_observations(
@@ -894,7 +821,6 @@ class EntityService(BaseService[EntityModel]):
                     markdown,
                     existing_entity=existing_entity,
                     session=active_session,
-                    vocabulary_checked=vocabulary_checked,
                 )
             # Pass the entity through so relation work does not have to rediscover the source row.
             return await self.update_entity_relations(
@@ -933,9 +859,8 @@ class EntityService(BaseService[EntityModel]):
             # transaction: the pool holds one connection and a second acquire
             # would wait on the one this block already owns.
             if not vocabulary_checked:
-                await self._enforce_vocabulary(
+                await self._record_vocabulary_violations(
                     markdown.frontmatter.metadata,
-                    mode="record",
                     file_path=entity.file_path,
                     session=active_session,
                     previous=entity.entity_metadata,
@@ -1116,19 +1041,6 @@ class EntityService(BaseService[EntityModel]):
                 session=session,
             )
 
-            # MCP `edit_note` lands here, so this is an agent write path and it
-            # rejects. An edit does not change frontmatter, so a set-once
-            # violation cannot originate here — but the note's existing
-            # frontmatter may already be off vocabulary from a hand edit, and
-            # refusing to build on it is the intended outcome.
-            await self._enforce_vocabulary(
-                prepared.entity_markdown.frontmatter.metadata,
-                mode="reject",
-                file_path=file_path.as_posix(),
-                session=session,
-                previous=entity.entity_metadata,
-            )
-
             checksum = await self.file_service.write_file(
                 file_path,
                 prepared.markdown_content,
@@ -1142,7 +1054,6 @@ class EntityService(BaseService[EntityModel]):
                 prepared.entity_markdown,
                 is_new=False,
                 session=session,
-                vocabulary_checked=True,
             )
 
             entity = await self.repository.update(session, entity.id, {"checksum": checksum})
@@ -1299,49 +1210,25 @@ class EntityService(BaseService[EntityModel]):
         if await self.file_service.exists(destination_path):
             raise ValueError(f"Destination already exists: {destination_path}")
 
-        # 4. Derive the permalink the move will write, if any. Resolved here
-        # rather than after the file has moved because the funnel below has to
-        # judge the frontmatter the note will end up with, and it has to do that
-        # while rejecting still means "nothing happened". resolve_permalink reads
-        # the path and the DB, so it is safe before the file exists at the
-        # destination.
+        # 4. Derive the permalink the move will write, if any.
         new_permalink: str | None = None
         if not app_config.disable_permalinks and (
             app_config.update_permalinks_on_move or old_permalink is None
         ):
             new_permalink = await self.resolve_permalink(destination_path)
 
-        # 5. Enforce the vocabulary. A move is an agent write path, so it
-        # rejects. permalink is set-once, so a governed project refuses a move
-        # that would rewrite it: every edge binds to the permalink.
-        prospective_metadata = dict(entity.entity_metadata or {})
-        if new_permalink is not None:
-            prospective_metadata["permalink"] = new_permalink
-        # move_entity holds no open transaction at this point — step 4's
-        # resolve_permalink opened and closed its own — so this session is the
-        # outermost one and closes again before the file moves. Nesting it inside
-        # the step 11 update block instead would put the check after the move.
-        async with db.scoped_session(self.session_maker) as session:
-            await self._enforce_vocabulary(
-                prospective_metadata,
-                mode="reject",
-                file_path=destination_path,
-                session=session,
-                previous=entity.entity_metadata,
-            )
-
         try:
-            # 6. Ensure destination directory if needed (no-op for S3)
+            # 5. Ensure destination directory if needed (no-op for S3)
             await self.file_service.ensure_directory(Path(destination_path).parent)
 
-            # 7. Move physical file via FileService (filesystem rename or cloud move)
+            # 6. Move physical file via FileService (filesystem rename or cloud move)
             await self.file_service.move_file(current_path, destination_path)
             logger.info(f"Moved file: {current_path} -> {destination_path}")
 
-            # 8. Prepare database updates
+            # 7. Prepare database updates
             updates = {"file_path": destination_path}
 
-            # 9. Write the permalink resolved in step 4, when the move updates it
+            # 8. Write the permalink resolved in step 4, when the move updates it
             if new_permalink is not None:
                 # Update frontmatter with new permalink
                 await self.file_service.update_frontmatter(
@@ -1356,11 +1243,11 @@ class EntityService(BaseService[EntityModel]):
                 else:
                     logger.info(f"Updated permalink: {old_permalink} -> {new_permalink}")
 
-            # 10. Recalculate checksum
+            # 9. Recalculate checksum
             new_checksum = await self.file_service.compute_checksum(destination_path)
             updates["checksum"] = new_checksum
 
-            # 11. Update database
+            # 10. Update database
             async with db.scoped_session(self.session_maker) as session:
                 updated_entity = await self.repository.update(session, entity.id, updates)
                 if not updated_entity:
@@ -1381,102 +1268,6 @@ class EntityService(BaseService[EntityModel]):
 
             # Re-raise the original error with context
             raise ValueError(f"Move failed: {str(e)}") from e
-
-    async def move_directory(
-        self,
-        source_directory: str,
-        destination_directory: str,
-        project_config: ProjectConfig,
-        app_config: BasicMemoryConfig,
-    ) -> DirectoryMoveResult:
-        """Move all entities in a directory to a new location.
-
-        This operation moves all files within a source directory to a destination
-        directory, updating database records and search indexes. The operation
-        tracks successes and failures individually to provide detailed feedback.
-
-        Args:
-            source_directory: Source directory path relative to project root
-            destination_directory: Destination directory path relative to project root
-            project_config: Project configuration for file operations
-            app_config: App configuration for permalink update settings
-
-        Returns:
-            DirectoryMoveResult with counts and details of moved files
-
-        Raises:
-            ValueError: If source directory is empty or destination conflicts exist
-        """
-
-        logger.info(f"Moving directory: {source_directory} -> {destination_directory}")
-
-        # Normalize directory paths (remove trailing slashes)
-        source_directory = source_directory.strip("/")
-        destination_directory = destination_directory.strip("/")
-
-        # Find all entities in the source directory
-        async with db.scoped_session(self.session_maker) as session:
-            entities = await self.repository.find_by_directory_prefix(session, source_directory)
-
-        if not entities:
-            logger.warning(f"No entities found in directory: {source_directory}")
-            return DirectoryMoveResult(
-                total_files=0,
-                successful_moves=0,
-                failed_moves=0,
-                moved_files=[],
-                errors=[],
-            )
-
-        # Track results
-        moved_files: list[str] = []
-        errors: list[DirectoryMoveError] = []
-        successful_moves = 0
-        failed_moves = 0
-
-        # Process each entity
-        for entity in entities:
-            try:
-                # Calculate new path by replacing source prefix with destination
-                old_path = entity.file_path
-                # Replace only the first occurrence of the source directory prefix
-                if old_path.startswith(f"{source_directory}/"):
-                    new_path = old_path.replace(
-                        f"{source_directory}/", f"{destination_directory}/", 1
-                    )
-                else:  # pragma: no cover
-                    # Entity is directly in the source directory (shouldn't happen with prefix match)
-                    new_path = f"{destination_directory}/{old_path}"
-
-                # Move the individual entity
-                await self.move_entity(
-                    identifier=entity.file_path,
-                    destination_path=new_path,
-                    project_config=project_config,
-                    app_config=app_config,
-                )
-
-                moved_files.append(new_path)
-                successful_moves += 1
-                logger.debug(f"Moved entity: {old_path} -> {new_path}")
-
-            except Exception as e:  # pragma: no cover
-                failed_moves += 1
-                errors.append(DirectoryMoveError(path=entity.file_path, error=str(e)))
-                logger.error(f"Failed to move entity {entity.file_path}: {e}")
-
-        logger.info(
-            f"Directory move complete: {successful_moves} succeeded, {failed_moves} failed "
-            f"(source={source_directory}, dest={destination_directory})"
-        )
-
-        return DirectoryMoveResult(
-            total_files=len(entities),
-            successful_moves=successful_moves,
-            failed_moves=failed_moves,
-            moved_files=moved_files,
-            errors=errors,
-        )
 
     async def delete_directory(
         self,

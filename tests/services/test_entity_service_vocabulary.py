@@ -1,24 +1,30 @@
-"""Vocabulary enforcement in the entity write path (GAPS W4).
+"""Vocabulary enforcement on the sync path (GAPS W4, narrowed by GAPS T22).
 
-Real code paths throughout: nothing here mocks the checker, because the thing
-under test is that every mutator actually reaches it.
+``EntityService`` reaches the funnel in **record** mode and no other. It is the
+sync/watcher path: it reads files a human may have hand-edited, and a file
+refused an index is on disk, unfindable, and silent. Reject mode lives in the
+accepted-note mutation runner, which is where every agent-facing write lands, and
+``tests/mcp/test_tool_vocabulary_enforcement.py`` proves it there over the real
+MCP path. The reject cases this file used to hold moved there; none were dropped.
+
+Real code paths throughout: nothing here mocks the checker.
 
 A project is governed only when ``store/<external_id>/vocabulary.yml`` exists.
 ``EntityService`` caches that answer for the life of the instance, so every test
 governs the project *before* the first write.
 """
 
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import pytest
 import yaml
+from loguru import logger
 
 from basic_memory.markdown.schemas import EntityFrontmatter, EntityMarkdown
 from basic_memory.schemas import Entity as EntitySchema
-from basic_memory.services.exceptions import VocabularyViolationError
 from basic_memory.vocabulary.model import vocabulary_path
 
 # The common four every record needs, plus a permalink that equals the id
@@ -75,6 +81,21 @@ def govern_project(test_project):
     return _govern
 
 
+@pytest.fixture
+def logged_warnings() -> Iterator[list[str]]:
+    """Collect loguru warnings for the duration of one test.
+
+    The funnel reports in record mode by logging, and loguru does not feed
+    pytest's ``caplog``. A sink is the only way to read what it said.
+    """
+    collected: list[str] = []
+    sink_id = logger.add(collected.append, level="WARNING")
+    try:
+        yield collected
+    finally:
+        logger.remove(sink_id)
+
+
 @pytest.mark.asyncio
 async def test_ungoverned_project_write_paths_are_untouched(entity_service, test_project) -> None:
     """No vocabulary.yml means no rule applies, and every write path is unchanged.
@@ -84,8 +105,8 @@ async def test_ungoverned_project_write_paths_are_untouched(entity_service, test
     defaulting-when-absent would reject every existing write on the spot.
 
     Its positive control is
-    ``test_governed_project_rejects_off_vocabulary_type``: the identical write
-    below is refused once a vocabulary file exists.
+    ``test_service_write_records_an_off_vocabulary_type_and_still_writes``: the
+    identical write below is flagged once a vocabulary file exists.
     """
     assert not vocabulary_path(test_project.external_id).exists()
 
@@ -120,69 +141,31 @@ async def test_ungoverned_project_write_paths_are_untouched(entity_service, test
 
 
 @pytest.mark.asyncio
-async def test_governed_project_rejects_off_vocabulary_type(
-    entity_service, govern_project, file_service
+async def test_service_write_records_an_off_vocabulary_type_and_still_writes(
+    entity_service, govern_project, file_service, logged_warnings
 ) -> None:
-    """The agent write path refuses an off-vocabulary type and teaches the set.
+    """EntityService records; it does not refuse. That is now its whole contract.
 
-    ``type: note`` is the entity parser's default, and under a vocabulary it is
-    an off-vocabulary type like any other: there is no ungoverned seventh type.
+    It is the sync path, and its rejecting days ended with GAPS T22: every
+    agent-facing write reaches the accepted-note runner instead. The positive
+    control for the refusal is in
+    ``tests/mcp/test_tool_vocabulary_enforcement.py``, where this same
+    off-vocabulary content over the real agent path is refused outright.
     """
-    govern_project()
-
-    with pytest.raises(VocabularyViolationError) as excinfo:
-        await entity_service.create_entity(
-            EntitySchema(
-                title="Off Vocabulary",
-                directory="notes",
-                note_type="note",
-                content=note_content("Body", **BASE_FRONTMATTER),
-            )
-        )
-
-    message = str(excinfo.value)
-    # The picking question is the part an agent can act on at the moment of
-    # filing; the bare type names alone were what W19 opened over.
-    assert "task (do it)" in message
-    assert "guide (consult it)" in message
-    assert "finding (learned it)" in message
-    assert "inbox" in message
-
-    # A rejection must leave nothing behind on disk: a refused write that still
-    # wrote the file is worse than no rejection at all.
-    assert not list((file_service.base_path / "notes").glob("*.md"))
-
-
-@pytest.mark.asyncio
-async def test_governed_project_rejects_set_once_change_on_update(
-    entity_service, govern_project
-) -> None:
-    """A full replacement may not rewrite a set-once field."""
     govern_project()
 
     created = await entity_service.create_entity(
         EntitySchema(
-            title="Set Once Guide",
+            title="Off Vocabulary",
             directory="notes",
-            note_type="guide",
-            content=note_content("Body", **BASE_FRONTMATTER, **EXTRA_BY_TYPE["guide"]),
+            note_type="note",
+            content=note_content("Body", **BASE_FRONTMATTER),
         )
     )
 
-    with pytest.raises(VocabularyViolationError) as excinfo:
-        await entity_service.update_entity(
-            created,
-            EntitySchema(
-                title="Set Once Guide",
-                directory="notes",
-                note_type="guide",
-                content=note_content("Replaced body", source="human"),
-            ),
-        )
-
-    message = str(excinfo.value)
-    assert "'source' is set once" in message
-    assert "'agent'" in message and "'human'" in message
+    assert created.note_type == "note"
+    assert list((file_service.base_path / "notes").glob("*.md"))
+    assert any("is not in this project's vocabulary" in line for line in logged_warnings)
 
 
 @pytest.mark.asyncio
@@ -260,45 +243,42 @@ async def test_valid_record_of_each_type_writes_cleanly(
 
 
 @pytest.mark.asyncio
-async def test_governed_project_rejects_an_edit_of_an_off_vocabulary_note(
-    entity_service, govern_project
+async def test_sync_path_records_a_set_once_change_and_still_indexes(
+    entity_service, govern_project, logged_warnings
 ) -> None:
-    """An edit builds on frontmatter that must itself be on vocabulary.
+    """A hand edit that rewrites a set-once field is recorded, never refused.
 
-    An edit cannot introduce a set-once violation, but the note it edits may
-    already be off vocabulary from a hand edit. Refusing is the intended answer:
-    MCP ``edit_note`` reaches this path, and leaving it unchecked is exactly the
-    hole a per-hook-point design leaves.
+    §4 says a human editing a file by hand is not an error. `bm doctor` reports
+    what it broke; the index stays complete either way. Refusing here is the
+    accepted-note runner's job, and it does it on the agent path only.
     """
     govern_project()
 
-    file_path = Path("notes/hand-edited.md")
-    await entity_service.file_service.write_file(
-        file_path,
-        note_content(
-            "Body a human typed",
-            title="Hand Edited",
-            type="note",
-            permalink="hand-edited",
-        ),
-    )
-
     now = datetime.now(timezone.utc)
-    markdown = EntityMarkdown(
-        frontmatter=EntityFrontmatter(
-            metadata={"title": "Hand Edited", "type": "note", "permalink": "hand-edited"}
-        ),
-        content="Body a human typed",
-        created=now,
-        modified=now,
-    )
-    # The sync path indexes it without complaint; the agent path then refuses to
-    # build on it.
-    await entity_service.upsert_entity_from_markdown(file_path, markdown, is_new=True)
+    file_path = Path("notes/hand-edited.md")
 
-    with pytest.raises(VocabularyViolationError):
-        await entity_service.edit_entity(
-            identifier="hand-edited",
-            operation="append",
-            content="An agent's addition",
+    def markdown(source: str) -> EntityMarkdown:
+        return EntityMarkdown(
+            frontmatter=EntityFrontmatter(
+                metadata={
+                    "title": "Hand Edited",
+                    "type": "guide",
+                    "id": "tnd-0001",
+                    "permalink": "tnd-0001",
+                    "review-by": "2027-01-01",
+                    "source": source,
+                }
+            ),
+            content="Body a human typed",
+            created=now,
+            modified=now,
         )
+
+    await entity_service.upsert_entity_from_markdown(file_path, markdown("agent"), is_new=True)
+
+    entity = await entity_service.upsert_entity_from_markdown(
+        file_path, markdown("human"), is_new=False
+    )
+
+    assert entity.entity_metadata["source"] == "human"
+    assert any("'source' is set once" in line for line in logged_warnings)
