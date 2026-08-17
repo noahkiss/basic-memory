@@ -1,0 +1,2 @@
+- the sqlite index is rebuilt nightly
+* this line is Markdown, not JSON, and json.loads fails on its first byte

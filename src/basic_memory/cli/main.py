@@ -26,6 +26,7 @@ if not _version_only_invocation(sys.argv[1:]):
         import_memory_json,
         man,
         mcp,
+        mine,
         orphans,
         project,
         status,

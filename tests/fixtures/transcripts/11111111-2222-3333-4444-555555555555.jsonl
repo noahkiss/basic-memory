@@ -1,0 +1,18 @@
+{"type":"user","sessionId":"11111111-2222-3333-4444-555555555555","timestamp":"2026-08-16T09:00:00.100Z","isSidechain":false,"cwd":"/w","message":{"role":"user","content":"we should use sqlite for the index"}}
+{"type":"assistant","sessionId":"11111111-2222-3333-4444-555555555555","timestamp":"2026-08-16T09:00:01.200Z","isSidechain":false,"message":{"role":"assistant","content":[{"type":"text","text":"Agreed, sqlite keeps it local."}]}}
+{"type":"assistant","sessionId":"11111111-2222-3333-4444-555555555555","timestamp":"2026-08-16T09:00:02.000Z","isSidechain":false,"message":{"role":"assistant","content":[{"type":"thinking","thinking":"sqlite avoids a server","signature":"sig"}]}}
+{"type":"assistant","sessionId":"11111111-2222-3333-4444-555555555555","timestamp":"2026-08-16T09:00:03.000Z","isSidechain":false,"message":{"role":"assistant","content":[{"type":"tool_use","id":"tu_1","name":"Write","input":{"file_path":"/w/sqlite.md"},"caller":"main"}]}}
+{"type":"user","sessionId":"11111111-2222-3333-4444-555555555555","timestamp":"2026-08-16T09:00:04.000Z","isSidechain":false,"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu_1","content":"File created successfully at: /w/sqlite.md"}]}}
+{"type":"user","sessionId":"11111111-2222-3333-4444-555555555555","timestamp":"2026-08-16T09:00:05.000Z","isSidechain":false,"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu_2","content":[{"type":"text","text":"sqlite3 3.45.0"}]}]}}
+{"type":"attachment","timestamp":"2026-08-16T09:00:06.000Z","attachment":{"type":"hook_success","hookName":"PostToolUse","command":"check","stdout":"sqlite ok","exitCode":0,"content":"hook says sqlite ok"}}
+{"type":"attachment","timestamp":"2026-08-16T09:00:07.000Z","attachment":{"type":"hook_additional_context","hookName":"PostToolUse","content":[{"type":"text","text":"context mentions sqlite"}]}}
+{"type":"user","sessionId":"11111111-2222-3333-4444-555555555555","timestamp":"2026-08-16T09:00:08.000Z","isSidechain":false,"isMeta":true,"message":{"role":"user","content":"injected sqlite note with no tag"}}
+{"type":"user","sessionId":"11111111-2222-3333-4444-555555555555","timestamp":"2026-08-16T09:00:09.000Z","isSidechain":false,"message":{"role":"user","content":"<command-name>/status</command-name> sqlite"}}
+{"type":"user","sessionId":"11111111-2222-3333-4444-555555555555","timestamp":"2026-08-16T09:00:10.000Z","isSidechain":false,"message":{"role":"user","content":"<local-command-stdout>sqlite build ok</local-command-stdout>"}}
+{"type":"user","sessionId":"11111111-2222-3333-4444-555555555555","timestamp":"2026-08-16T09:00:11.000Z","isSidechain":false,"message":{"role":"user","content":"[Request interrupted by user] sqlite"}}
+
+{"type":"user","sessionId":"11111111-2222-3333-4444-555555555555","timestamp":"2026-08-16T09:00:12.000Z","isSidechain":false,"message":{"role":"user","content":[{"type":"text","text":"keep sqlite, drop the server"}]}}
+{"type":"user","sessionId":"11111111-2222-3333-4444-555555555555","timestamp":"2026-08-16T09:00:13.000Z","isSidechain":false,"message":{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"aQ=="}}]}}
+{"type":"mode","sessionId":"11111111-2222-3333-4444-555555555555","mode":"default"}
+{"type":"file-history-snapshot","sessionId":"11111111-2222-3333-4444-555555555555","snapshot":{"files":[]},"isSnapshotUpdate":false}
+{"type":"assistant","sessionId":"11111111-2222-3333-4444-555555555555","timestamp":"2026-08-16T09:00:14.000Z","isSidechain":false,"message":{"role":"assistant","content":[{"type":"text","text":"Done — sqlite it is."},{"type":"tool_use","id":"tu_3","name":"Read","input":{"file_path":"/w/x"},"caller":"main"}]}}

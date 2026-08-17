@@ -1,6 +1,7 @@
 # CLI Output Contract
 
-**Version 2** — 2026-08-10. This contract governs every `bm` command's output. Version 1 mandated
+**Version 2.1** — rule 6 gained a partial-corpus clause on 2026-08-16 (GAPS O10). Version 2 dates
+from 2026-08-10. This contract governs every `bm` command's output. Version 1 mandated
 a `--json` mode; v2 removes it (GAPS W20, decided 2026-08-06): every consumer of `bm` output is an
 agent, and JSON spends tokens on braces, quotes, and repeated keys to encode structure an agent
 reads from columns just as reliably (measured 2026-08-10 — the v1 envelope for a 5-record search
@@ -34,7 +35,10 @@ change to these rules, recorded here.
    (unknown project, invalid flags) is a failure; a well-scoped request whose answer is "nothing
    there" is a result.
 6. **Errors exit 1**, message on its own line, on stderr. Nothing else is written to stdout on the
-   error path.
+   error path. **One exception — a partial-corpus failure:** a verb that read most of its input and
+   lost a named part of it prints the payload it did get, names each unreadable part on stderr, and
+   still exits 1, because the exit code rather than a missing payload is what says the run failed
+   (GAPS O10).
 7. **`--quiet` drops notices and affordances**, leaving the payload alone. Verbs that emit no
    notices need not offer it.
 

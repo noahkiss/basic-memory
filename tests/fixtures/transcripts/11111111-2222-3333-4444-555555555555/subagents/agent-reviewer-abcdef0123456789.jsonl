@@ -1,0 +1,2 @@
+{"type":"user","sessionId":"11111111-2222-3333-4444-555555555555","timestamp":"2026-08-16T09:10:00.000Z","isSidechain":true,"message":{"role":"user","content":"review the sqlite choice"}}
+{"type":"assistant","sessionId":"11111111-2222-3333-4444-555555555555","timestamp":"2026-08-16T09:10:01.000Z","isSidechain":true,"message":{"role":"assistant","content":[{"type":"text","text":"sqlite looks right to me"}]}}

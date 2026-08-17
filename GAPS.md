@@ -2414,10 +2414,13 @@ inside `locate.py`, reachable by no flag, and hidden files never qualify whateve
 a test reads a hidden `.context-window-*.json` sidecar on purpose and shows it *would* have
 classified as human speech, which is why a blocklist was never an option. (2)/(3) do not arise:
 the reader is pure Python, so there is no `--max-columns` to avoid and no `path:lineno:content`
-string to split. (4) A parse failure raises `TurnParseError` naming the file and line, and the verb
-exits 1 — never a skip. **The premise under (4) does not hold at tree scale**: 12 lines in 464,253
-fail, so three project directories are unmineable rather than degraded. That is **O10**, and the
-decision it needs is the user's.
+string to split. (4) Every parse failure is counted, named with its file and line, and exits the run
+1 — never silent. **The premise under (4) does not hold at tree scale**: 12 lines in 464,728 fail,
+so the first shape of this — aborting the read — left three project directories unmineable rather
+than degraded. That was **O10**, closed the same day: the payload now prints, the damaged lines are
+named on stderr, the exit stays 1, and a torn line gives up only the record that was actually torn.
+`docs/OUTPUT_CONTRACT.md` went to 2.1 to carry the one case where a payload and a non-zero exit
+coexist.
 
 **One classifier defect found by the review and fixed in the same pass:** a thinking block is
 classified by the block, not by the text it yields. Real thinking blocks carry an **empty**
@@ -2446,6 +2449,10 @@ the call has text a caller can search.
   presented as something the assistant said out loud.
 - **Matching is against extracted text, never the raw JSON line**, so a search for `content` or
   `role` cannot return every line in the corpus.
+- **A damaged corpus stays mineable** (added 2026-08-16 with O10). The payload prints, every
+  unreadable line is named on stderr, and the run exits 1. `#L<line>` addresses the physical line,
+  so two turns share a ref on the rare line holding two records — renumbering would make the
+  reference disagree with an editor, which is worse.
 
 **Scoped out, deliberately:** no regex or `--ignore-case` flag (matching is always
 case-insensitive substring); no date range; no `rg` backend; no `bm doctor` check for
@@ -4638,7 +4645,7 @@ a confident wrong answer.
 it is a ~210-line deletion in a file that pass only needed one paragraph of, and bundling it would
 have hidden the permalink work inside a docs strip.
 
-### O10 — one malformed transcript line makes `bm mine` print nothing for a whole directory
+### O10 — one malformed transcript line makes `bm mine` print nothing for a whole directory — **CLOSED 2026-08-16: damage is counted, named, and survivable**
 **Opened 2026-08-16** by the W1 review, which re-ran W1's own corpus survey against the live
 projects tree.
 
@@ -4698,6 +4705,68 @@ change to a recorded decision *and* to the contract's error rule, so it belongs 
 a review pass. Recommended: keep exit 1, still print the payload, and name each bad line in a notice
 — with rule 6 amended to say that a partial-corpus failure is the one case where a payload and a
 nonzero exit coexist.
+
+**DECIDED and SHIPPED 2026-08-16 (campaign orchestrator, not the user — revisit if the contract amendment is unwanted).** The recommendation was taken: `bm mine` prints the
+payload, names every unreadable line, and still exits 1. R-O1 requirement 4 is unchanged in
+substance — *count them, report them, exit nonzero* — and all three still happen. What went is
+aborting the directory, which requirement 4 never asked for.
+
+**This entry's own diagnosis was half wrong, and the fix it implied recovers nothing.** The text
+above calls the signature "two records on one physical line" and reads as clean glue,
+`…}{"parentUuid":`. Checked before writing any code:
+
+```
+raw.count('}{')            -> 0 on all 12 lines
+raw_decode loop from col 1 -> 0 of 12 lines recover any record
+                              every one fails "Expecting ',' delimiter" INSIDE the first record
+window at the failure      -> ..."cwd":"/{"parentUuid":"45149172-...
+```
+
+The first record is **torn** — cut off mid-value — and the next record is concatenated onto the
+wound. Its missing bytes are not in the file, so no parser recovers them. A `raw_decode` loop
+starting at column 1, which is the obvious reading of "parse multi-record lines", therefore returns
+nothing at all on every real case.
+
+**What does work:** on a decode failure, walk forward to the next `{"` whose decode both succeeds
+**and consumes the rest of the line**, and which yields a dict carrying a `type` key. The
+end-of-line test is the load-bearing half — a `{"` nested inside the torn prefix decodes perfectly
+well as a content block and leaves a tail behind it, while the surviving record never does. That
+recovers the intact record on **12 of 12**, reports the torn prefix as lost, and still handles a
+genuinely clean `}{` glue if one ever appears. Bounded at 64 candidate restarts per line so a
+1.2 MB torn line cannot make the scan quadratic.
+
+**Shipped shape.** `read_turns` yields `Turn | BadLine` and never raises; `scan` returns
+`ScanReport(hits, damage)`; the verb prints payload, count, notices and affordances on stdout, then
+one `Error:` line per bad line plus a total on **stderr**, and exits 1. Stderr rather than a stdout
+notice for two reasons: the contract's Streams section already assigns diagnostics there, and
+`--quiet` drops stdout notices — a flag that can hide a corruption report is a flag that will.
+
+**`docs/OUTPUT_CONTRACT.md` is now version 2.1**: rule 6 gained a partial-corpus clause. A verb that
+read most of its input and lost a named part of it prints what it got, names what it lost on stderr,
+and exits 1. The exit code, not the absence of a payload, is what says the run failed.
+
+**Verified.** The shipped reader over the live tree: `files=1920 turns=464905 damage=12
+files_with_damage=10`, against 3 project directories that previously exited 1 with an empty stdout.
+Tests: a bad line still yields the surrounding turns plus one `BadLine`; a torn line reproduced from
+the real shape recovers only the survivor; two cleanly glued records both parse and share the
+physical line number; a bare JSON list is damage, not a turn; the CLI prints the payload and exits 1,
+and `--quiet` cannot suppress it; positive control — a clean corpus reports empty damage and exits 0.
+
+**One consequence, deliberate:** `#L<line>` addresses the physical line, so two turns can share a ref
+when one line holds two records. Renumbering would make a reference disagree with what an editor
+shows, which is worse.
+
+**Two limits of the recovery, found by the re-review and left standing.** Both were reproduced
+against the shipped code; neither occurs in the measured tree, and the damaged line is reported
+either way, so no loss is silent at line granularity:
+
+1. Recovery accepts the record that runs to the **end of the line**, so a line holding a tear
+   followed by *two* intact records keeps the last and drops the middle one, with the line's single
+   damage report covering both. A looser test would mistake a nested content block for a record,
+   which is the worse trade.
+2. The 64-restart cap is a time bound, not a recovery guarantee: a torn prefix containing more than
+   64 `{"` sequences abandons the rest of the line. Reproduced with a synthetic 1.2 MB line; the
+   line is reported as damaged and the scan stays fast (that line parses in under 10 ms).
 
 ## Docs swept
 

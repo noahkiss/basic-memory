@@ -74,12 +74,15 @@ def app_callback(
     # Skip for 'reset' command - it manages its own database lifecycle
     # Skip for 'man' - it only copies packaged files; a broken local database
     # must not block installing the offline docs
+    # Skip for 'mine' - it reads Claude Code transcripts and never touches the
+    # database, so paying for initialization would be the whole cost of the verb
     # ('brief' returns above, before this point.)
     skip_init_commands = {
         "doctor",
         "history",
         "man",
         "mcp",
+        "mine",
         "status",
         "sync",
         "project",
