@@ -587,8 +587,13 @@ async def test_an_off_store_project_writes_and_says_history_is_not_recorded(
 
 
 @pytest.mark.asyncio
-async def test_another_dirty_store_file_surfaces_as_a_notice(write_stack, store_project):
-    """W3-B: report what else is dirty, never weld it into this commit."""
+async def test_another_dirty_store_file_is_left_alone_and_unreported(write_stack, store_project):
+    """W3-B: never weld an outside edit into this commit. GAPS C3: never report it twice.
+
+    The write used to return its own dirty line, which `emit_notices` then said
+    again with a differently scoped count. `emit_notices` is the one home now, so
+    the stack is silent — while still refusing to commit what it did not write.
+    """
     stray = Path(store_project.path, "hand-edited.md")
     stray.write_text("someone else wrote this\n", encoding="utf-8")
 
@@ -601,12 +606,15 @@ async def test_another_dirty_store_file_surfaces_as_a_notice(write_stack, store_
         ),
     )
 
-    assert len(result.notices) == 1
-    assert "1 other file has uncommitted changes" in result.notices[0]
-    assert "bm history dirty" in result.notices[0]
+    assert result.history_sha is not None
+    assert result.notices == ()
     assert f"{store_project.external_id}/hand-edited.md" not in store_git(
         "show", "--name-only", "--format=", "HEAD"
     )
+    # Positive control: the stray file is still there and still uncommitted, so
+    # the silence above is about where the condition is reported, not about it
+    # having gone away.
+    assert stray.read_text(encoding="utf-8") == "someone else wrote this\n"
 
 
 @pytest.mark.asyncio

@@ -27,7 +27,9 @@ from basic_memory.vocabulary.model import (
     load_vocabulary,
     parse_vocabulary,
     terminal_statuses,
+    vocabulary_document,
     vocabulary_path,
+    write_default_vocabulary,
 )
 
 __all__ = [
@@ -48,5 +50,7 @@ __all__ = [
     "load_vocabulary",
     "parse_vocabulary",
     "terminal_statuses",
+    "vocabulary_document",
     "vocabulary_path",
+    "write_default_vocabulary",
 ]

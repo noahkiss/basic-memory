@@ -9,6 +9,14 @@ T2) — and it reaches the indexing layer directly, never through `mcp` or `api`
 `undo` ships flat as `bm undo` (AGENTS.md's verb list) while living in this file,
 next to the two verbs that read the same repository. The documented verb list is
 the contract; the file layout is not.
+
+**`bm undo` carries no per-command notice**, and it is the one verb here that
+does not. `dirty` and `commit` report on the store and end there; undo is a
+mutation whose own output already names `bm history dirty`, and its scope is the
+store repository rather than any project's corpus — so a notice would count
+violations across every project the undo never read (GAPS W5-C). The read verb
+that follows carries it, which is the same rule `bm db reindex` follows
+(`tests/cli/test_notice_guard.py`).
 """
 
 from collections.abc import Sequence
@@ -256,7 +264,6 @@ def undo(
     # result, not a failure.
     if not targets:
         typer.echo("nothing to undo")
-        emit_notices(STORE_SCOPE, quiet=quiet, command="undo")
         if not quiet:
             typer.echo(UNDO_AFFORDANCE)
         return
@@ -317,8 +324,6 @@ def undo(
     if not quiet:
         for line in _undo_notices(result, projects, unowned):
             typer.echo(line)
-    emit_notices(STORE_SCOPE, quiet=quiet, command="undo")
-    if not quiet:
         typer.echo(UNDO_AFFORDANCE)
 
 

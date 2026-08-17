@@ -32,7 +32,8 @@ change to these rules, recorded here.
    names the next command (`Run 'bm reindex' to index them.`). They never interrupt or precede the
    payload. **At most two corpus notices per command**, highest priority first (GAPS W8): more than
    two is a report, and `bm doctor` is the report. A notice never changes the exit code — corpus
-   state is content, not an addressing failure (rule 5).
+   state is content, not an addressing failure (rule 5). One documented exception, below: a verb
+   whose whole payload is a single machine-consumed value carries neither notices nor affordances.
 5. **Empties are results** — a line saying nothing matched (`0 results`, `No drift detected`),
    exit 0. The dividing line is **addressing vs. content**: a request that cannot be scoped
    (unknown project, invalid flags) is a failure; a well-scoped request whose answer is "nothing
@@ -62,5 +63,7 @@ with exit 1 and nothing on stdout. Decided 2026-08-17 (VERBS_PLAN D9); the user 
 
 - **Counts are honest.** A count is printed when known and omitted when not — never a sentinel.
 - **Field values are plain** — dates as ISO-8601, no Python reprs, no Rich markup in values.
-- **Raw content is byte-exact.** A verb whose payload is file content (`read-note`) writes it
-  verbatim — round-tripping is part of the contract.
+- **Raw content is byte-exact.** A verb whose payload is file content (`bm show`, `read-note`)
+  writes it verbatim — round-tripping is part of the contract. Anything derived from that content
+  — `bm show`'s "superseded by" line — follows it as a notice under rule 4, so both rules hold
+  together (VERBS_PLAN D10).

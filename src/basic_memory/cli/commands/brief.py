@@ -33,6 +33,12 @@ item 2, closed 2026-08-17). The trio brief used to carry — `task` / `decision`
 than a generalization. W8's own amendment governs the shape: *sections* derive from the
 vocabulary, *rows* do not. `SECTION_RULES` below is the whole of that per-type judgment,
 and a declared type absent from it contributes nothing at all.
+
+**A broken vocabulary costs one project, not the brief.** A malformed
+`vocabulary.yml` still raises — W4 forbids reading it as "ungoverned" — but the raise is
+caught per project in `read_vocabularies`, so the remaining projects' sections print and
+`--verbose` names the file that failed. Before that, one typo in one project silenced an
+unscoped brief entirely, with nothing on stderr to say which project caused it.
 """
 
 from __future__ import annotations
@@ -153,11 +159,17 @@ class Brief:
     `query` is the search text when `--query` was given, and None otherwise. It
     changes two things: the payload is search hits rather than sections, and an
     empty result is stated rather than silent.
+
+    `skipped` states, one line per project, what the brief could not read. It is
+    stderr material for `--verbose`, never part of the payload: the payload is
+    what is open, and a brief that printed its own faults into the context window
+    would spend the agent's attention on bm's problems.
     """
 
     project: Optional[str]
     sections: tuple[Section, ...] = ()
     query: Optional[str] = None
+    skipped: tuple[str, ...] = ()
 
     @property
     def is_empty(self) -> bool:
@@ -177,6 +189,20 @@ class ProjectRow:
     external_id: str
 
 
+@dataclass(frozen=True, slots=True)
+class VocabularyScan:
+    """The projects a brief can read, the types they declare, and what was skipped.
+
+    `skipped` holds one stated reason per project whose vocabulary is unreadable.
+    It travels to the verb rather than being logged here, because an empty brief
+    and a broken one are otherwise the same output (GAPS W8).
+    """
+
+    projects: tuple[ProjectRow, ...]
+    types: tuple[str, ...]
+    skipped: tuple[str, ...]
+
+
 class UnknownProject(ValueError):
     """A pinned project name that the registry does not hold."""
 
@@ -184,22 +210,43 @@ class UnknownProject(ValueError):
 # --- Query ---
 
 
-def declared_types(projects: Sequence[ProjectRow]) -> tuple[str, ...]:
-    """The union of every in-scope project's declared types, in printed order.
+def read_vocabularies(projects: Sequence[ProjectRow]) -> VocabularyScan:
+    """Read every in-scope project's vocabulary, skipping the ones that are broken.
 
-    Raises `VocabularyError` for a malformed `vocabulary.yml`: an unreadable
-    vocabulary must never degrade into "not governed" (GAPS W4). Brief's own
-    catch-all turns that into silence plus a `--verbose` reason.
+    A malformed `vocabulary.yml` raises `VocabularyError`, and it must: an
+    unreadable vocabulary never degrades into "not governed" (GAPS W4). What it
+    must **not** do is take the other projects with it.
+
+    Trigger: one project's vocabulary file is malformed.
+    Why: an unscoped brief spans every project, and letting the raise reach
+        brief's catch-all silences all of them over one typo in one file — the
+        whole brief goes empty and nothing says which project broke it.
+    Outcome: that project contributes no types and no rows, the rest of the
+        brief is built as usual, and the reason is carried out for `--verbose`.
+        A pinned brief on the broken project is empty either way, which is the
+        same answer with a name attached to it.
     """
     # Deferred: the vocabulary reader pulls PyYAML, which has no business loading
     # at CLI import time.
-    from basic_memory.vocabulary.model import load_vocabulary
+    from basic_memory.vocabulary.model import VocabularyError, load_vocabulary
 
+    readable: list[ProjectRow] = []
+    skipped: list[str] = []
     seen: set[str] = set()
     for project in projects:
-        vocabulary = load_vocabulary(project.external_id)
+        try:
+            vocabulary = load_vocabulary(project.external_id)
+        except VocabularyError as exc:
+            skipped.append(f"skipped '{project.name}': {exc}")
+            continue
+        readable.append(project)
         seen.update(vocabulary.types if vocabulary is not None else UNGOVERNED_TYPES)
-    return tuple(name for name in SECTION_RULES if name in seen)
+
+    return VocabularyScan(
+        projects=tuple(readable),
+        types=tuple(name for name in SECTION_RULES if name in seen),
+        skipped=tuple(skipped),
+    )
 
 
 async def in_scope_projects(session, scope: ReadScope) -> list[ProjectRow]:
@@ -254,11 +301,13 @@ async def query(session_maker, scope: ReadScope, query_text: Optional[str] = Non
 
     async with session_maker() as session:
         projects = await in_scope_projects(session, scope)
-        project_ids = [project.id for project in projects]
 
         # Trigger: --query. Why: a search replaces the sections rather than joining
         # them — the hits are what was asked for, and burying them under four standing
         # sections spends the whole char budget on what nobody asked about.
+        #
+        # A search reads no vocabulary, so it covers every in-scope project even
+        # when one of them has a malformed file. Only the section path degrades.
         if query_text is not None:
             rows = await search_pointers(session, session_maker, projects, query_text)
             heading = f'Matches for "{query_text}"'
@@ -268,8 +317,13 @@ async def query(session_maker, scope: ReadScope, query_text: Optional[str] = Non
                 query=query_text,
             )
 
+        # The vocabulary decides which sections exist, so it is read before the
+        # rows. A project whose file is malformed drops out here and takes only
+        # its own rows with it (GAPS W8 F1).
+        scan = read_vocabularies(projects)
+        project_ids = [project.id for project in scan.projects]
         if not project_ids:
-            return Brief(project=scope.project)
+            return Brief(project=scope.project, skipped=scan.skipped)
 
         def base(note_type: str):
             return (
@@ -289,7 +343,7 @@ async def query(session_maker, scope: ReadScope, query_text: Optional[str] = Non
         today = date.today().isoformat()
 
         sections: list[Section] = []
-        for note_type in declared_types(projects):
+        for note_type in scan.types:
             rule = SECTION_RULES[note_type]
             if rule.rule == "count":
                 total = await session.scalar(
@@ -321,7 +375,7 @@ async def query(session_maker, scope: ReadScope, query_text: Optional[str] = Non
             found = await session.execute(statement)
             sections.append(Section(heading=rule.heading, rows=_rows(found)))
 
-        return Brief(project=scope.project, sections=tuple(sections))
+        return Brief(project=scope.project, sections=tuple(sections), skipped=scan.skipped)
 
 
 async def search_pointers(
@@ -566,6 +620,14 @@ def brief(
             typer.echo("0 results")
         elif verbose:
             typer.echo(f"brief: nothing open — {scope.describe()}", err=True)
+
+        # A project the brief could not read is reported whether or not the rest
+        # of the brief had anything to say: the sections it would have
+        # contributed are missing either way, and only this line says so.
+        if verbose:
+            for reason in result.skipped:
+                typer.echo(f"brief: {reason}", err=True)
+
         # After the payload, never before (contract rule 4). A brief with nothing
         # open still carries the notice: "nothing is open" and "four records are
         # broken" are different facts, and only one of them is good news.

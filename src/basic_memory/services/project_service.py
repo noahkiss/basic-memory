@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Optional, Sequence
 
 
-import yaml
 from loguru import logger
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError as SAOperationalError
@@ -32,86 +31,12 @@ from basic_memory.config import (
     get_project_config,
     ProjectConfig,
 )
-from basic_memory.store.history import HistoryError, commit_paths, store_path
-from basic_memory.store.write_hook import session_id
+from basic_memory.store.history import store_path
 from basic_memory.utils import generate_permalink
-from basic_memory.vocabulary.model import DEFAULT_VOCABULARY, Vocabulary, vocabulary_path
+from basic_memory.vocabulary.model import write_default_vocabulary
 
 if TYPE_CHECKING:  # pragma: no cover
     from basic_memory.services.file_service import FileService
-
-
-def vocabulary_document(vocabulary: Vocabulary) -> dict[str, object]:
-    """The YAML mapping one vocabulary serializes to (`.forked/schema.md` §3).
-
-    Only ``enum`` fields carry ``values``; the parser rejects the key on the
-    other two kinds, so emitting an empty list would produce a file this tree
-    cannot read back.
-    """
-    return {
-        "types": list(vocabulary.types),
-        "statuses": list(vocabulary.statuses),
-        "areas": list(vocabulary.areas),
-        "review_months": vocabulary.review_months,
-        "fields": {
-            name: (
-                {"kind": declared.kind, "values": list(declared.values)}
-                if declared.kind == "enum"
-                else {"kind": declared.kind}
-            )
-            for name, declared in vocabulary.fields.items()
-        },
-    }
-
-
-def write_default_vocabulary(external_id: str) -> Path | None:
-    """Give a project the default vocabulary, and return where it landed.
-
-    **Called only for `bm project add --governed`, and that is a reversal.**
-    D8 originally had `project add` write this unconditionally. It cannot: the
-    default vocabulary declares the six record types, MCP's `write_note` defaults
-    to `type: note`, and the checker rejects a type a project does not declare.
-    Governing by default therefore refused the primary agent write path — 7
-    integration tests and `just doctor` failed on `Type 'note' is not in this
-    project's vocabulary`, and every existing MCP caller in the wild would have
-    failed the same way on its next write. An absent file means ungoverned
-    (GAPS W4), so opt-in restores that meaning instead of overriding it.
-
-    Returns None when the file is already there. A vocabulary is hand-edited
-    (`.forked/schema.md` §3), so overwriting an existing one would discard a
-    human's declarations — and re-adding a project by name must not cost them.
-
-    The natural home for this is `vocabulary/model.py`, which owns the format;
-    it lives here because that module was being edited concurrently when this
-    landed. Moving it is mechanical.
-    """
-    path = vocabulary_path(external_id)
-    if path.exists():
-        return None
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        yaml.safe_dump(vocabulary_document(DEFAULT_VOCABULARY), sort_keys=False),
-        encoding="utf-8",
-    )
-
-    # Committed here, not left for a later write to notice. The file sits in the
-    # store's worktree, so an uncommitted one is reported as somebody else's
-    # dirty work by every note write that follows it, forever (GAPS W3-B).
-    # Trigger: the store repository is unusable — a stale lock, a broken config.
-    # Why: the vocabulary is already on disk and the project is already in the
-    #     registry, so failing the add would leave both behind anyway.
-    # Outcome: log for the operator and keep the project, which is W3-A's rule
-    #     for a create: nothing is lost, so a missing entry costs a warning.
-    try:
-        commit_paths(
-            [f"{external_id}/{path.name}"],
-            f"create {external_id}/{path.name}",
-            actor="cli",
-            session_id=session_id(),
-        )
-    except HistoryError as error:
-        logger.warning(f"Could not record {path} in the note history: {error}")
-    return path
 
 
 class ProjectService:
@@ -229,7 +154,8 @@ class ProjectService:
             governed: Write ``DEFAULT_VOCABULARY`` into the project's store
                 directory, so the checker runs on every write to it (verbs
                 decision D8). **Off by default**, and that default is load-bearing
-                rather than cautious — see ``write_default_vocabulary``.
+                rather than cautious — see ``vocabulary/model.py``'s
+                ``write_default_vocabulary``.
 
         Raises:
             ValueError: If the project already exists or path collides with existing project
@@ -354,7 +280,7 @@ class ProjectService:
 
             # Creating a project is the deliberate human act a vocabulary needs
             # (GAPS W4, verbs decision D8), but asking for one is what makes it
-            # deliberate — see `write_default_vocabulary` for why the default had
+            # deliberate — see `vocabulary/model.py` for why the default had
             # to be reversed. `bm new` never writes one: on an ungoverned project
             # it writes the record unchecked and says so.
             if governed:

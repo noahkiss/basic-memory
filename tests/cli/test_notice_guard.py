@@ -39,6 +39,11 @@ EXEMPT: dict[tuple[str, str], str] = {
     # Rewrites markdown files through an external formatter. It is a file-level
     # mutation over paths the caller named, not a read of a project.
     ("format.py", "format"): "formats named files; it never resolves a project",
+    # `bm undo` restores files in the store repository, across every project it
+    # holds. A notice there would count violations in projects the undo did not
+    # read (W5-C), and its own output already names `bm history dirty`. The next
+    # read verb carries the notice, as it does after `bm db reindex`.
+    ("history.py", "undo"): "a store-scoped mutation; its scope is the repo, not a project",
     # Importers are one-shot writes into one project.
     ("import_chatgpt.py", "import_chatgpt"): "a one-shot import, not a read",
     ("import_claude_conversations.py", "import_claude"): "a one-shot import, not a read",
@@ -49,17 +54,18 @@ EXEMPT: dict[tuple[str, str], str] = {
     # Starts the MCP server. It has no payload to append a line to, and its
     # stdout is a protocol stream.
     ("mcp.py", "mcp"): "a long-running server; its stdout carries the MCP protocol",
-    # TODO (W1 lane): `bm mine` reads Claude Code transcripts, not the corpus, but
-    # it is a project-touching verb by W8's table. The W1 lane owns the file and
-    # decides whether the notice belongs there.
-    ("mine.py", "mine"): "W1 lane owns this file; see the W5 close block",
+    # `bm mine` reads Claude Code transcripts off disk. It opens no database and
+    # resolves no project, so there is no scope for a notice to cover — W8's
+    # table listed it as project-touching before the verb existed.
+    ("mine.py", "mine"): "reads transcripts off disk; it never resolves a project",
     # Project registry mutations. The notice rides on reads.
     ("project.py", "add_project"): "a registry mutation, not a read",
     ("project.py", "remove_project"): "a registry mutation, not a read",
     ("project.py", "set_default_project"): "a registry mutation, not a read",
     ("project.py", "move_project"): "a registry mutation, not a read",
     # `bm path` prints one path and nothing else, for `$EDITOR "$(bm path X)"`.
-    # A notice inside a command substitution lands in the filename.
+    # A notice inside a command substitution lands in the filename
+    # (VERBS_PLAN D9, `docs/OUTPUT_CONTRACT.md`).
     ("records.py", "path"): "prints one path for command substitution; a notice would corrupt it",
     # The MCP tool layer. W20 treats it separately: it is not on the fast path,
     # and the notice's whole cost argument depends on being there.
@@ -153,7 +159,6 @@ def test_the_verbs_the_notice_covers_are_the_ones_w5_named() -> None:
         ("doctor.py", "doctor"),
         ("history.py", "dirty"),
         ("history.py", "commit"),
-        ("history.py", "undo"),
         ("new.py", "new"),
         ("orphans.py", "orphans"),
         ("project.py", "list_projects"),

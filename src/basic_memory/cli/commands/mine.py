@@ -142,15 +142,17 @@ def affordances(term: str) -> list[str]:
     already printed, because `bm` holds no session state and adding some to
     suppress three lines is the wrong trade. `--quiet` is the only condition.
 
-    Every entry names a command that exists today. W19's own illustration used
-    `bm new`, which has not shipped; pointing an agent at a verb that answers
-    "no such command" would teach the surface wrongly, which is the opposite of
-    what an affordance is for.
+    Every entry names a command that exists today, which
+    `tests/cli/test_affordance_guard.py` asserts: a hint that answers "no such
+    command" teaches the surface wrongly, which is the opposite of what an
+    affordance is for. The last line is W19's own illustration, restored to
+    `bm new` now that the verb ships — it stood at `bm tool write-note` only
+    while `bm new` did not exist.
     """
     steps = (
         (f'bm mine "{term}" --context 2', "read the turns around each hit"),
         (f'bm mine "{term}" --speaker all', "include tool results and harness turns"),
-        ("bm tool write-note", "record what you judged worth keeping"),
+        ("bm new finding <title>", "record what you judged worth keeping"),
     )
     width = max(len(command) for command, _ in steps)
     return ["next:", *(f"  {command:<{width + COLUMN_GAP}}{purpose}" for command, purpose in steps)]

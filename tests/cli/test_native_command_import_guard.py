@@ -45,10 +45,15 @@ RECORD_ID = "tnd-guard0001"
 RECORD_FILE = "tasks/tnd-guard0001--seed.md"
 RECORD_BODY = f"---\nid: {RECORD_ID}\ntype: task\n---\n\nseeded for the import guard\n"
 
+# The placeholder a write-verb probe carries where the seeded record's id goes.
+# The id is drawn at random by `bm new`, so it cannot be baked into the table.
+SEEDED = "<seeded>"
+
 # The constants are prepended rather than interpolated: the probe body is full
 # of dict literals, and an f-string would need every brace in it doubled.
 PROBE_SOURCE = (
-    f"RECORD_ID = {RECORD_ID!r}\nRECORD_FILE = {RECORD_FILE!r}\nRECORD_BODY = {RECORD_BODY!r}\n"
+    f"RECORD_ID = {RECORD_ID!r}\nRECORD_FILE = {RECORD_FILE!r}\n"
+    f"RECORD_BODY = {RECORD_BODY!r}\nSEEDED = {SEEDED!r}\n"
 ) + textwrap.dedent(
     """
     import json
@@ -143,6 +148,50 @@ PROBE_SOURCE = (
 
         asyncio.run(seed_one_record())
 
+    if command[0] in ("new", "edit", "done", "mark", "undo"):
+        # A write is recorded in the store's git history only when the project's
+        # files sit in the store's worktree (VERBS_PLAN D3), and the bootstrap
+        # project points at BASIC_MEMORY_HOME, which does not. Move it to the
+        # store-derived home `bm project add` gives every new project, so these
+        # probes run the real path rather than its off-store degradation.
+        import asyncio
+
+        from basic_memory.store.history import store_path
+
+        async def move_project_into_the_store():
+            from basic_memory import db
+            from basic_memory.config import ConfigManager
+            from basic_memory.repository.project_repository import ProjectRepository
+
+            config = ConfigManager().config
+            _, session_maker = await db.get_or_create_db(config.database_path, config=config)
+            try:
+                async with db.scoped_session(session_maker) as session:
+                    repository = ProjectRepository()
+                    project = sorted(await repository.find_all(session), key=lambda r: r.id)[0]
+                    home = store_path() / project.external_id
+                    home.mkdir(parents=True, exist_ok=True)
+                    await repository.update(session, project.id, {"path": str(home)})
+            finally:
+                await db.shutdown_db()
+
+        asyncio.run(move_project_into_the_store())
+
+    if command[0] in ("edit", "done", "mark", "undo"):
+        # `bm new` is the only way to produce what these three change and what
+        # undo reverses, and it is itself a native verb — so seeding through it
+        # adds no import the probe would not otherwise measure.
+        seed_type = "guide" if command[0] == "edit" else "task"
+        created = runner.invoke(
+            app, ["new", seed_type, "Seeded record", "--body", "seeded", "--quiet"]
+        )
+        assert created.exit_code == 0, created.output
+        record_id = created.stdout.strip().splitlines()[0].split()[0]
+        # The id leads the payload row. Asserting its shape here means a stray
+        # line above it fails the probe instead of silently probing a bad id.
+        assert record_id.startswith("tnd-"), created.stdout
+        command = [record_id if part == SEEDED else part for part in command]
+
     if command[0] == "mine":
         # `bm mine` reads transcripts off disk and nothing else, so the guard
         # needs one to read. The path is built here rather than baked into the
@@ -192,6 +241,11 @@ NATIVE_COMMANDS = (
     (["ls", "--quiet"], " records"),
     (["show", RECORD_ID, "--quiet"], "seeded for the import guard"),
     (["path", RECORD_ID], RECORD_FILE),
+    (["new", "task", "Guard record", "--body", "seeded", "--quiet"], "1 record"),
+    (["edit", SEEDED, "--title", "Renamed", "--quiet"], "1 record"),
+    (["mark", SEEDED, "doing", "--quiet"], "1 record"),
+    (["done", SEEDED, "--quiet"], "1 record"),
+    (["undo", "--quiet"], " files restored"),
 )
 
 
@@ -228,7 +282,21 @@ def _probe(tmp_path, banned, command=("project", "list"), tail=" projects"):
 @pytest.mark.parametrize(
     "command,tail",
     NATIVE_COMMANDS,
-    ids=["project-list", "types", "mine", "doctor", "brief", "ls", "show", "path"],
+    ids=[
+        "project-list",
+        "types",
+        "mine",
+        "doctor",
+        "brief",
+        "ls",
+        "show",
+        "path",
+        "new",
+        "edit",
+        "mark",
+        "done",
+        "undo",
+    ],
 )
 def test_native_command_stays_off_api_and_mcp(tmp_path, command, tail):
     """A native command must not import the banned modules — alembic included once warm.

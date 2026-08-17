@@ -155,7 +155,13 @@ def record_note_write(
 
     if result is None:
         return NO_HISTORY
-    return HistoryOutcome(sha=result.sha, notices=dirty_notices(result.dirty_others))
+    # `result.dirty_others` is deliberately dropped here. The per-command notice
+    # (`cli/notices.py`) already reports uncommitted note files and names
+    # `bm history dirty`, so returning a second line said the same thing twice on
+    # every write — with two different counts, because this one is store-wide and
+    # that one follows the verb's scope (GAPS C3). One home, and it is the one
+    # every verb already prints.
+    return HistoryOutcome(sha=result.sha)
 
 
 def commit_message(operation: WriteOperation, store_relative: str) -> str:
@@ -175,29 +181,6 @@ def session_id() -> str | None:
     """
     value = os.environ.get(SESSION_ENV_VAR, "").strip()
     return value or None
-
-
-def dirty_notices(dirty_others: tuple[str, ...]) -> tuple[str, ...]:
-    """Report uncommitted files this commit did not include (GAPS W3-B).
-
-    Reported, never swept in: an uncommitted file may be a human edit, a crashed
-    agent write, or a half-finished import, and welding it into this commit makes
-    `bm undo` revert two unrelated changes at once.
-
-    The count is store-wide, because the repository is: `commit_paths` reads one
-    `git status` over the whole worktree. The notice says so rather than implying
-    one project, since the files may belong to any of them — and since the
-    per-command notice (`cli/notices.py`) reports the *pinned* count, so the two
-    lines can legitimately disagree.
-    """
-    if not dirty_others:
-        return ()
-    count = len(dirty_others)
-    subject = "1 other file has" if count == 1 else f"{count} other files have"
-    return (
-        f"note: {subject} uncommitted changes in the note store "
-        "(not included in this commit)\n  run 'bm history dirty' to review",
-    )
 
 
 def _within_store(paths: Sequence[Path]) -> list[str]:

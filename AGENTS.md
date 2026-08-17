@@ -52,20 +52,26 @@ tree's HEAD; after pulling, re-sync before trusting it.
 Building a local work-tracking system directly into this codebase as first-class `bm`
 subcommands, **not** as a separate wrapper tool.
 
-Planned, in rough dependency order:
+Four capabilities, in rough dependency order. **All four have shipped** — each names the GAPS
+entry that records how, and the constraints below still bind anything that changes them.
 
 1. **A gardener**, which is **not a command** — its jobs are checks inside `bm doctor` (GAPS W2,
    decided 2026-08-05). Strictly lossless: it may flag — it may never summarize, merge, or resolve.
    Flag-only was already the constraint, so a separate `bm gc` would have been a second checking
-   command, i.e. the one nobody runs.
+   command, i.e. the one nobody runs. **Shipped:** `bm doctor`'s two groups, `integrity` and
+   `hygiene`, each selectable with `--only` (GAPS W2, W5 item 5).
 2. **Local git history on writes.** Every mutation commits into a local-only store repo so pruning is
    recoverable. Two traps: set `core.excludesFile` and `core.hooksPath` to `/dev/null` inside that
    repo (a global pre-commit hook will otherwise block automated commits), and never export `GIT_DIR`.
+   **Shipped:** `store/history.py` and `store/write_hook.py`, with `bm history` and `bm undo` over
+   them (GAPS W3, verbs items C and H).
 3. **A closed record vocabulary.** Humans extend the vocabulary; agents may only select from it.
    Upstream's frontmatter vocabulary is fully open and does not enforce this, so enforcement is ours
-   and has to live in the write path.
+   and has to live in the write path. **Shipped:** `vocabulary/`, enforced on the accepted write
+   path and reported by `bm doctor` and the per-command notice (GAPS W4, W5).
 4. **A decision-mining subcommand** over Claude Code transcripts, to recover decisions that were made
-   in conversation and never written down.
+   in conversation and never written down. **Shipped:** `bm mine`, which parses and never judges —
+   an agent reads its output and writes any keeper with `bm new` (GAPS W1).
 
 **The store is the only home for note content.** Every note lives in a single plain git repo at
 **`~/.basic-memory/store/`**, under `store/<id>/` — central and id-keyed, not one repo per project,
@@ -83,13 +89,16 @@ Consequences, all deliberate:
 
 - A project's path is **store-derived** (`store/<id>/`), not user-chosen. A path argument to
   `bm project add` therefore means an *import source*, not the project's home.
-- Existing projects that live at arbitrary paths are migrated by **W6**, the importer.
+- Existing projects that live at arbitrary paths keep working and get one notice on every write:
+  their files are outside the history repo, so nothing records them (verbs decision D3). Moving
+  them is a Claude workflow — W6 closed without an importer.
 - The `git clean -xdfn` hazard recorded in `GAPS.md` W3 cannot arise: nothing of value sits inside
   another repo's worktree.
 
 **Naming:** `tend` is a **codename for the design, not a command.** There is no `tend` binary and no
 `bm tend` namespace — the verbs ship flat under `bm` (`bm ls`, `bm new`, `bm edit`, `bm path`,
-`bm mine`, `bm done`, `bm show`, `bm history`, `bm undo`, `bm mark`, `bm types`). **There is no `bm check`** —
+`bm mine`, `bm done`, `bm show`, `bm history`, `bm undo`, `bm mark`, `bm types`, `bm brief`,
+`bm doctor`, `bm status`, `bm project`). **There is no `bm check`** —
 the schema and integrity checks land inside the existing `bm doctor` (see `GAPS.md` W5), because a
 second checking command would immediately be the one nobody runs.
 
@@ -125,7 +134,8 @@ tool layer.** `basic_memory.mcp.tools` and `basic_memory.api.app` are each secon
 The boundary is structural now, not aspirational: `basic_memory.cli.direct` is the supported way
 for a native command to reach the service layer, and
 `tests/cli/test_native_command_import_guard.py` runs each native verb — `project list`, `types`,
-`mine`, `doctor`, `brief`, `ls`, `show`, `path` — in a subprocess, cold and warm, and fails if
+`mine`, `doctor`, `brief`, `ls`, `show`, `path`, `new`, `edit`, `mark`, `done`, `undo` — in a
+subprocess, cold and warm, and fails if
 `api.app`, `mcp.tools`, `mcp.async_client`, `mcp.clients`, `fastapi`, or `dateparser` ever enter
 `sys.modules`. Model new fast verbs on `fetch_project_list` in `cli/commands/project.py`.
 
@@ -453,11 +463,12 @@ separate `get_client()` + `get_active_project()` pair inside an MCP tool.
 
 - Sync status: `basic-memory status` · corpus check: `basic-memory doctor` (integrity and
   hygiene, `--only <group>`; `--self-test` checks the file ↔ DB loop instead)
-- Projects: `project list` / `project add "name" ~/path` / `project info` / `project check`
+- Projects: `project list` / `project ls` / `project add "name" ~/path` / `project info` /
+  `project default` / `project move` / `project remove`
 - Config: `config list` (effective values, env overrides marked) / `config get <key>` /
   `config set <key> <value>` (validated through the config model) / `config unset <key>`
 - MCP tools from the shell: `basic-memory tool <tool-name>` — e.g.
-  `basic-memory tool continue-conversation --topic="search"`. Note this path imports the MCP tool
+  `basic-memory tool search-notes "sqlite"`. Note this path imports the MCP tool
   layer and costs ~4 s; see the measured baseline above.
 - Importers: `import claude conversations` / `import chatgpt` / `import memory-json` — all strip
   candidates.

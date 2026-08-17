@@ -62,6 +62,39 @@ uv tool install git+https://github.com/noahkiss/basic-memory
 | [Obsidian](#obsidian) | — | Reads/writes the same Markdown directly |
 | Anything MCP | stdio/https | If it speaks MCP, it works |
 
+## Working with records
+
+A record is one note with a type, an id of its own, and a file named after that
+id. `bm` is the short name for `basic-memory`; both run the same commands.
+
+| Command | What it does |
+|---|---|
+| `bm new <type> "<title>"` | Write a record and print its id. A type this project does not declare is filed as an inbox note proposing it. |
+| `bm ls` | List records: id, type, status, title. Filter with `--type`, `--status`, `--area`. |
+| `bm show <id>` | Print a record's file, exactly as it is on disk. |
+| `bm path <id>` | Print a record's file path and nothing else, for `$EDITOR "$(bm path <id>)"`. |
+| `bm edit <id>` | Change a record that is kept current: a guide, profile, state, or inbox note. |
+| `bm mark <id> <status>` | Set a task's status. |
+| `bm done <id>` | Close a task. Exactly `bm mark <id> done`. |
+| `bm types` | Show the types, statuses, and areas this project allows. |
+| `bm brief` | Print what is open, as a session-start orientation (below). |
+| `bm mine "<text>"` | Find where something was said in this project's Claude Code transcripts. |
+| `bm history dirty` | List note files whose changes are not recorded yet. |
+| `bm history commit` | Record note changes that `bm` did not make itself. |
+| `bm undo` | Put the note store back to the content it held before its last change. |
+| `bm doctor` | Check the notes against the index and report what needs a person. |
+| `bm status` | Report what is indexed and what is not. |
+| `bm project list` | List projects. `project add` creates one; `project info` describes one. |
+
+Notes live under `~/.basic-memory/store`, which is a local git repository. Every
+write there is committed, which is what gives `bm undo` something to put back. A
+project you added with a path of its own still works; it keeps no history, and
+says so on each write.
+
+Which project a command uses: `--project`, then the nearest `.bm.yml` above the
+working directory. A read with neither covers every project; a write with neither
+goes to the default project.
+
 ## Session briefings
 
 `bm brief` prints a session-start orientation. Its sections come from each

@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 from basic_memory.store import history
-from basic_memory.store.history import HistoryError, store_path
+from basic_memory.store.history import HistoryError, dirty_paths, store_path
 from basic_memory.store.write_hook import (
     OFF_STORE_NOTICE,
     SESSION_ENV_VAR,
@@ -250,8 +250,14 @@ def test_extra_paths_outside_the_store_are_left_alone(project_dir: Path, tmp_pat
     )
 
 
-def test_other_dirty_files_are_reported_and_not_swept_in(project_dir: Path) -> None:
-    """W3-B: report what else is dirty, never label it and commit it."""
+def test_the_write_hook_leaves_the_dirty_report_to_the_command_notice(project_dir: Path) -> None:
+    """GAPS C3: uncommitted note files are reported once, by `emit_notices`.
+
+    The hook used to return its own dirty line as well, so every write printed
+    the same fact twice with two different counts — this one store-wide, the
+    command notice's scoped to the verb. The file is still left alone: reported
+    elsewhere, never swept into this commit (W3-B).
+    """
     relative = write_note_file(project_dir, "tasks/tnd-abc--ship-it.md", "body\n")
     write_note_file(project_dir, "guides/hand-edited.md", "someone else\n")
 
@@ -259,25 +265,14 @@ def test_other_dirty_files_are_reported_and_not_swept_in(project_dir: Path) -> N
         project_path=str(project_dir), note_path=relative, operation="create", actor="cli"
     )
 
-    assert len(outcome.notices) == 1
-    notice = outcome.notices[0]
-    assert "1 other file has uncommitted changes" in notice
-    assert "bm history dirty" in notice
+    assert outcome.sha is not None
+    assert outcome.notices == ()
     assert git(store_path(), "show", "--name-only", "--format=", "HEAD").strip() == (
         f"{PROJECT_ID}/{relative}"
     )
-
-
-def test_two_dirty_files_are_counted_in_the_plural(project_dir: Path) -> None:
-    relative = write_note_file(project_dir, "tasks/tnd-abc--ship-it.md", "body\n")
-    write_note_file(project_dir, "guides/one.md", "a\n")
-    write_note_file(project_dir, "guides/two.md", "b\n")
-
-    outcome = record_note_write(
-        project_path=str(project_dir), note_path=relative, operation="create", actor="cli"
-    )
-
-    assert "2 other files have uncommitted changes" in outcome.notices[0]
+    # Positive control: the other file really is uncommitted, so the empty notice
+    # tuple above is a decision about where to report it, not an absent condition.
+    assert dirty_paths() == [("??", f"{PROJECT_ID}/guides/hand-edited.md")]
 
 
 # --- W3-A: a create warns, an overwrite refuses ---

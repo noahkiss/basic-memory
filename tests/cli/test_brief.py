@@ -55,6 +55,16 @@ def _govern(
     return path
 
 
+def _break_vocabulary(project) -> Path:
+    """Write a `vocabulary.yml` this tree refuses to read."""
+    from basic_memory.vocabulary.model import vocabulary_path
+
+    path = vocabulary_path(project.external_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("nonsense_key: 1\n", encoding="utf-8")
+    return path
+
+
 async def _make_project(session_maker, name: str):
     from basic_memory.models.project import Project
 
@@ -286,6 +296,87 @@ async def test_unknown_project_raises(session_maker, config_home):
     """
     with pytest.raises(UnknownProject, match="no-such-project"):
         await query(session_maker, _scope("no-such-project"))
+
+
+# --- A broken vocabulary costs one project (GAPS W8 F1) ---
+
+
+@pytest.mark.asyncio
+async def test_a_broken_vocabulary_skips_only_its_own_project(
+    session_maker, test_project, config_home
+):
+    """One unreadable file must not silence an unscoped brief.
+
+    The whole brief used to go empty: `load_vocabulary` raised, brief's catch-all
+    swallowed it, and nothing named the project that caused it.
+    """
+    other = await _make_project(session_maker, "other")
+    _govern(test_project, types="[task]")
+    _break_vocabulary(other)
+    await _make_entity(
+        session_maker, test_project.id, title="Mine", note_type="task", metadata={"status": "open"}
+    )
+    await _make_entity(
+        session_maker, other.id, title="Theirs", note_type="task", metadata={"status": "open"}
+    )
+
+    result = await query(session_maker, _scope(None))
+
+    assert _titles(result, "task") == ["Mine"]
+    assert len(result.skipped) == 1
+    assert "other" in result.skipped[0]
+    assert "nonsense_key" in result.skipped[0]
+
+
+@pytest.mark.asyncio
+async def test_a_readable_second_project_is_the_positive_control(
+    session_maker, test_project, config_home
+):
+    """Without this, the row above could be missing for any reason at all."""
+    other = await _make_project(session_maker, "other")
+    _govern(test_project, types="[task]")
+    _govern(other, types="[task]")
+    await _make_entity(
+        session_maker, test_project.id, title="Mine", note_type="task", metadata={"status": "open"}
+    )
+    await _make_entity(
+        session_maker, other.id, title="Theirs", note_type="task", metadata={"status": "open"}
+    )
+
+    result = await query(session_maker, _scope(None))
+
+    assert sorted(_titles(result, "task")) == ["Mine", "Theirs"]
+    assert result.skipped == ()
+
+
+@pytest.mark.asyncio
+async def test_a_pinned_broken_project_is_empty_and_states_why(
+    session_maker, test_project, config_home
+):
+    """Pinned, the brief is empty either way — the reason is what is new."""
+    _break_vocabulary(test_project)
+    await _make_entity(
+        session_maker, test_project.id, title="Mine", note_type="task", metadata={"status": "open"}
+    )
+
+    result = await query(session_maker, _scope(test_project.name))
+
+    assert result.sections == ()
+    assert len(result.skipped) == 1
+    assert test_project.name in result.skipped[0]
+
+
+@pytest.mark.asyncio
+async def test_a_broken_vocabulary_does_not_stop_a_query_search(
+    session_maker, test_project, config_home
+):
+    """`--query` reads no vocabulary, so a broken file cannot narrow its scope."""
+    _break_vocabulary(test_project)
+
+    result = await query(session_maker, _scope(None), "anything")
+
+    assert result.query == "anything"
+    assert result.skipped == ()
 
 
 @pytest.mark.asyncio
@@ -608,4 +699,37 @@ def test_brief_query_with_no_hits_states_the_result(monkeypatch, capsys):
 
     captured = capsys.readouterr()
     assert captured.out.strip() == "0 results"
+    assert captured.err == ""
+
+
+def test_brief_verbose_names_a_project_it_could_not_read(monkeypatch, capsys):
+    """W8 F1: the payload prints, and stderr says which project is missing from it."""
+    filled = _brief(
+        Section("Open tasks", (Row("Ship it", "notes/ship-it", "p"),)),
+    )
+    degraded = Brief(
+        project=filled.project,
+        sections=filled.sections,
+        skipped=("skipped 'other': vocabulary.yml: unknown key(s) 'nope'",),
+    )
+
+    _run_brief(monkeypatch, _scope(None), degraded, verbose=True)
+
+    captured = capsys.readouterr()
+    assert "Ship it" in captured.out
+    assert "skipped 'other'" in captured.err
+
+
+def test_brief_stays_quiet_about_a_skipped_project_without_verbose(monkeypatch, capsys):
+    """The skip is a diagnostic, so it never reaches the context window uninvited."""
+    degraded = Brief(
+        project=None,
+        sections=(Section("Open tasks", (Row("Ship it", "notes/ship-it", "p"),)),),
+        skipped=("skipped 'other': vocabulary.yml: unknown key(s) 'nope'",),
+    )
+
+    _run_brief(monkeypatch, _scope(None), degraded, verbose=False)
+
+    captured = capsys.readouterr()
+    assert "Ship it" in captured.out
     assert captured.err == ""

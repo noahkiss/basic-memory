@@ -19,8 +19,10 @@ from types import MappingProxyType
 from typing import Any, Literal, NoReturn
 
 import yaml
+from loguru import logger
 
-from basic_memory.store.history import store_path
+from basic_memory.store.history import HistoryError, commit_paths, store_path
+from basic_memory.store.write_hook import session_id
 
 VOCABULARY_FILENAME = "vocabulary.yml"
 
@@ -66,9 +68,9 @@ class Vocabulary:
     fields: Mapping[str, DeclaredField] = field(default_factory=lambda: MappingProxyType({}))
 
 
-# What `bm new` WRITES into a project's first vocabulary file — explicitly NOT
-# what an absent file means. An absent file means the project is not governed and
-# the checker never runs (GAPS W4, decided 2026-08-10).
+# What `bm project add --governed` WRITES into a project's first vocabulary file
+# — explicitly NOT what an absent file means. An absent file means the project is
+# not governed and the checker never runs (GAPS W4, decided 2026-08-10).
 DEFAULT_VOCABULARY = Vocabulary(
     types=("task", "guide", "finding", "profile", "state", "inbox"),
     statuses=("open", "doing", "blocked", "done", "dropped"),
@@ -164,6 +166,78 @@ def parse_vocabulary(raw: Mapping[str, Any], *, source: Path | str) -> Vocabular
         review_months=_review_months(raw, source),
         fields=_parse_fields(raw.get("fields", {}), source),
     )
+
+
+# --- Writing ---
+
+
+def vocabulary_document(vocabulary: Vocabulary) -> dict[str, object]:
+    """The YAML mapping one vocabulary serializes to (`.forked/schema.md` §3).
+
+    Only ``enum`` fields carry ``values``; the parser rejects the key on the
+    other two kinds, so emitting an empty list would produce a file this tree
+    cannot read back.
+    """
+    return {
+        "types": list(vocabulary.types),
+        "statuses": list(vocabulary.statuses),
+        "areas": list(vocabulary.areas),
+        "review_months": vocabulary.review_months,
+        "fields": {
+            name: (
+                {"kind": declared.kind, "values": list(declared.values)}
+                if declared.kind == "enum"
+                else {"kind": declared.kind}
+            )
+            for name, declared in vocabulary.fields.items()
+        },
+    }
+
+
+def write_default_vocabulary(external_id: str) -> Path | None:
+    """Give a project the default vocabulary, and return where it landed.
+
+    **Called only for `bm project add --governed`, and that is a reversal.**
+    D8 originally had `project add` write this unconditionally. It cannot: the
+    default vocabulary declares the six record types, MCP's `write_note` defaults
+    to `type: note`, and the checker rejects a type a project does not declare.
+    Governing by default therefore refused the primary agent write path — 7
+    integration tests and `just doctor` failed on `Type 'note' is not in this
+    project's vocabulary`, and every existing MCP caller in the wild would have
+    failed the same way on its next write. An absent file means ungoverned
+    (GAPS W4), so opt-in restores that meaning instead of overriding it.
+
+    Returns None when the file is already there. A vocabulary is hand-edited
+    (`.forked/schema.md` §3), so overwriting an existing one would discard a
+    human's declarations — and re-adding a project by name must not cost them.
+    """
+    path = vocabulary_path(external_id)
+    if path.exists():
+        return None
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        yaml.safe_dump(vocabulary_document(DEFAULT_VOCABULARY), sort_keys=False),
+        encoding="utf-8",
+    )
+
+    # Committed here, not left for a later write to notice. The file sits in the
+    # store's worktree, so an uncommitted one is reported as somebody else's
+    # dirty work by every note write that follows it, forever (GAPS W3-B).
+    # Trigger: the store repository is unusable — a stale lock, a broken config.
+    # Why: the vocabulary is already on disk and the project is already in the
+    #     registry, so failing the add would leave both behind anyway.
+    # Outcome: log for the operator and keep the project, which is W3-A's rule
+    #     for a create: nothing is lost, so a missing entry costs a warning.
+    try:
+        commit_paths(
+            [f"{external_id}/{path.name}"],
+            f"create {external_id}/{path.name}",
+            actor="cli",
+            session_id=session_id(),
+        )
+    except HistoryError as error:
+        logger.warning(f"Could not record {path} in the note history: {error}")
+    return path
 
 
 # --- Parsing helpers ---

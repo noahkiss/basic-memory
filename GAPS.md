@@ -3112,6 +3112,64 @@ current.
 Started 2026-08-17. The eight verbs (`bm new`, `edit`, `done`, `mark`, `ls`, `show`, `path`,
 `undo`) plus the mechanisms they are the first callers of. One entry per item as it lands.
 
+#### Verbs phase — CLOSED 2026-08-17
+
+Every planned item shipped. What landed, in commit order:
+
+| Item | What shipped | Commit |
+|---|---|---|
+| 0 | T30: native verbs stop importing the MCP client graph; `cli/runner.py` | `49de1a95` |
+| B, G | record ids, `bm ls`, `bm show`, `bm path` | `ef609f22` |
+| A | the local note write stack; T29 advisories persist | `4d004c87` |
+| I | W8 items 1+2: `bm brief` derives its sections, gains `--query` | `e82fcdf8` |
+| C, D | W3's write-path hookup and W9's headline file | `1aae1e7d` |
+| H | `bm undo` restores the last `bm` commit as a new commit and reindexes | `6d2a19f7` |
+| E, F, C2 | `bm new`, `bm edit`, `bm done`, `bm mark`; `project add` creates the store path | `7f756176` |
+| J | affordances, notice wiring, the two guards, C3, brief F1, docs | this commit |
+
+Closed along the way: **T29**, **T30**, **W3**'s hookup, **W8** (both items), **W9**, **W19 item
+5**, **E1**, **C3**. Left open on purpose: **E2** (below) and **T28**.
+
+#### Decisions taken by the campaign orchestrator, for the user to confirm or reverse
+
+`AGENTS.md`'s stop-list makes new-verb semantics the user's call. The plan brought back D1–D12 with
+a recommendation each; the orchestrator accepted every recommendation so the phase could run, and
+three further decisions were taken mid-build. **None of these needs to stand.** Each names where
+the code is, so reversing one is a change, not an archaeology exercise.
+
+| # | Decision as shipped |
+|---|---|
+| D1 | Record ids are `tnd-` + 8 chars from `[a-z0-9]`, drawn with `secrets.choice`, retried against the permalink column up to 5 times, then a loud failure. Never a counter (`vocabulary/ids.py`). |
+| D2 | Files land at `<type-dir>/<id>--<slug>.md`, plural type directories, slug lowercased and cut to 60 chars. |
+| D3 | Note files must be in the store for the history to see them: `bm project add` homes a new project at `store/<external_id>/`, and a project living elsewhere keeps working with one notice per write. |
+| D4 | `bm undo` restores the newest `bm` commit's paths and records that as a **new** commit — never a reset. `--session <id>` walks every commit with that trailer, newest first, and more than one commit needs `--yes`. |
+| D5 | `bm mark <id> <status>` sets `status`, on a `task`, and nothing else. `bm done` is `bm mark <id> done`. |
+| D6 | The W9 headline file is `store/<external_id>/headline.md`, three lines, rewritten only when its bytes change. |
+| D7 | `--source` is optional and defaults to the literal `cli`. |
+| D8 | **Reversed mid-build.** `bm project add --governed` writes `DEFAULT_VOCABULARY`; plain `add` leaves the project ungoverned. Governing by default refused MCP's `write_note` (`type: note`) and broke 7 integration tests and `just doctor` — see item C2 above for the measurement. |
+| D9 | `bm path` prints one absolute path: no count line, no notices, no affordances, no `--quiet`. Documented as the one exception in `docs/OUTPUT_CONTRACT.md`. |
+| D10 | `bm show` prints the file's bytes verbatim; a supersession is a notice after the payload, dropped by `--quiet`. |
+| D11 | Body input is `--body <text>`, `--body -` for stdin, or `$EDITOR` when a terminal is attached. No interactive prompts. |
+| D12 | `bm edit` accepts `guide`, `profile`, `state`, `inbox`. A `task` is pointed at `bm done`/`bm mark`, a `finding` at `bm new --supersedes`. |
+
+Four more, taken while building:
+
+- **The nested-path check is skipped for a store-derived path** (item C2). Two store-derived
+  projects are siblings and cannot nest, and the rule otherwise refused every one of them whenever
+  a user project sat above the data directory.
+- **`bm mine` keeps the O10 partial-corpus shape**: it prints the turns it could read, names every
+  unreadable line on stderr, and still exits 1 (`docs/OUTPUT_CONTRACT.md` rule 6).
+- **A malformed `vocabulary.yml` degrades one project, not the brief** (item J, W8 F1 below). The
+  raise still happens — W4 forbids reading a broken file as "ungoverned" — but it is caught per
+  project, and `--verbose` names the file.
+- **A write no longer names dirty files at the moment of its commit** (item C3 below, whose own
+  recommendation this reverses). `emit_notices` is the single home for that condition, so the
+  count a verb prints is scoped to the project it wrote to rather than to the whole store.
+
+One decision was taken and then narrowed by the code: **`bm edit` does not yet edit a `profile`'s
+declared fields**, which `.forked/schema.md` §11 Q6 said it would. Title and body only. Filed as
+V-J1 below.
+
 **Item A — the local write stack. Landed 2026-08-17.**
 `src/basic_memory/index/local_write_stack.py`:
 `build_local_note_write_stack(config, session_maker) -> LocalNoteWriteStack`, with
@@ -3450,6 +3508,128 @@ rejects a `type` that is not in `vocabulary.types` (`checker.py:162-164`). A hum
 a hard rejection — the one case the hatch exists to prevent. `DEFAULT_VOCABULARY` declares `inbox`,
 so this is unreachable until someone edits the file. Recommended answer: `bm new` states it in the
 rejection rather than the tree forbidding the edit — the vocabulary is the human's to shape.
+
+**Item J — affordances, guards, and the phase's docs. Landed 2026-08-17.**
+The last item. It owns no verb of its own; it closes the ones the phase left half-wired.
+
+- **Affordances.** Every block already matched VERBS_PLAN §5's table, so the work was the
+  guarantee, not the wording: `tests/cli/test_affordance_guard.py` resolves every `bm <verb>` in
+  every affordance block *and* every notice line against the shipped click app, and a second test
+  asserts the checked set is the declared set. See the W19 item 5 close block.
+- **The notice guard** gains two exemptions with their reasons. `bm undo` no longer calls
+  `emit_notices`: it is a store-scoped mutation, its own output already names `bm history dirty`,
+  and a notice there would count violations across every project the undo did not read (W5-C). It
+  follows `bm db reindex`'s rule — the next read verb carries the notice. `bm mine`'s exemption
+  lost its "the W1 lane owns this file" placeholder and states the real reason: it reads
+  transcripts off disk and resolves no project.
+- **The import guard** covers `new`, `edit`, `mark`, `done` and `undo` (**H3**). Each probe moves
+  the bootstrap project into `store/<external_id>/` first, so the write runs D3's real path rather
+  than its off-store degradation, and seeds through `bm new` — itself a native verb, so seeding
+  adds no import the probe would not otherwise measure. `undo` is the widest surface any native
+  verb has: it reverses its own seed commit and reindexes what it restored.
+- **`write_default_vocabulary` moved** from `services/project_service.py` to
+  `vocabulary/model.py`, which owns the format. It landed in the service only because this module
+  was being edited concurrently.
+- **Docs:** `README.md` gains a verb table; `AGENTS.md`'s four numbered capabilities are marked
+  shipped and its flat verb list matches what exists; `docs/OUTPUT_CONTRACT.md` cross-references
+  the path-verb exception from rule 4 and states `bm show`'s shape; `.forked/schema.md` §11 Q6 is
+  marked built, with the one narrowing (V-J1).
+
+**Not done, deliberately:** item A's note says `direct_note_writer()` should move from
+`index/local_write_stack.py` to `cli/direct.py` in this item. It stays where it is. The move is
+cosmetic — every verb imports it by name and the import guard already proves the boundary holds —
+and J's own subject is the guards, so shifting a write-path symbol under them in the same pass
+would weaken the evidence they produce. Whoever next edits `cli/direct.py` can carry it.
+
+Tests: `tests/cli/test_affordance_guard.py` (4, new), 6 added to `tests/cli/test_brief.py` (31 →
+37) for W8 F1, 1 removed net from `tests/store/test_write_hook.py` (17 → 16) for C3, and 5 new
+parametrized cases in the import guard (`new`, `edit`, `mark`, `done`, `undo`).
+
+**Item C3 — the double dirty-file notice. CLOSED 2026-08-17. The recommendation above was
+reversed.**
+The entry recommended keeping the write hook's line and having `emit_notices` drop `dirty` when a
+history notice had already printed. The reverse shipped: **`emit_notices` is the one home**, and
+`record_note_write` returns nothing about `dirty_others` (`store/write_hook.py`).
+
+Three reasons, in order of weight:
+
+1. The hook's count is **store-wide and cannot be anything else** — `commit_paths` reads one
+   `git status` over the whole worktree. W5-C's whole point is that a pinned verb reports its own
+   project, and `emit_notices` already does exactly that through `dirty_count(prefix)`.
+2. `emit_notices` carries the cap, the priority order and `--quiet`; the hook's line sat outside
+   all three, so a write could print three notices where W8 allows two.
+3. Suppression in `emit_notices` would have meant the notice layer inspecting what the payload
+   said — the coupling the notice module was written to avoid.
+
+What is lost: a write no longer names the dirty file *at the moment of the commit*. The condition
+is still reported by the same command, one line lower, with a scoped count and
+`run 'bm history dirty'` beside it. `bm history commit` keeps its own `dirty_others` line, because
+there the fact being stated is "this sweep excluded these", which is about that commit rather than
+about the corpus.
+
+Test: `tests/store/test_write_hook.py::test_the_write_hook_leaves_the_dirty_report_to_the_command_notice`
+asserts the empty notice tuple with `dirty_paths()` as its positive control — the other file really
+is uncommitted, so the silence is a decision about where to report it rather than an absent
+condition.
+
+**Item W8 F1 — one malformed `vocabulary.yml` silenced the whole brief. Found and CLOSED
+2026-08-17 (item J).**
+`declared_types` loaded every in-scope project's vocabulary in one loop, so a `VocabularyError` from
+any one of them reached `bm brief`'s catch-all and the brief went empty — every project's sections
+gone, nothing on stdout, and `--verbose` naming only the exception. On an unscoped brief that is
+one typo in one project silencing the session primer for all of them.
+
+Reproduction, before the fix, with two projects registered:
+
+```
+$ printf 'nonsense_key: 1\n' > ~/.basic-memory/store/<other-eid>/vocabulary.yml
+$ bm brief --verbose
+brief: VocabularyError: …/vocabulary.yml: unknown key(s) 'nonsense_key'; allowed keys are …
+$ echo $?
+0
+```
+
+Fixed in `cli/commands/brief.py`: `read_vocabularies` catches per project and returns a
+`VocabularyScan` of the readable projects, their union of types, and one stated reason per skipped
+project. `Brief.skipped` carries the reasons out, and `--verbose` prints them on stderr. The raise
+itself is untouched — W4 forbids degrading a broken file into "ungoverned", and a skipped project
+contributes no rows either way. `--query` is unaffected: a search reads no vocabulary.
+
+Tests: 4 at the query layer (including the readable-second-project positive control and the pinned
+case) and 2 at the verb, in `tests/cli/test_brief.py`.
+
+**Item V-J1 — `bm edit` does not edit a `profile`'s declared fields. Found 2026-08-17; open.**
+`.forked/schema.md` §11 Q6 promised `bm edit` would replace *"title/body (plus declared fields on a
+`profile`)"*. What shipped moves the title and the body only (`cli/commands/record_write.py`), so a
+declared field on a profile — a project's own `vocabulary.yml` extension — can be set at creation
+and never changed except by hand. Hand-editing is exactly what D12 exists to keep off the routine
+path. Not urgent: no project in this tree declares fields yet. Recommended answer: `bm edit
+--set <field>=<value>`, validated against the project's declared kinds, refusing every `_SET_ONCE`
+field with the checker's existing message.
+
+**Item V-J2 — one malformed `vocabulary.yml` silences the per-command notice for every verb. Found
+2026-08-17; open.**
+The same shape as W8 F1, one layer down and not fixed with it. `gather_notice_counts`
+(`cli/notices.py`) calls `direct_revalidate_vocabulary(scope.project)`, which walks **every**
+project when the scope is unscoped and raises `VocabularyError` on the first broken file.
+`emit_notices` catches everything by design — a notice must never fail a command — so the outcome
+is that *no verb prints any notice at all* while one project's file is malformed, with only a
+`logger.warning` in the log file to say so. Every W5-B guarantee is off for the whole registry
+because of one typo.
+
+Reproduction:
+
+```
+$ printf 'nonsense_key: 1\n' > ~/.basic-memory/store/<any-eid>/vocabulary.yml
+$ bm ls            # violations, review-due and inbox counts all absent, exit 0
+```
+
+Positive control: remove the file and the same command prints the notice again.
+
+Not fixed here because the fix is a decision, not a patch: either revalidation degrades per project
+the way `read_vocabularies` now does, or the notice gains a line of its own naming the unreadable
+file. Recommended answer: **both** — skip the broken project's counts, and say which file is
+broken, because a silently reduced count is the failure W5-B exists to prevent.
 
 ### W5 — the remaining schema-validation rules, inside `bm doctor` — **CLOSED 2026-08-16: all six items shipped; never a `bm check` command**
 **Rewritten 2026-08-03.** Two things were wrong with this entry, one naming and one substantive.
@@ -4129,6 +4309,10 @@ Judgment calls taken, all reversible:
 - **`--days` is removed.** It existed only to bound the `session` section, and `session` is not a
   type in W4's vocabulary. A flag that no longer bounds anything is worse than no flag.
 
+**Amended 2026-08-17 (verbs item J): a broken vocabulary costs one project, not the brief.** The
+first build read every in-scope project's vocabulary in one loop, so one malformed file silenced an
+unscoped brief entirely. Recorded and closed as **W8 F1** in the verbs build log above.
+
 **Note — the `beans prime` comparison figures in this entry are no longer reproducible.** Probed
 2026-08-06 on the installed build: `beans prime` prints nothing and exits 0 outside a beans project,
 and `beans prime --help` shows `-h` plus two global flags, contradicting this entry's *"shows no
@@ -4505,7 +4689,7 @@ worth its own look someday. Tests replay O3's fixture inverted: the frontmatter-
 (`record_id: zq7-…`) is now reachable by plain FTS next to the body-string positive control, plus
 an absent-token negative control. `--meta`/`--filter` unchanged as the exact-match path.
 
-### W19 — the user-facing vocabulary is jargon, starting with the record type names
+### W19 — the user-facing vocabulary is jargon, starting with the record type names — **CLOSED 2026-08-17: item 5 ships on every verb; items 1–4 shipped earlier**
 **Opened 2026-08-04 (user).** Reviewing the `.forked/schema.md` type set, the user could not state
 the difference between two proposed types from their names alone: *"I honestly don't know the
 difference between procedure and finding."* That is the correct reading — the names describe the
@@ -4597,6 +4781,33 @@ item specifies — fixed per verb, no conditions, no ordering logic, no memory, 
 affordance points at `bm tool write-note` instead. An affordance exists to teach the surface at the
 moment the agent is standing in it; naming a verb that answers *no such command* teaches it wrongly.
 Swap it back when `bm new` lands.
+
+**Item 5 CLOSED 2026-08-17 (verbs item J).** Every verb that ends in something an agent can act on
+now carries a static affordance line, in the shape this item specifies — fixed per verb, no
+conditions, no ordering logic, no memory, dropped only by `--quiet`:
+
+```
+bm new   → bm show <id> read it back · bm ls list what is here · bm done <id> close a task
+bm ls    → bm show <id> read the full entry · bm new record something worth finding again
+bm show  → bm edit <id> change it · bm path <id> print its file path
+bm edit  → bm show <id> read it back · bm history dirty see uncommitted changes
+bm done  → bm ls --status open what is still open · bm new record what you learned
+bm mark  → (the same line as done — one status change is like another)
+bm undo  → bm history dirty see what is uncommitted · bm show <id> read the restored entry
+bm mine  → bm mine … --context 2 · bm mine … --speaker all · bm new finding <title>
+bm doctor→ bm types see what this project allows · bm doctor --only hygiene
+```
+
+**The illustration is swapped back**, as this item asked: `bm mine`'s third line names `bm new`
+now that the verb exists. `bm path` carries none — its whole payload is one machine-consumed value
+(`docs/OUTPUT_CONTRACT.md`, "Path verbs").
+
+The guarantee is a test, not a convention: `tests/cli/test_affordance_guard.py` walks every
+affordance block *and* every per-command notice line, resolves each `bm <verb>` against the click
+app the CLI actually ships — sub-commands included — and fails on anything unrunnable. A second
+test asserts that the set of blocks it checks is the set the tree declares, so a new verb cannot
+ship an unchecked block beside it. That pairing is what makes the correction above impossible to
+re-introduce: the earlier illustration was wrong for months and nothing could have caught it.
 
 **Item 4 does not go inside `bm brief`.** W8 caps brief at ~50 tokens of pointer rows,
 unconditionally, every session; per-type explanations would burn that budget on every start for a
@@ -5664,6 +5875,13 @@ the record schema or the work plan were deliberately left where they are — tho
 `.forked/campaign.md`):** T11 → W20 → W3 → W4 + picoschema strip + W19 → W5 → W8 → W9 → W1.
 W19 items 2–4 are a binding acceptance condition on W4, not a follow-up — W4 is not done
 without them.
+
+**That order is fully walked as of 2026-08-17**, and the verbs phase after it is closed — see
+*Verbs phase — CLOSED 2026-08-17* under W4 for what shipped, and the decisions list beside it for
+the twelve product decisions the orchestrator took on the user's behalf. What is open after it:
+**T24**, **T28**, **T31** (all three are dead-surface or index-drift entries, none of them
+blocking), plus the verbs phase's own **E2**, **V-J1** and **V-J2**. Every BLOCKER is closed.
+There is no agreed order for what remains; the next phase picks one.
 
 | | |
 |---|---|
