@@ -252,8 +252,14 @@ def test_doctor_project_flag_pins_one_project(stub_report):
     assert calls[0]["project_names"] == ("alpha",)
 
 
-def test_doctor_marker_pins_its_project(stub_report, tmp_path, monkeypatch):
-    """A `.bm.yml` above the working directory scopes the report to its project."""
+def test_doctor_marker_pins_its_project(stub_report, tmp_path, monkeypatch, write_registry_file):
+    """A `.bm.yml` above the working directory scopes the report to its project.
+
+    The registry file is real because `resolve_read_scope` checks that the name
+    a marker carries is registered — an unregistered marker raises rather than
+    widening to every project (GAPS W5-C).
+    """
+    write_registry_file({"marked": str(tmp_path)}, default="marked")
     (tmp_path / ".bm.yml").write_text("project: marked\n", encoding="utf-8")
     working = tmp_path / "src" / "deep"
     working.mkdir(parents=True)

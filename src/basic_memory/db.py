@@ -436,6 +436,17 @@ async def get_or_create_db(
     return _engine, _session_maker
 
 
+def has_active_engine() -> bool:
+    """True when a module-level engine is already open.
+
+    A CLI verb that opens its own engine must dispose of it, and a verb that
+    borrows one someone else opened must not: disposing a caller's engine kills
+    an in-memory database outright and leaves a file-backed one bound to a loop
+    that is about to close. Callers ask this before deciding (GAPS W5 item 6).
+    """
+    return _engine is not None
+
+
 async def shutdown_db() -> None:  # pragma: no cover
     """Clean up database connections."""
     global _engine, _session_maker

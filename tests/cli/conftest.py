@@ -37,6 +37,27 @@ def isolated_home(tmp_path, monkeypatch) -> Path:
     return tmp_path
 
 
+@pytest.fixture(autouse=True)
+def silent_notices(monkeypatch) -> None:
+    """Answer the per-command notice with an empty corpus (GAPS W5-B).
+
+    Every project-touching verb now ends by counting what is outstanding, which
+    opens a database. Left real, each CLI test would pay a migration for a line
+    it is not testing, and any test asserting on the last output line would break
+    the moment the count is non-zero.
+
+    ``tests/cli/test_notices.py`` overrides this where the notice *is* the
+    subject, and its gather tests call the real function by name, so they are not
+    affected by this patch on the module attribute.
+    """
+    from basic_memory.cli import notices
+
+    async def no_counts(scope) -> notices.NoticeCounts:
+        return notices.NoticeCounts()
+
+    monkeypatch.setattr(notices, "gather_notice_counts", no_counts)
+
+
 @pytest.fixture
 def bootstrapped_registry(isolated_home) -> None:
     """Run the real first-run bootstrap against this test's data dir.

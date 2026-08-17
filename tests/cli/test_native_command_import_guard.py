@@ -86,9 +86,16 @@ PROBE_SOURCE = textwrap.dedent(
 
     result = runner.invoke(app, command)
     assert result.exit_code == 0, result.output
-    # The count line closes every record listing, so its presence proves the
-    # command rendered a payload rather than exiting early on a swallowed error.
-    assert result.stdout.strip().splitlines()[-1].endswith(tail), result.stdout
+    if tail:
+        # The count line closes every record listing, so its presence proves the
+        # command rendered a payload rather than exiting early on a swallowed error.
+        assert result.stdout.strip().splitlines()[-1].endswith(tail), result.stdout
+    else:
+        # `bm brief` prints nothing when nothing is open, and it swallows every
+        # failure to keep a session start alive, so there is no payload to match.
+        # An empty stdout is the assertion: anything printed here would be a
+        # traceback or a notice, and the import question is answered either way.
+        assert result.stdout.strip() == "", result.stdout
 
     print(json.dumps([name for name in banned if name in sys.modules]))
     """
@@ -98,12 +105,16 @@ PROBE_SOURCE = textwrap.dedent(
 # line — the assertion that proves the command rendered rather than exiting
 # early. `types`, `mine` and `doctor` run --quiet so the count line is last, not
 # the affordance. `doctor` checks a corpus with nothing in it, so its last line
-# is the hygiene section's empty-result line rather than a count.
+# is the hygiene section's empty-result line rather than a count. `brief` has an
+# empty tail because it prints nothing on an empty corpus by design — it is the
+# most latency-sensitive verb in the tree, so it is guarded despite carrying no
+# payload to match against.
 NATIVE_COMMANDS = (
     (["project", "list"], " projects"),
     (["types", "--quiet"], " types"),
     (["mine", "sqlite", "--quiet"], " turns"),
     (["doctor", "--quiet"], "No issues"),
+    (["brief"], ""),
 )
 
 
@@ -138,7 +149,7 @@ def _probe(tmp_path, banned, command=("project", "list"), tail=" projects"):
 
 
 @pytest.mark.parametrize(
-    "command,tail", NATIVE_COMMANDS, ids=["project-list", "types", "mine", "doctor"]
+    "command,tail", NATIVE_COMMANDS, ids=["project-list", "types", "mine", "doctor", "brief"]
 )
 def test_native_command_stays_off_api_and_mcp(tmp_path, command, tail):
     """A native command must not import the banned modules — alembic included once warm.

@@ -1,7 +1,8 @@
 # CLI Output Contract
 
-**Version 2.1** — rule 6 gained a partial-corpus clause on 2026-08-16 (GAPS O10). Version 2 dates
-from 2026-08-10. This contract governs every `bm` command's output. Version 1 mandated
+**Version 2.1** — rule 6 gained a partial-corpus clause on 2026-08-16 (GAPS O10). `bm path`'s
+exception was documented on 2026-08-17; it adds a verb, not a rule change, so the version holds.
+Version 2 dates from 2026-08-10. This contract governs every `bm` command's output. Version 1 mandated
 a `--json` mode; v2 removes it (GAPS W20, decided 2026-08-06): every consumer of `bm` output is an
 agent, and JSON spends tokens on braces, quotes, and repeated keys to encode structure an agent
 reads from columns just as reliably (measured 2026-08-10 — the v1 envelope for a 5-record search
@@ -29,7 +30,9 @@ change to these rules, recorded here.
 4. **Notices, then affordances, after the payload**, each on its own line, on stdout. A notice
    states a condition (`3 files not indexed — invisible to search until reindex`); an affordance
    names the next command (`Run 'bm reindex' to index them.`). They never interrupt or precede the
-   payload.
+   payload. **At most two corpus notices per command**, highest priority first (GAPS W8): more than
+   two is a report, and `bm doctor` is the report. A notice never changes the exit code — corpus
+   state is content, not an addressing failure (rule 5).
 5. **Empties are results** — a line saying nothing matched (`0 results`, `No drift detected`),
    exit 0. The dividing line is **addressing vs. content**: a request that cannot be scoped
    (unknown project, invalid flags) is a failure; a well-scoped request whose answer is "nothing
@@ -41,6 +44,19 @@ change to these rules, recorded here.
    (GAPS O10).
 7. **`--quiet` drops notices and affordances**, leaving the payload alone. Verbs that emit no
    notices need not offer it.
+
+## Path verbs — the one documented exception to rules 3, 4, and 7
+
+**`bm path <id>` prints one absolute path and nothing else.** No count line, no notices, no
+affordances, and therefore no `--quiet` to turn them off.
+
+The reason is the verb's only use: `$EDITOR "$(bm path tnd-q8w3e1r5)"`. A command substitution
+takes every line of stdout, so a count line or a next-step hint would be passed to the editor as a
+file name. A verb whose output is an argument cannot carry commentary.
+
+This exception belongs to **verbs whose whole payload is a single machine-consumed value**, and
+`bm path` is the only one today. It does not widen rule 6: a failure is still one line on stderr
+with exit 1 and nothing on stdout. Decided 2026-08-17 (VERBS_PLAN D9); the user may revisit.
 
 ## Content rules (carried from v1)
 

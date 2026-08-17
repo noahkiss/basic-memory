@@ -11,6 +11,7 @@ from basic_memory.store import history
 from basic_memory.store.history import (
     HistoryError,
     commit_paths,
+    dirty_count,
     dirty_paths,
     ensure_store_repo,
     store_path,
@@ -200,6 +201,25 @@ def test_dirty_paths_lists_untracked_and_modified(data_dir: Path) -> None:
 
 def test_dirty_paths_on_a_fresh_store_is_empty(data_dir: Path) -> None:
     assert dirty_paths() == []
+
+
+def test_dirty_count_leaves_an_absent_store_absent(data_dir: Path) -> None:
+    """The per-command notice must not create the repository it reports on."""
+    assert dirty_count() == 0
+    assert not (store_path() / ".git").exists()
+
+
+def test_dirty_count_narrows_to_one_project_s_store_directory(data_dir: Path) -> None:
+    """A pinned scope must not be handed another project's uncommitted work."""
+    store = ensure_store_repo()
+    write(store, "alpha/one.md", "one\n")
+    write(store, "alpha/two.md", "two\n")
+    write(store, "beta/three.md", "three\n")
+
+    assert dirty_count() == 3
+    assert dirty_count("alpha") == 2
+    # Positive control: the prefix is a directory, not a string prefix.
+    assert dirty_count("alph") == 0
 
 
 def test_sweep_commit_takes_everything_dirty_without_an_actor(data_dir: Path) -> None:

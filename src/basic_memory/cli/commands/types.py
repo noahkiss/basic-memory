@@ -13,6 +13,11 @@ Two sources meet here, and keeping them apart is the whole point of the verb:
 An ungoverned project — one with no ``vocabulary.yml`` — is a *result*, not an
 error (output contract rule 5): say so plainly and exit 0.
 
+Scope follows GAPS W5-C: ``--project`` > nearest ``.bm.yml`` > every project,
+one section each. The registry default retired from this read path — a
+vocabulary report that silently covered one of five projects would teach an
+agent the wrong rules for the four it did not mention.
+
 Imports stay narrow: the verb needs a project's ``external_id``, so it pays for
 the database, but nothing here may pull the API, the MCP tool layer, fastapi, or
 dateparser onto its path (AGENTS.md, "Measured baseline";
@@ -27,8 +32,10 @@ import typer
 
 from basic_memory.cli.app import app
 from basic_memory.cli.commands.command_utils import run_with_cleanup
-from basic_memory.cli.direct import direct_project_ref
-from basic_memory.project_marker import MarkerError, resolve_cli_project
+from basic_memory.cli.direct import direct_project_refs
+from basic_memory.cli.notices import emit_notices
+from basic_memory.cli.scope import resolve_read_scope
+from basic_memory.project_marker import MarkerError
 from basic_memory.vocabulary.glossary import (
     field_meaning,
     picking_question,
@@ -131,9 +138,17 @@ def render_declared_fields(vocabulary: Vocabulary) -> list[str]:
     return lines
 
 
-def render(project_name: str, vocabulary: Vocabulary) -> str:
-    """Render the whole report: type sections, then the rest of the vocabulary."""
-    sections: list[list[str]] = [[f"Record types for project '{project_name}'."]]
+def render(project_name: str, vocabulary: Vocabulary, path_note: str = "") -> str:
+    """Render the whole report: type sections, then the rest of the vocabulary.
+
+    ``path_note`` names the file the section came from. A pinned run leaves it
+    empty and carries the path in its closing affordance instead; a roll-up puts
+    it in each heading, because one trailing line cannot name five files.
+    """
+    heading = f"Record types for project '{project_name}'."
+    if path_note:
+        heading = f"Record types for project '{project_name}' ({path_note})."
+    sections: list[list[str]] = [[heading]]
     sections.extend(render_type(name) for name in vocabulary.types)
 
     field_meanings = render_field_meanings(vocabulary.types)
@@ -166,7 +181,7 @@ def types(
         typer.Option(
             "--project",
             "-p",
-            help="Project to read. Defaults to .bm.yml, then the default project.",
+            help="Project to read. Defaults to .bm.yml, then every project.",
         ),
     ] = None,
     quiet: Annotated[
@@ -174,25 +189,24 @@ def types(
         typer.Option("--quiet", help="Hide the next-step hints."),
     ] = False,
 ) -> None:
-    """Explain the record types this project allows, and the fields each one carries.
+    """Explain the record types each project allows, and the fields each one carries.
 
-    Read from the project's own vocabulary file, so a type a human added shows
-    up here and a type they removed does not.
+    Read from each project's own vocabulary file, so a type a human added shows
+    up here and a type they removed does not. Reports every project unless
+    `--project` or a `.bm.yml` above the working directory pins one.
     """
     # Deferred: the vocabulary reader pulls PyYAML, which has no business on the
     # path of a command that does not read a vocabulary file.
     from basic_memory.vocabulary.model import load_vocabulary, vocabulary_path
 
     try:
-        project_name = resolve_cli_project(project)
+        scope = resolve_read_scope(project)
     except MarkerError as exc:
         raise fail(f"Error: {exc}")
 
     try:
-        # A None name here means the chain found no default; the direct helper
-        # asks the registry again after bootstrapping it.
-        ref = run_with_cleanup(direct_project_ref(project_name))
-        vocabulary = load_vocabulary(ref.external_id)
+        refs = run_with_cleanup(direct_project_refs(scope.project))
+        vocabularies = [(ref, load_vocabulary(ref.external_id)) for ref in refs]
     except typer.Exit:
         raise
     # ValueError covers both addressing failures here: an unknown project name,
@@ -201,19 +215,43 @@ def types(
     except ValueError as exc:
         raise fail(f"Error: {exc}")
 
-    path = vocabulary_path(ref.external_id)
-
-    # Trigger: the project has no vocabulary.yml.
-    # Why: an absent file means "not governed", never "use the defaults" (GAPS
-    #     W4, decided 2026-08-10). Printing the default six here would teach an
-    #     agent a vocabulary that nothing enforces.
-    # Outcome: say so, name the file that would change it, exit 0.
-    if vocabulary is None:
-        typer.echo(f"Project '{ref.name}' declares no record vocabulary.")
-        if not quiet:
-            typer.echo(f"Create {path} to declare one.")
+    # Trigger: an unscoped run against an empty registry.
+    # Why: contract rule 5 — a well-scoped request whose answer is "nothing there"
+    #      is a result, not a failure.
+    # Outcome: state it and exit 0.
+    if not refs:
+        typer.echo("no projects registered")
+        emit_notices(scope, quiet=quiet, command="types")
         return
 
-    typer.echo(render(ref.name, vocabulary))
+    # A pinned run prints exactly what it always did, closing with the one path a
+    # reader would edit. A roll-up cannot name five files in one trailing line, so
+    # each section carries its own path in the heading instead (contract rule 4:
+    # the payload holds the facts, the affordance holds the next step).
+    pinned = scope.project is not None
+    for position, (ref, vocabulary) in enumerate(vocabularies):
+        if position:
+            typer.echo("")
+        path = vocabulary_path(ref.external_id)
+        # Trigger: the project has no vocabulary.yml.
+        # Why: an absent file means "not governed", never "use the defaults" (GAPS
+        #     W4, decided 2026-08-10). Printing the default six here would teach an
+        #     agent a vocabulary that nothing enforces.
+        # Outcome: say so and move on; the file to create is named below.
+        if vocabulary is None:
+            note = f" ({path})" if not pinned else ""
+            typer.echo(f"Project '{ref.name}' declares no record vocabulary{note}.")
+            continue
+        typer.echo(render(ref.name, vocabulary, "" if pinned else str(path)))
+
     if not quiet:
-        typer.echo(f"\nEdit {path} to add a type, status, area, or field.")
+        if pinned and vocabularies[0][1] is None:
+            typer.echo(f"Create {vocabulary_path(refs[0].external_id)} to declare one.")
+        elif pinned:
+            typer.echo(
+                f"\nEdit {vocabulary_path(refs[0].external_id)} "
+                "to add a type, status, area, or field."
+            )
+        else:
+            typer.echo("\nEdit a project's vocabulary.yml to add a type, status, area, or field.")
+    emit_notices(scope, quiet=quiet, command="types")

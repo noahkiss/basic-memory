@@ -161,6 +161,28 @@ def dirty_paths() -> list[tuple[str, str]]:
     return _porcelain(ensure_store_repo())
 
 
+def dirty_count(path_prefix: str | None = None) -> int:
+    """Count uncommitted store changes without creating the repository.
+
+    ``dirty_paths`` goes through ``ensure_store_repo``, which initializes the
+    store and rewrites its config. That is right before a write and wrong on a
+    read: the per-command notice (GAPS W5-B) runs on every project-touching
+    verb, and a report must not create the thing it reports on. An absent repo
+    is therefore zero dirty files, not an error.
+
+    ``path_prefix`` narrows the count to one project's store directory, so a
+    pinned scope is not handed another project's uncommitted work (GAPS W5-C).
+    """
+    store = store_path()
+    if not (store / ".git").is_dir():
+        return 0
+
+    entries = _porcelain(store)
+    if path_prefix is None:
+        return len(entries)
+    return sum(1 for _, path in entries if path.startswith(f"{path_prefix}/"))
+
+
 def sweep_commit(message: str, paths: Sequence[str] | None = None) -> CommitResult | None:
     """Commit ``paths``, or everything dirty when ``paths`` is None.
 

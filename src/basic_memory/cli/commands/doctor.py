@@ -33,7 +33,9 @@ import typer
 from basic_memory.cli.app import app
 from basic_memory.cli.commands.command_utils import run_with_cleanup
 from basic_memory.cli.direct import STALE_STATE_DAYS, direct_doctor_report
-from basic_memory.project_marker import MarkerError, find_marker, read_marker_project
+from basic_memory.cli.notices import emit_notices
+from basic_memory.cli.scope import resolve_read_scope
+from basic_memory.project_marker import MarkerError
 
 if TYPE_CHECKING:  # pragma: no cover
     from basic_memory.cli.direct import ProjectDoctorReport
@@ -63,31 +65,6 @@ def fail(message: str) -> typer.Exit:
     """
     typer.echo(message, err=True)
     return typer.Exit(1)
-
-
-# --- Scope ---
-
-
-def resolve_report_projects(explicit: str | None) -> tuple[str, ...] | None:
-    """Resolve which projects to report on. ``None`` means every project.
-
-    This is GAPS W5-C's table, implemented locally until the shared
-    `cli/scope.py` lands: an explicit flag wins, a `.bm.yml` marker pins the
-    project it names, and an unmarked directory is unscoped. The registry
-    default is deliberately not a fallback here — reads are unscoped, and a
-    report about a project the caller never named is the failure W5-C removes.
-
-    Raises MarkerError for a marker that exists but cannot be read.
-    """
-    if explicit:
-        return (explicit,)
-
-    marker = find_marker(Path.cwd())
-    if marker is not None:
-        name = read_marker_project(marker)
-        if name:
-            return (name,)
-    return None
 
 
 # --- Render ---
@@ -438,9 +415,10 @@ def doctor(
     groups = GROUPS if only is None else (only,)
 
     try:
-        project_names = resolve_report_projects(project)
+        scope = resolve_read_scope(project, Path.cwd())
     except MarkerError as exc:
         raise fail(f"Error: {exc}")
+    project_names = None if scope.project is None else (scope.project,)
 
     try:
         reports = run_with_cleanup(
@@ -458,5 +436,11 @@ def doctor(
     typer.echo(render(reports, groups))
     # Violations are corpus state, not command failure: doctor reports them and
     # exits 0, so a script over an imperfect corpus keeps working (GAPS W5-B).
+    #
+    # The call is here, and it prints nothing, on purpose. `doctor` is the one
+    # command the notice suppresses — it has just printed every row the notice
+    # would summarize — and stating that at the call site is what keeps the
+    # guard in `tests/cli/test_notice_guard.py` honest about which verbs carry it.
+    emit_notices(scope, quiet=quiet, command="doctor")
     if not quiet:
         typer.echo(f"\n{render_affordances()}")

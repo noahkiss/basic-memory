@@ -1861,7 +1861,7 @@ routine move manufactures its main finding.
   asserts the check is clean *before* the move, and the accepted test hand-edits the mirror through
   raw SQL and asserts drift is still reported.
 
-### T29 — an advisory raised by an agent write is logged and then lost forever
+### T29 — an advisory raised by an agent write is logged and then lost forever — **CLOSED 2026-08-17: the accepted create/update/edit sites persist what they accept**
 
 **Opened 2026-08-16** while wiring W5 item 3. W5's mechanism A now persists a violation from the
 two paths that *record*: the sync/index path and the move planner. The agent write path does not
@@ -1909,6 +1909,33 @@ was explicitly "persists nothing". That is right about *rejections* and wrong ab
 which is why this is filed rather than folded in.
 
 **Blocks:** W5 item 5's hygiene section, which is otherwise honest only about hand-edited files.
+
+**Close block, 2026-08-17.** `enforce_accepted_note_vocabulary` now returns `list[Violation]`, and
+the three accepted write sites persist what it returns through
+`persist_accepted_note_violations` → `ViolationRepository.replace_for_entity`, on the mutation's
+own session. The create site persists after `create_accepted_pending_entity` returns, because the
+rows are keyed by the entity id and that call is what produces it; update and edit persist right
+after the check, where the entity already exists. A rejection still persists nothing: the funnel
+raises before any of that, and the whole mutation rolls back with it.
+
+Judgment calls:
+
+- **The move site returns its advisories and does not store them.** A move parses no relations, so
+  its answer is partial, and a full replace would erase the relation-derived rows a real write
+  recorded. `index/local_moves.py` already handles that case with `preserve_rules`, and a DB-first
+  move rewrites at most the permalink, which is an error rather than an advisory.
+- **The replace runs unconditionally, including on an ungoverned project**, where it clears rather
+  than records. One DELETE per accepted write is cheap, and re-reading `vocabulary.yml` to learn
+  there is nothing to delete would not be. The sync path skips instead, because it pays that read
+  per file across a whole corpus. Same shape as `index/local_moves.py`, for the same reason.
+- **An empty answer clears.** The rows are derived state: a record that now checks clean must stop
+  being reported, which is the same rule W5 item 3 gave `EntityService`.
+
+Tests: `tests/index/test_local_write_stack.py` covers the advisory landing as a row, the positive
+control that an error still rejects and stores nothing, a later clean write clearing the earlier
+rows, and an edit persisting what the edited note still carries. The pre-existing
+`test_a_refused_write_persists_no_violation` (`tests/mcp/`) is unchanged and still passes — a
+rejection was never the part that was wrong.
 
 ### T30 — every native command pays the MCP client graph through `run_with_cleanup`'s module
 
@@ -2511,6 +2538,10 @@ which kind of problem it has before asking.
 - **`AGENTS.md` no longer advertises `bm gc`.** Both lists were already correct by the time this
   landed; the one surviving mention is the sentence explaining why the command does *not* exist,
   which is the record, not an advertisement.
+- **The test case this entry turned on now runs.** W5-B's notice shipped 2026-08-16 with W5 item
+  6b: an agent that never asks is told `N records past review-by — run 'bm doctor --only hygiene'`
+  on any project-touching command. The eleven findings that expired last month are no longer in a
+  command nobody mentioned.
 
 ### W3 — local git history on the write path — **SHIPPED 2026-08-10 (mechanism + verbs; W5's write path wires into it)**
 Every mutation commits into a local-only store repo so pruning is recoverable. Two traps: set
@@ -2920,7 +2951,48 @@ understand at the moment of filing relocates the misfiling rather than preventin
 type table, per-type sections, the vocabulary example, and §4's mutability count ("four") are
 current.
 
-### W5 — the remaining schema-validation rules, inside `bm doctor` — **NOT a `bm check` command**
+### Verbs phase — build log
+
+Started 2026-08-17. The eight verbs (`bm new`, `edit`, `done`, `mark`, `ls`, `show`, `path`,
+`undo`) plus the mechanisms they are the first callers of. One entry per item as it lands.
+
+**Item A — the local write stack. Landed 2026-08-17.**
+`src/basic_memory/index/local_write_stack.py`:
+`build_local_note_write_stack(config, session_maker) -> LocalNoteWriteStack`, with
+`write_note` / `update_note` / `edit_note`. It re-wires what `deps/services.py:305-345,461-480`
+wires — `AcceptedNoteRepositories`, `LocalAcceptedNotePreparerFactory`, the move policy from
+config, `verify_storage_absent_on_create=True`, `LocalCurrentNoteContentFreshener`,
+`ProjectRepository`, `LocalNoteContentMaterializationProvider` — without importing
+`basic_memory.deps`, which is a FastAPI composition root.
+
+Three things a verb author must not undo:
+
+- **Both calls, in order.** The mutation runner writes rows and returns a *plan*; the materializer
+  writes the file and indexes it. A caller that makes only the first leaves the T12 shape: a note
+  in the database with nothing on disk. Every entry point here makes both, and
+  `local_note_write_result` refuses a write whose `file_write_status` says the file never landed,
+  rather than reporting success.
+- **The followups are awaited, not scheduled.** The router schedules relation resolution and vector
+  sync onto the event loop; a CLI process exits when the verb returns, so a scheduled task never
+  runs. Relation resolution runs inline through `RepositoryRelationResolutionRuntime`; vector sync
+  runs inline only when `semantic_search_enabled`, matching the router's condition.
+- **Per-project pieces are built per call.** The file service and repositories need the project
+  row's id and path, so nothing is composed until the project resolves. A verb writes one note per
+  invocation, so there is nothing to amortize by caching.
+
+`direct_note_writer()` lives in this module rather than `cli/direct.py` only because that file was
+being edited concurrently; moving it is mechanical and belongs to item J.
+
+Tests: `tests/index/test_local_write_stack.py`, 10 tests, no mocks — create/update/edit each land
+on disk *and* answer a search; a forward reference resolves before the write returns; a vocabulary
+rejection leaves no file and no row; an unknown project is a failure, not an empty result. The
+import guard runs in a subprocess, not in-process: pytest imports every test module into one
+interpreter and several of them import fastapi, so an in-process `sys.modules` assertion would
+report imports this module never made.
+
+Also closed here: **T29** (advisories from an accepted write now persist).
+
+### W5 — the remaining schema-validation rules, inside `bm doctor` — **CLOSED 2026-08-16: all six items shipped; never a `bm check` command**
 **Rewritten 2026-08-03.** Two things were wrong with this entry, one naming and one substantive.
 
 **Naming.** It was titled `bm tend check`. There is no such verb and there will not be one:
@@ -3226,6 +3298,80 @@ report) and item 6's notice half are still owed, and the notice is what mechanis
 - **`bm tool search-notes` is left alone, deliberately.** It is the MCP path, not the fast path,
   and W20 already treats it separately. Restated from the plan so the omission is not read as an
   oversight.
+
+**CLOSED 2026-08-16 — item 6b shipped: the notice. W5 is done.** Mechanism B is live: every
+project-touching verb ends by stating what is outstanding, so an agent that never runs `bm doctor`
+still learns that it should.
+
+- **`cli/notices.py` is the whole of B.** `emit_notices(scope, quiet=, command=)` prints, after the
+  payload on stdout, at most two lines in W8's order: violations → expired `review-by` → the inbox
+  pile → dirty store files. `--quiet` drops it and returns before the query; `bm doctor` suppresses
+  it by name, because it is about to print every row the notice summarizes.
+- **It revalidates before it counts.** The gather calls `direct_revalidate_vocabulary` for the
+  projects in scope first, so a vocabulary edit changes the count on the very next command rather
+  than at the next index pass — nothing on the index path would look again, because no note
+  changed. This also closes item 5's open worry that doctor's rows go stale after a vocabulary edit:
+  doctor resolves scope through the same `cli/scope.py` now, and any read verb run in the same
+  session has already refreshed the rows.
+- **Warm cost, stated:** one SQLite connection, one `stat` + `sha256` per in-scope `vocabulary.yml`
+  (a string compare when nothing changed), three indexed counts, and — only when fewer than two
+  higher-priority conditions fired — one `git status --porcelain`. No MCP or API import is on the
+  path; `bm brief` joined `NATIVE_COMMANDS` in the import guard, which is what proves it.
+- **The verbs covered**: `brief`, `status`, `doctor` (suppressed), `types`, `orphans`,
+  `project list`, `project ls`, `project info`, `history dirty`, `history commit`.
+  `tests/cli/test_notice_guard.py` walks `cli/commands/` as an AST and fails on a command that
+  neither calls the notice nor is exempt with a stated reason, plus asserts the covered set by name
+  so a silent drop-plus-exempt cannot pass.
+- **`bm orphans` rolls up and `bm types` prints one section per project**, closing the last two
+  read verbs still on the write chain (raised by the 6a review). A pinned run of either is
+  byte-identical to what it printed before; only a roll-up labels its sections, because only a
+  roll-up has something to disambiguate. `bm types` puts each project's `vocabulary.yml` path in
+  its section heading when unscoped — one trailing affordance line cannot name five files.
+- **Judgment call — the count is violation rows, not distinct records, while the line says
+  "records".** `COUNT(DISTINCT entity_id)` would make the noun exact but would stop the top
+  reason's number summing into the headline, which reads as a bug in the line itself. The headline
+  and the reason are counted the same way on purpose.
+- **Judgment call — `count_by_reason` now groups by project as well as rule and field.** W5-C
+  requires the unscoped top reason to name its project, and a project-blind `GROUP BY` cannot
+  answer that. `ViolationReason` gained `project_id`.
+- **Judgment call — the two cross-project hygiene counts are functions, not methods.**
+  `EntityRepository` is pinned to one project by construction. Widening its constructor to accept
+  `None` would leave every other query on the class silently unscoped, so
+  `count_review_due_records` and `count_inbox_records` take their scope as an argument at module
+  level in `repository/entity_repository.py`.
+- **Judgment call — `store.history` gained `dirty_count`, which does not create the repository.**
+  `dirty_paths` goes through `ensure_store_repo`, which initializes the store and rewrites its
+  config. That is right before a write and wrong on a read: a report must not create the thing it
+  reports on. An absent store is zero dirty files.
+- **Judgment call — the notice swallows its own failures.** The payload has already printed and
+  the command has already succeeded, so a locked database or an unreadable vocabulary logs a
+  warning and prints nothing rather than becoming the run's exit code. It is a *warning*, not a
+  debug line, because the CLI configures loguru at INFO: at DEBUG the swallow would be silent, and
+  a broken database would turn every command into a success with no trace anywhere. This is the one
+  broad `except` the house rules would otherwise forbid, and W5-B's "never changes an exit code" is
+  why it is here.
+- **Judgment call — a verb passes the scope it actually read.** `bm project list` lists every
+  project, so its notice is unscoped without a marker walk; `bm project ls --name X` is pinned by
+  its own flag. Re-deriving a scope the payload did not use would be the cross-project leak W5-C
+  exists to prevent.
+- **W8's third row pointed at `bm ls --type inbox`, which did not exist when this shipped.** The
+  inbox notice points at `bm doctor --only hygiene`, which lists the same pile. Naming a verb that
+  answers "no such command" teaches the surface wrongly (W19 item 5's own correction). **Swap the
+  pointer back the day `bm ls` lands** — it is one string in `cli/notices.py`.
+- **Two of W8's six conditions are not built, and `cli/notices.py` says why in code**: "nothing read
+  yet this session" needs per-session memory that W5-B's no-throttle rule rules out, and "unmined
+  sessions" needs `bm mine` to record what it mined, which it does not.
+- **`db.has_active_engine()` is new, and it is load-bearing.** A verb that opened its own engine
+  must dispose of it; a verb that borrowed one must not, because disposing a borrowed in-memory
+  engine destroys the database. `bm brief` and the notice both ask before they clean up.
+- **TODO for the W1 lane: `bm mine` is exempt in the notice guard and should probably not be.** It
+  is a project-touching verb by W8's table but reads Claude Code transcripts rather than the corpus.
+  The exemption states the reason and names this block; the W1 lane owns the file and the decision.
+- **What is left, and where it went.** The verbs phase (`bm new`, `bm edit`, `bm ls`, `bm show`,
+  `bm done`, `bm mark`) is next and is not W5's — see the plan's judgment call 1. W8 still owes its
+  items 1 and 2 (a pointer-shaped search mode; sections derived from the vocabulary). **T29** (an
+  advisory raised by an agent write is logged and then lost) and **T30** (every native command pays
+  the MCP client graph through `run_with_cleanup`'s module) are both open and both untouched here.
 
 ### W6 — an idempotent, resumable importer — **CLOSED 2026-08-05 (user): no importer ships; it is a Claude workflow**
 The corpus is written by other sessions while a migration runs. Measured over twenty minutes in a
@@ -4130,6 +4276,84 @@ answered: the contract must be recovered from the code (task 2), not from existi
 
 **Recoverable, not lost:** `git show <sha>:docs/character-handling.md` still resolves. Read history
 freely; the deletion was deliberate and only the *record* of what it removed was missing.
+
+---
+
+## VERBS PHASE — the record verbs, item by item
+
+The build plan is `.forked/`-adjacent and lives in the campaign scratchpad, not here; this section
+is the ledger entry for each item as it lands. The phase ships `bm new`, `bm edit`, `bm done`,
+`bm mark`, `bm ls`, `bm show`, `bm path`, and `bm undo` (AGENTS.md's verb list), plus the
+mechanisms they are the first callers of.
+
+### V-B — record ids, slugs, and file paths — **SHIPPED 2026-08-17**
+
+`src/basic_memory/vocabulary/ids.py`. Pure functions: `new_record_id()`, `is_record_id()`,
+`allocate_record_id(predicate)`, `record_slug(title)`, `type_dir(type)`, `record_file_path()`.
+No database, no config, no vocabulary file — the fast CLI path imports it.
+
+**Decisions recorded, both accepted 2026-08-17 by the campaign orchestrator per VERBS_PLAN D1 and
+D2; the user may revisit:**
+
+- **D1 — id scheme.** `tnd-` + 8 characters from `abcdefghijklmnopqrstuvwxyz0123456789`, drawn with
+  `secrets.choice` (36^8 ≈ 2.8e12). Collision handling is a caller-supplied predicate, retried 5
+  times, then a loud `IdAllocationError` — a second collision at that size means the check is
+  wrong, not that the draw was unlucky. Never a counter: `tnd-NNNN` needs a per-project allocator
+  and two machines on separate branches allocate the same next number.
+- **D2 — file layout.** `<type-dir>/<id>--<slug>.md` (schema.md §8), with plural type directories
+  `tasks/ guides/ findings/ profiles/ states/` and `inbox/`.
+
+**Two judgment calls taken while building it:**
+
+1. **`record_slug` drops periods where `generate_permalink` keeps them.** A permalink keeps them so
+   `version-2.0.0` stays addressable; a file name that keeps them grows a `.0.md` tail that reads
+   as a double extension. Nothing resolves through the slug, so the loss is cosmetic.
+2. **`type_dir` raises on a type outside the closed six** rather than filing it under `inbox`. The
+   unknown-type escape hatch is real (W4), but it is `bm new`'s decision to take **and state**;
+   taking it silently here would make the escape hatch invisible, which is the failure W4's
+   "agents propose, never enable" rule exists to prevent.
+
+### V-G — `bm ls`, `bm show`, `bm path` — **SHIPPED 2026-08-17**
+
+`src/basic_memory/cli/commands/records.py`, plus one additive query — `list_records()` and
+`RecordListRow` in `repository/entity_repository.py`. Read-only, on the fast path: scope resolution
+(W5-C), one indexed query, print. Registered in `cli/main.py`; `ls`, `show`, and `path` join
+`app.py`'s `skip_init_commands` for the reason `doctor` and `project` are already there — their own
+bootstrap calls `ensure_project_registry`, so `initialize_app` would be a second, slower copy.
+
+**Decisions recorded, both accepted 2026-08-17 by the campaign orchestrator per VERBS_PLAN D9 and
+D10; the user may revisit:**
+
+- **D9 — `bm path` prints the path alone**: no count line, no notices, no affordances, and so no
+  `--quiet`. It exists for `$EDITOR "$(bm path tnd-x)"`, and every one of those lines would land
+  inside the command substitution. Documented as a named exception in `docs/OUTPUT_CONTRACT.md`
+  rather than left as undeclared drift.
+- **D10 — `bm show` keeps the payload byte-exact** and renders derived supersession as a notice
+  after it, dropped by `--quiet`. That satisfies both "raw content is byte-exact" and §5's
+  "`bm show` displays superseded by tnd-… (date)" without a second copy of the edge.
+
+**Three judgment calls taken while building it:**
+
+1. **A note with no frontmatter `type` is not a record and `bm ls` does not list it.** `bm ls`
+   answers "what records are here"; folding in every imported markdown file buries that answer.
+   The predicate is the `$.type` mirror the hygiene queries already read.
+2. **`--limit` fetches one row more than it prints.** That row is the whole evidence for the
+   `more records match` notice, so an honest count costs no second `COUNT` over the same predicate.
+3. **The direct-path wiring (`load_records`, `load_record`) lives in `records.py`, not
+   `cli/direct.py`.** It is the same deferred-import shape `direct.py` uses and belongs there;
+   `direct.py` was open in a concurrent change. **Owed:** move it, and delete this note when done.
+
+**Fixed in review (2026-08-17):** `bm show` read its payload with `Path.read_text`, which
+translates CRLF to LF and raises `UnicodeDecodeError` on a file that is not valid UTF-8 — the first
+breaks "raw content is byte-exact", the second turns rule 6's one stderr line into a traceback. It
+now writes `Path.read_bytes()` through `click.echo`, guarded by a regression test carrying both
+cases.
+
+**Also owed by this item, and deliberately not done here:** `ls`, `show`, and `path` are not yet in
+`tests/cli/test_native_command_import_guard.py`'s `NATIVE_COMMANDS`, so nothing yet fails if one of
+them pulls `fastapi` or the MCP tool layer onto its path. That file was open in a concurrent change;
+the affordances-and-guard item picks it up. Until then the boundary is a convention here, not a
+guard — which is exactly the state T18 was found in.
 
 ---
 

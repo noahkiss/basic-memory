@@ -9,7 +9,13 @@ from typing import Annotated, Optional
 import typer
 
 from basic_memory.cli.app import app
+from basic_memory.cli.notices import emit_notices
+from basic_memory.cli.scope import ReadScope
 from basic_memory.store.history import HistoryError, dirty_paths, sweep_commit
+
+# The store holds every project's notes in one repository, so a history verb
+# reads across all of them and its notice says so (GAPS W5-C).
+STORE_SCOPE = ReadScope(project=None, origin="unscoped")
 
 history_app = typer.Typer(help="Inspect and commit the note store's local history")
 app.add_typer(history_app, name="history")
@@ -26,7 +32,12 @@ def fail(message: str) -> typer.Exit:
 
 
 @history_app.command()
-def dirty() -> None:
+def dirty(
+    quiet: Annotated[
+        bool,
+        typer.Option("--quiet", help="Hide the status lines and next-step hints."),
+    ] = False,
+) -> None:
     """List note-store files with uncommitted changes."""
     try:
         entries = dirty_paths()
@@ -38,6 +49,8 @@ def dirty() -> None:
     for status, path in entries:
         typer.echo(f"{path:<{path_width}}  {status}")
     typer.echo(f"{len(entries)} dirty files")
+
+    emit_notices(STORE_SCOPE, quiet=quiet, command="history dirty")
 
 
 @history_app.command()
@@ -75,6 +88,7 @@ def commit(
     # An empty sweep is a result, not a failure (contract rule 5).
     if result is None:
         typer.echo("nothing to commit")
+        emit_notices(STORE_SCOPE, quiet=quiet, command="history commit")
         return
 
     typer.echo(f"sha: {result.sha}")
@@ -86,3 +100,5 @@ def commit(
             "(not included in this commit)"
         )
         typer.echo("run 'bm history dirty' to review")
+
+    emit_notices(STORE_SCOPE, quiet=quiet, command="history commit")

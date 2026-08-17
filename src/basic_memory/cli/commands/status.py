@@ -11,6 +11,7 @@ import typer
 from loguru import logger
 
 from basic_memory.cli.app import app
+from basic_memory.cli.notices import emit_notices
 from basic_memory.cli.scope import resolve_read_scope
 from basic_memory.mcp.async_client import get_client
 from basic_memory.mcp.clients import ProjectClient
@@ -161,6 +162,7 @@ def status(
     # Outcome: state it and exit 0.
     if not reports:
         typer.echo("no projects registered")
+        emit_notices(scope, quiet=quiet, command="status")
         return
 
     # A grouped report renders as one plain section per project (contract rule 1). The
@@ -169,3 +171,5 @@ def status(
         if position:
             typer.echo("")
         display_project_index_status(project_name, project_index_status, verbose, quiet)
+
+    emit_notices(scope, quiet=quiet, command="status")

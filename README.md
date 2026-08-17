@@ -72,6 +72,11 @@ the working directory pins one. It prints nothing when nothing is open; use
 Wire it into your agent by hand; this fork ships no plugin package. For Claude
 Code, add it as a `SessionStart` hook in `~/.claude/settings.json`.
 
+Every command that reads a project ends by naming what needs attention — records
+that break the vocabulary, reviews that expired, an unfiled inbox, uncommitted
+note files — with the command that answers it. At most two lines, after the
+payload. `--quiet` drops them.
+
 ## Pick up where you left off
 
 https://github.com/user-attachments/assets/a55d8238-8dd0-454a-be4c-8860dbbd0ddc

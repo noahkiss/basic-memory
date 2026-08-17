@@ -20,11 +20,18 @@ from basic_memory.vocabulary import Violation as CheckedViolation
 
 @dataclass(frozen=True, slots=True)
 class ViolationReason:
-    """How many records break one rule on one field, across the queried projects."""
+    """How many records break one rule on one field, in one project.
+
+    ``project_id`` is part of the grouping rather than rolled through it: the
+    unscoped notice reports a total across every project and names the project
+    its top reason came from (GAPS W5-C), which a project-blind GROUP BY cannot
+    answer.
+    """
 
     rule: str
     field: str
     count: int
+    project_id: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,24 +138,30 @@ class ViolationRepository(Repository[Violation]):
     async def count_by_reason(
         self, session: AsyncSession, project_ids: Sequence[int]
     ) -> list[ViolationReason]:
-        """Group violations by rule and field, commonest first.
+        """Group violations by project, rule and field, commonest first.
 
         This is the notice's "top reason" (GAPS W5-B): a bare count only
-        relocates the lookup into ``doctor``. Ties break on rule then field so
-        the line does not change between runs over unchanged data.
+        relocates the lookup into ``doctor``. Ties break on rule, then field,
+        then project id, so the line does not change between runs over
+        unchanged data.
         """
         if not project_ids:
             return []
 
         rows = await session.execute(
-            select(Violation.rule, Violation.field, func.count().label("total"))
+            select(
+                Violation.rule,
+                Violation.field,
+                func.count().label("total"),
+                Violation.project_id,
+            )
             .where(Violation.project_id.in_(project_ids))
-            .group_by(Violation.rule, Violation.field)
-            .order_by(func.count().desc(), Violation.rule, Violation.field)
+            .group_by(Violation.project_id, Violation.rule, Violation.field)
+            .order_by(func.count().desc(), Violation.rule, Violation.field, Violation.project_id)
         )
         return [
-            ViolationReason(rule=rule, field=field, count=total)
-            for rule, field, total in rows.all()
+            ViolationReason(rule=rule, field=field, count=total, project_id=project_id)
+            for rule, field, total, project_id in rows.all()
         ]
 
     async def list_for_project(

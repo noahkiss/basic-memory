@@ -30,7 +30,9 @@ def _project_names() -> set[str]:
 def test_project_list(app, app_config, test_project, config_manager):
     """`bm project list` shows one row per project and marks the default."""
     runner = CliRunner()
-    result = runner.invoke(cli_app, ["project", "list"], env=WIDE_TERMINAL_ENV)
+    # --quiet so the count line is last: a notice may follow the payload on a
+    # corpus that has something outstanding (contract rule 4, GAPS W5-B).
+    result = runner.invoke(cli_app, ["project", "list", "--quiet"], env=WIDE_TERMINAL_ENV)
 
     if result.exit_code != 0:
         print(f"STDOUT: {result.stdout}")

@@ -68,6 +68,8 @@ _REVIEW_BY_PATH = '$."review-by"'
 _DATE_SOURCE_PATH = '$."date-source"'
 _PROPOSED_TYPE_PATH = '$."proposed-type"'
 _TYPE_PATH = "$.type"
+_STATUS_PATH = "$.status"
+_AREA_PATH = "$.area"
 # The three type-owned date fields (schema.md §2). A record has at most one, so
 # coalesce names whichever it carries without the caller knowing its type.
 _DATE_PATHS = ("$.opened", '$."event-date"', "$.since")
@@ -823,3 +825,135 @@ class EntityRepository(Repository[Entity]):
             # Re-raise if not a foreign key error
             raise  # pragma: no cover
         return entity
+
+
+@dataclass(frozen=True, slots=True)
+class RecordListRow:
+    """One row of ``bm ls``: the record's identity and the columns it prints."""
+
+    project_id: int
+    permalink: str
+    note_type: str
+    status: str
+    title: str
+    file_path: str
+
+
+async def list_records(
+    session: AsyncSession,
+    project_ids: Sequence[int],
+    *,
+    note_type: str | None = None,
+    status: str | None = None,
+    area: str | None = None,
+    limit: int | None = None,
+) -> List[RecordListRow]:
+    """List the records in ``project_ids``, filtered, for ``bm ls``.
+
+    **A note without a frontmatter ``type`` is not a record** and never appears
+    here. `bm ls` answers "what records are in this project", and folding in
+    every imported markdown file would bury the answer under the corpus. The
+    predicate is the same ``$.type`` mirror the hygiene queries read.
+
+    Ordering is project id, then file path: file paths open with the type
+    directory, so records group by type for free, and a corpus that did not
+    change lists in the same order twice.
+
+    ``limit`` is applied in SQL, and the caller asks for one row more than it
+    intends to print — that extra row is how it knows to say more records match
+    (contract rule 3) without a second COUNT over the same predicate.
+
+    A record that does not carry the filtered key never matches. Asking for
+    ``--status open`` is asking for records that say ``open``, so a record with
+    no status is a miss rather than a wildcard.
+    """
+    if not project_ids:
+        return []
+
+    record_type = func.json_extract(Entity.entity_metadata, _TYPE_PATH)
+    record_status = func.json_extract(Entity.entity_metadata, _STATUS_PATH)
+    record_area = func.json_extract(Entity.entity_metadata, _AREA_PATH)
+
+    query = (
+        select(
+            Entity.project_id,
+            Entity.permalink,
+            record_type,
+            record_status,
+            Entity.title,
+            Entity.file_path,
+        )
+        .where(
+            Entity.project_id.in_(project_ids),
+            Entity.permalink.is_not(None),
+            record_type.is_not(None),
+        )
+        .order_by(Entity.project_id.asc(), Entity.file_path.asc())
+    )
+    if note_type is not None:
+        query = query.where(record_type == note_type)
+    if status is not None:
+        query = query.where(record_status == status)
+    if area is not None:
+        query = query.where(record_area == area)
+    if limit is not None:
+        query = query.limit(limit)
+
+    result = await session.execute(query)
+    return [
+        RecordListRow(
+            project_id=project_id,
+            permalink=permalink,
+            note_type=str(row_type),
+            status="" if row_status is None else str(row_status),
+            title=title,
+            file_path=file_path,
+        )
+        for project_id, permalink, row_type, row_status, title, file_path in result.all()
+    ]
+
+
+# --- Cross-project hygiene counts, for the per-command notice (GAPS W5-B) ---
+#
+# Functions rather than methods: ``EntityRepository`` is pinned to one project
+# by construction, and an unscoped notice rolls up every project the caller can
+# see. Widening the constructor to ``project_id: int | None`` would leave every
+# other query on the class silently unscoped, which is the failure mode this
+# fork's style rules call out. Each one is a single indexed COUNT — the notice
+# runs on every project-touching command and cannot afford to fetch rows.
+
+
+async def count_review_due_records(
+    session: AsyncSession, project_ids: Sequence[int], today: date
+) -> int:
+    """Count records whose ``review-by`` date has passed, across ``project_ids``."""
+    if not project_ids:
+        return 0
+
+    review_by = func.json_extract(Entity.entity_metadata, _REVIEW_BY_PATH)
+    result = await session.execute(
+        select(func.count())
+        .select_from(Entity)
+        .where(
+            Entity.project_id.in_(project_ids),
+            review_by.is_not(None),
+            review_by < today.isoformat(),
+        )
+    )
+    return result.scalar_one()
+
+
+async def count_inbox_records(session: AsyncSession, project_ids: Sequence[int]) -> int:
+    """Count unfiled ``inbox`` records across ``project_ids``."""
+    if not project_ids:
+        return 0
+
+    result = await session.execute(
+        select(func.count())
+        .select_from(Entity)
+        .where(
+            Entity.project_id.in_(project_ids),
+            func.json_extract(Entity.entity_metadata, _TYPE_PATH) == "inbox",
+        )
+    )
+    return result.scalar_one()

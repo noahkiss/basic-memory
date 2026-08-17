@@ -36,12 +36,12 @@ def stub_project(monkeypatch) -> None:
     import guard covers the real path end to end.
     """
 
-    async def fake_direct_project_ref(project_name: str | None) -> ProjectRef:
+    async def fake_direct_project_refs(project_name: str | None) -> list[ProjectRef]:
         if project_name not in (None, PROJECT):
             raise ValueError(f"Project not found: '{project_name}'")
-        return ProjectRef(name=PROJECT, external_id=EXTERNAL_ID)
+        return [ProjectRef(name=PROJECT, external_id=EXTERNAL_ID)]
 
-    monkeypatch.setattr(types_cmd, "direct_project_ref", fake_direct_project_ref)
+    monkeypatch.setattr(types_cmd, "direct_project_refs", fake_direct_project_refs)
 
 
 @pytest.fixture
@@ -176,3 +176,62 @@ def test_unknown_project_fails_on_stderr(runner, config_home, stub_project):
     assert result.exit_code == 1
     assert result.stdout == ""
     assert "Project not found: 'missing'" in result.stderr
+
+
+# --- Scope C: an unmarked directory reports every project ---
+
+
+@pytest.fixture
+def stub_two_projects(monkeypatch):
+    """Answer the project lookup with two projects, so a roll-up has sections."""
+    second = "beta"
+    second_id = "22222222-2222-2222-2222-222222222222"
+
+    async def fake_direct_project_refs(project_name: str | None) -> list[ProjectRef]:
+        refs = [
+            ProjectRef(name=PROJECT, external_id=EXTERNAL_ID),
+            ProjectRef(name=second, external_id=second_id),
+        ]
+        if project_name is None:
+            return refs
+        matched = [ref for ref in refs if ref.name == project_name]
+        if not matched:
+            raise ValueError(f"Project not found: '{project_name}'")
+        return matched
+
+    monkeypatch.setattr(types_cmd, "direct_project_refs", fake_direct_project_refs)
+    return second_id
+
+
+def test_unscoped_types_prints_one_section_per_project(
+    runner, config_home, stub_two_projects, write_vocabulary, monkeypatch, tmp_path
+):
+    """No --project and no marker reports every project, not the default one.
+
+    A vocabulary report that silently covered one of two projects would teach an
+    agent the wrong rules for the other (GAPS W5-C).
+    """
+    monkeypatch.chdir(tmp_path)
+    write_vocabulary(FULL_VOCABULARY)
+
+    result = runner.invoke(app, ["types", "--quiet"])
+
+    assert result.exit_code == 0, result.output
+    assert f"Record types for project '{PROJECT}'" in result.stdout
+    # The second project declares nothing, and that is a result, not an error.
+    assert "Project 'beta' declares no record vocabulary" in result.stdout
+    # Each section names the file it came from, because one trailing line cannot.
+    assert "vocabulary.yml)" in result.stdout
+
+
+def test_unscoped_types_names_no_single_file_to_edit(
+    runner, config_home, stub_two_projects, write_vocabulary, monkeypatch, tmp_path
+):
+    """The affordance cannot name one path when the payload covered several."""
+    monkeypatch.chdir(tmp_path)
+    write_vocabulary(FULL_VOCABULARY)
+
+    result = runner.invoke(app, ["types"])
+
+    assert result.exit_code == 0, result.output
+    assert "Edit a project's vocabulary.yml to add a type" in result.stdout

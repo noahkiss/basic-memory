@@ -8,6 +8,8 @@ import typer
 from basic_memory.cli.app import app
 from basic_memory.cli.commands.command_utils import get_project_info, run_with_cleanup
 from basic_memory.cli.direct import direct_project_service
+from basic_memory.cli.notices import emit_notices
+from basic_memory.cli.scope import ReadScope
 from basic_memory.mcp.async_client import get_client
 from basic_memory.mcp.clients import ProjectClient
 from basic_memory.schemas.project_info import ProjectItem, ProjectList
@@ -62,7 +64,9 @@ async def fetch_project_list() -> ProjectList:
 
 
 @project_app.command("list")
-def list_projects() -> None:
+def list_projects(
+    quiet: bool = typer.Option(False, "--quiet", help="Hide the status lines and next-step hints"),
+) -> None:
     """List Basic Memory projects."""
 
     try:
@@ -80,6 +84,10 @@ def list_projects() -> None:
         marker = "  (default)" if project.is_default else ""
         typer.echo(f"{project.name:<{name_width}}  {format_path(project.path)}{marker}")
     typer.echo(f"{len(projects)} projects")
+
+    # The listing covers every project, so the notice does too — no marker walk,
+    # because the payload ignored one (see `cli/notices.py`).
+    emit_notices(ReadScope(project=None, origin="unscoped"), quiet=quiet, command="project list")
 
 
 @project_app.command("add")
@@ -218,6 +226,7 @@ def move_project(
 def ls_project_command(
     name: str = typer.Option(..., "--name", help="Project name to list files from"),
     path: str = typer.Argument(None, help="Path within project (optional)"),
+    quiet: bool = typer.Option(False, "--quiet", help="Hide the status lines and next-step hints"),
 ) -> None:
     """List files in a project.
 
@@ -270,6 +279,11 @@ def ls_project_command(
     for relative, size in files:
         typer.echo(f"{relative:<{path_width}}  {size}")
     typer.echo(f"{len(files)} files")
+
+    # `--name` is mandatory here, so the read is pinned by the verb's own shape.
+    emit_notices(
+        ReadScope(project=project_data.name, origin="flag"), quiet=quiet, command="project ls"
+    )
 
 
 @project_app.command("info")
@@ -334,3 +348,8 @@ def display_project_info(
         reason = f" — {embeddings.reindex_reason}" if embeddings.reindex_reason else ""
         typer.echo(f"Reindex recommended{reason}")
         typer.echo(f"Run 'bm reindex --project {info.project_name}' to rebuild the index.")
+
+    # The argument is mandatory, so this read is pinned by the verb's own shape.
+    emit_notices(
+        ReadScope(project=info.project_name, origin="flag"), quiet=quiet, command="project info"
+    )

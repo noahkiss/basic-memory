@@ -37,6 +37,7 @@ import typer
 from loguru import logger
 
 from basic_memory.cli.app import app
+from basic_memory.cli.notices import emit_notices
 from basic_memory.cli.scope import ReadScope, resolve_read_scope
 
 # Claude Code splices SessionStart stdout into the context window. Upstream used 10_000
@@ -146,8 +147,10 @@ async def query(session_maker, scope: ReadScope, timeframe_days: int) -> Brief:
 async def gather(scope: ReadScope, timeframe_days: int) -> Brief:
     """Open the app database and run `query` against it."""
     from basic_memory.config import ConfigManager
-    from basic_memory.db import DatabaseType, get_or_create_db
+    from basic_memory.db import DatabaseType, get_or_create_db, has_active_engine, shutdown_db
 
+    # Decision point: dispose only an engine this call opened, never a borrowed one.
+    owns_engine = not has_active_engine()
     config = ConfigManager().config
     _engine, session_maker = await get_or_create_db(
         db_path=config.database_path,
@@ -159,7 +162,14 @@ async def gather(scope: ReadScope, timeframe_days: int) -> Brief:
         ensure_migrations=False,
         config=config,
     )
-    return await query(session_maker, scope, timeframe_days)
+    try:
+        return await query(session_maker, scope, timeframe_days)
+    finally:
+        # Constraint: `get_or_create_db` caches the engine in a module global, and
+        # brief runs it under its own `asyncio.run`. Leaving it cached would hand
+        # the notice below an engine bound to a loop that has already closed.
+        if owns_engine:
+            await shutdown_db()
 
 
 def _rows(result) -> list[Row]:
@@ -277,12 +287,19 @@ def brief(
         "-v",
         help="Say on stderr why the brief is empty, instead of staying silent.",
     ),
+    quiet: bool = typer.Option(
+        False,
+        "--quiet",
+        help="Hide the status lines and next-step hints.",
+    ),
 ) -> None:
     """Print open tasks, decisions, and recent sessions as a session-start brief.
 
     Reads every project unless `--project` or a `.bm.yml` above the working directory
-    pins one. Prints nothing when there is nothing open. Intended for a SessionStart
-    hook, but it is an ordinary command and is worth running by hand.
+    pins one. An explicitly named project is read even when it is inactive; the
+    unscoped roll-up covers active projects only. Prints nothing when there is
+    nothing open. Intended for a SessionStart hook, but it is an ordinary command
+    and is worth running by hand.
     """
     # Trigger: any failure at all — unusable marker, unknown project, missing or locked
     # database, un-migrated schema, malformed config.
@@ -299,6 +316,10 @@ def brief(
             typer.echo(output[:MAX_BRIEF_CHARS])
         elif verbose:
             typer.echo(f"brief: nothing open — {scope.describe()}", err=True)
+        # After the payload, never before (contract rule 4). A brief with nothing
+        # open still carries the notice: "nothing is open" and "four records are
+        # broken" are different facts, and only one of them is good news.
+        emit_notices(scope, quiet=quiet, command="brief")
     except Exception as exc:  # noqa: BLE001 - deliberate catch-all, see above
         logger.debug(f"brief: suppressed {type(exc).__name__}: {exc}")
         if verbose:
