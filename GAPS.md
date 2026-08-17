@@ -3134,7 +3134,7 @@ Closed along the way: **T29**, **T30**, **W3**'s hookup, **W8** (both items), **
 
 `AGENTS.md`'s stop-list makes new-verb semantics the user's call. The plan brought back D1–D12 with
 a recommendation each; the orchestrator accepted every recommendation so the phase could run, and
-three further decisions were taken mid-build. **None of these needs to stand.** Each names where
+four further decisions were taken mid-build. **None of these needs to stand.** Each names where
 the code is, so reversing one is a change, not an archaeology exercise.
 
 | # | Decision as shipped |
@@ -5902,7 +5902,7 @@ without them.
 
 **That order is fully walked as of 2026-08-17**, and the verbs phase after it is closed — see
 *Verbs phase — CLOSED 2026-08-17* under W4 for what shipped, and the decisions list beside it for
-the twelve product decisions the orchestrator took on the user's behalf. What is open after it:
+the sixteen product decisions the orchestrator took on the user's behalf. What is open after it:
 **T24**, **T28**, **T31** (all three are dead-surface or index-drift entries, none of them
 blocking), plus the verbs phase's own **E2**, **V-J1** and **V-J2**. Every BLOCKER is closed.
 There is no agreed order for what remains; the next phase picks one.
