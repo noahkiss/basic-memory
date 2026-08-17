@@ -55,6 +55,8 @@ class ViolationRepository(Repository[Violation]):
         entity_id: int,
         project_id: int,
         violations: Sequence[CheckedViolation],
+        *,
+        preserve_rules: Sequence[str] = (),
     ) -> int:
         """Replace this entity's violations with ``violations``, and return how many landed.
 
@@ -62,10 +64,19 @@ class ViolationRepository(Repository[Violation]):
         answer for this record, so a rule that stopped firing has to disappear.
         An empty sequence is therefore the clean case, not a no-op — it clears.
 
+        ``preserve_rules`` names rules this check could not decide, and their rows
+        survive the delete. A caller that passes ``relation_types=None`` never
+        emits ``supersedes-not-on-type``, so without this a move — which parses no
+        relations — would erase a violation a real write recorded, and nothing
+        would put it back until the note itself changed (GAPS W5 item 3).
+
         The caller's session is used as given. Opening a second one deadlocks the
         one-connection pool (GAPS W4).
         """
-        await session.execute(delete(Violation).where(Violation.entity_id == entity_id))
+        cleared = delete(Violation).where(Violation.entity_id == entity_id)
+        if preserve_rules:
+            cleared = cleared.where(Violation.rule.not_in(tuple(preserve_rules)))
+        await session.execute(cleared)
         if not violations:
             return 0
 
@@ -88,6 +99,19 @@ class ViolationRepository(Repository[Violation]):
             ],
         )
         return len(violations)
+
+    async def clear_for_project(self, session: AsyncSession, project_id: int) -> None:
+        """Delete every violation row in one project.
+
+        For the one state where no rule can apply to any record: the project's
+        ``vocabulary.yml`` is gone, so every row is stale by definition and none
+        of them is undecidable. One statement rather than a delete per entity —
+        there is no per-record verdict left to compute (GAPS W5 item 4).
+
+        The caller's session is used as given. Opening a second one deadlocks the
+        one-connection pool (GAPS W4).
+        """
+        await session.execute(delete(Violation).where(Violation.project_id == project_id))
 
     async def count_for_projects(self, session: AsyncSession, project_ids: Sequence[int]) -> int:
         """Count violations across the given projects.

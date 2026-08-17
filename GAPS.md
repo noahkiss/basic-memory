@@ -1513,6 +1513,29 @@ too. Two paths now feed record mode — `EntityService` (sync) and this planner 
 mechanism A has to persist from both. The move path is the one that cannot be recovered by a
 reindex, so a table fed only from the sync path would silently lose exactly these rows.
 
+**Owed persistence DONE 2026-08-16 (W5 item 3), and narrowed to the rewrite arm.**
+`plan_moved_file_content` writes rows through `ViolationRepository.replace_for_entity`, on the move
+batch's own session, **only where it rewrites the permalink** — bytes that reach disk.
+`LocalProjectIndexMoveContentUpdater` gained a `project_id` field for it, passed by both runtime
+factories beside the `external_id` this entry added. The planner parses no relations, so it
+preserves the rules that read them rather than clearing them (see W5's item 3+4 PROGRESS block).
+
+**The refused arm persists nothing**, and the WARNING this entry added is its whole record.
+Reversed 2026-08-16 from "persist on both arms", which this block first recorded. Three reasons, in
+order: the refusal changes no file, so the rows the record's last index pass wrote still describe
+it; every violation on that arm was judged against a permalink the arm declines to write, so no row
+would describe the file that survives; and a `set-once-changed` row on every hand move is a
+permanent nag over a refusal that already did its job, which nothing but a re-index of an unchanged
+file could clear. The narrower `permalink-mismatch` filter the first pass added is gone with it —
+it existed only to make the refused arm's row set describable.
+
+Covered by `test_local_project_index_refused_move_persists_no_violation_and_logs_it` on the real
+move path, which asserts the log line as the positive control for the empty row set. The rewrite
+arm is **unreachable governed over that path** — the first index pass stamps `permalink` into the
+file's frontmatter, so every later governed move is a set-once change — so its integration control
+is the ungoverned move beside it, asserting empty rows, and its write is proved at the planner by
+`test_plan_moved_file_content_persists_violations_when_it_rewrites`.
+
 ---
 
 **Opened 2026-08-10**, found by the same cross-model review that confirmed T22 and verified here by
@@ -1782,6 +1805,55 @@ one JSON key in `_build_move_batch_update_values` and one assignment beside line
 predicate that the frontmatter copy is not authoritative. **Writing the key is the smaller change
 and the right one:** `entity_metadata` claims to mirror the file, the file *was* rewritten, so a
 stale copy is simply wrong regardless of what reads it.
+
+### T29 — an advisory raised by an agent write is logged and then lost forever
+
+**Opened 2026-08-16** while wiring W5 item 3. W5's mechanism A now persists a violation from the
+two paths that *record*: the sync/index path and the move planner. The agent write path does not
+record — it **rejects** — and rejection only fires on an error. An advisory is not an error, so the
+write is accepted and its violation is written nowhere.
+
+The only advisory the checker emits today is `unknown-key` (`vocabulary/checker.py`, step 12), and
+it is the one W4 deliberately made non-blocking: *"flagged, never rejected"*. W5 item 5 then plans a
+`bm doctor` hygiene section reading *"every `severity="advisory"` violation"*. On this tree that
+section is empty for every key an agent ever wrote.
+
+Two facts, both read from the tree at `4cd26479`:
+
+```
+$ git grep -n "entity_service" -- src/basic_memory/indexing/accepted_note_mutation_runner.py src/basic_memory/indexing/accepted_note_write_runner.py
+(exit 1)
+```
+
+The accepted write path never reaches `EntityService`, so item 3's three persist sites are not on
+it. **Positive control** for that grep — the same file does reach the funnel, four times:
+
+```
+$ git grep -n "enforce_accepted_note_vocabulary" -- src/
+src/basic_memory/indexing/accepted_note_mutation_runner.py:359:def enforce_accepted_note_vocabulary(
+src/basic_memory/indexing/accepted_note_mutation_runner.py:551:    enforce_accepted_note_vocabulary(
+src/basic_memory/indexing/accepted_note_mutation_runner.py:728:    enforce_accepted_note_vocabulary(
+src/basic_memory/indexing/accepted_note_mutation_runner.py:802:    enforce_accepted_note_vocabulary(
+src/basic_memory/indexing/accepted_note_mutation_runner.py:907:    enforce_accepted_note_vocabulary(
+```
+
+And `enforce_accepted_note_vocabulary` is typed `-> None` (`:359`): it discards the list, so no
+caller could persist even if it wanted to. Nor does a later pass recover the row — the accepted
+write stamps the entity with its own checksum, so the file never presents as modified.
+
+Reproduction as a test: a `write_note` on a governed project carrying an undeclared frontmatter key
+succeeds, logs one DEBUG advisory, and leaves `violation` empty. Not added to the suite here,
+because a test that asserts the hole would have to be deleted by the fix.
+
+**Fix:** make `enforce_accepted_note_vocabulary` return its violations, and have the accepted
+create/update/edit sites persist them through `ViolationRepository.replace_for_entity` after
+`create_accepted_pending_entity` returns the id — the same shape item 3 gave `EntityService`. A
+rejection still persists nothing; only an accepted write with advisories has anything to store.
+Scoped out of item 3 deliberately: item 3's brief names the two record-mode callers, and reject mode
+was explicitly "persists nothing". That is right about *rejections* and wrong about *advisories*,
+which is why this is filed rather than folded in.
+
+**Blocks:** W5 item 5's hygiene section, which is otherwise honest only about hand-edited files.
 
 ---
 
@@ -2806,6 +2878,68 @@ Mechanism A now has a place to put a violation. W5 stays open: nothing writes to
 - **Judgment call:** `replace_for_entity` does not de-duplicate its input. Two violations with the
   same rule and field hit the unique constraint and fail the write loudly, which is correct: that
   is a checker bug, and silently dropping one would lose a row nobody would ever look for.
+
+**PROGRESS 2026-08-16 — items 3 and 4 shipped: both record paths persist, and a vocabulary edit
+re-checks the corpus.** The mechanism is now end to end from a hand-edited file to a queryable row.
+W5 stays open: nothing reports the rows yet (item 5) and nothing calls the trigger yet (item 6).
+
+- **Item 3, the sync path.** `EntityService._persist_vocabulary_violations` writes the record's
+  whole row set after each of the three record sites checks. The create site persists **after**
+  `upsert_entity` returns, because that is where the entity id first exists; update and relations
+  already hold one. Every write uses the mutator's own session — the funnel still takes none, and a
+  second connection is the W4 deadlock.
+- **Item 3, the move path.** `LocalProjectIndexMoveContentUpdater.plan_moved_file_content` persists
+  where it **rewrites** the permalink, which closes what T23 recorded as owed: the batch stamps the
+  entity with the planned checksum, so nothing would re-check those bytes. The updater gained a
+  `project_id` field, passed by the scan and watcher factories.
+- **The refused arm of that branch persists nothing**, and its WARNING is the whole record. The file
+  it declines to rewrite is unchanged and conforming, so its last index pass's rows still describe
+  it; the violations were judged against a permalink no file will hold; and a `set-once-changed` row
+  per hand move is a nag nothing could ever clear. See T23's close block.
+- **Reject mode persists nothing, confirmed.** `enforce_accepted_note_vocabulary` raises from inside
+  the funnel before returning, and the whole mutation is one transaction that rolls back. A refused
+  write never joined the corpus, so a report about the corpus must not mention it. That is right
+  about rejections and wrong about *advisories*, which are accepted and stored nowhere — filed as
+  **T29** rather than folded in here.
+- **Item 4, the trigger.** `services/vocabulary_revalidation.py`:
+  `revalidate_if_vocabulary_changed(session, project)` compares `sha256(vocabulary.yml)` to
+  `project.vocabulary_stamp` and returns 0 on a match, which is the whole warm cost. On a mismatch
+  it pages the project's entities by primary key, re-checks each one's `entity_metadata`, replaces
+  its rows, and stamps last — so a failure part-way leaves the project looking unchecked rather than
+  trusting half a rewrite. A malformed file raises `VocabularyError` and does not stamp.
+- **`cli/direct.py` gained `direct_revalidate_vocabulary(project_name=None)`**, one project or every
+  project, returning a count and printing nothing. Item 6 calls it before its count query.
+- **Judgment call — a check that could not decide a rule preserves it rather than clearing it.**
+  `replace_for_entity` gained `preserve_rules`, and the checker exports `RELATION_DERIVED_RULES`
+  (`supersedes-not-on-type`, needs parsed relations) and `HISTORY_DERIVED_RULES`
+  (`set-once-changed`, needs the previous write). Without this the plan's own promise that "rule-1
+  rows survive from their last write" was false in two places: a move parses no relations, and
+  revalidation reads `entity_metadata` alone, so a plain replace would have deleted the
+  `set-once-changed` rows the sync path records from a note's previous write. An **ungoverned**
+  project preserves neither —
+  no rule survives at all, so every row goes.
+- **Judgment call — the sync path skips persistence entirely on an ungoverned project.** There are
+  no rows to clear there, and one DELETE per file per index pass is the common case paying for the
+  rare one. The single state that does leave rows behind, a deleted `vocabulary.yml`, is cleared in
+  one pass by the trigger. The move planner's rewrite arm does **not** repeat the skip: a move is
+  rare where an index pass is per-file, so it replaces unconditionally rather than reading the file
+  again to learn it has nothing to delete.
+- **Judgment call — the trigger is not wired into a scan or sync pass**, against that half of the
+  item's brief. Violations go stale when the *vocabulary* changes, not when files do, so firing on
+  sync would leave counts wrong for anyone who never syncs and right only by accident for everyone
+  else; and the index runner is a Protocol with several implementations and no single start-of-pass
+  seam, so it is neither cheap nor obvious. This restates the plan's own recommendation.
+- **Judgment call — deleting the vocabulary clears the project in one DELETE**, not through the
+  per-record loop. Reversed 2026-08-16 from "one code path is worth more than one statement": with
+  no vocabulary there is no rule any record can break, so the loop computes no verdict and inserts
+  nothing — it is one DELETE per record to reach the state one DELETE reaches.
+  `ViolationRepository.clear_for_project` is that statement, and the count the function returns
+  comes from a `COUNT(*)` over the project's entities, because the unit stays "records decided".
+- **The plan's item-3 test list named an MCP `write_note` leaving rows. It cannot**, and the tests
+  do not pretend otherwise: an off-vocabulary agent write is refused (T22), and an accepted one
+  never touches `EntityService`. Rows come from hand-edited files and from moves, which is exactly
+  what W4 said record mode was for. The real-path coverage moved to
+  `tests/index/test_local_project_index.py` accordingly.
 
 ### W6 — an idempotent, resumable importer — **CLOSED 2026-08-05 (user): no importer ships; it is a Claude workflow**
 The corpus is written by other sessions while a migration runs. Measured over twenty minutes in a

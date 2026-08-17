@@ -66,6 +66,7 @@ from basic_memory.repository.relation_repository import (
     ResolvedRelationWrite,
     ResolvedRelationWriteResult,
 )
+from basic_memory.repository.violation_repository import ViolationRepository, ViolationRow
 from basic_memory.runtime.jobs import (
     RuntimeIndexFileBatchJobRequest,
     RuntimeObservedIndexFile,
@@ -1517,6 +1518,267 @@ async def test_local_project_index_move_records_nothing_when_permalink_updates_a
     assert second.moved_files == 1
     assert not [line for line in logged_warnings if "Vocabulary violation" in line]
     assert f"permalink: {GOVERNED_NOTE_ID}" in moved_path.read_text(encoding="utf-8")
+
+
+# --- GAPS W5 item 3: what the two record paths persist ---
+#
+# A logged warning dies with the process. These tests assert the rows `bm doctor`
+# and the notice will read, over the real index path with a real database.
+
+# Off-vocabulary in exactly one way. `type` short-circuits the checker, so this
+# note produces one violation and the count is unambiguous.
+UNGOVERNABLE_NOTE = """---
+type: note
+id: tnd-w5-0001
+permalink: tnd-w5-0001
+title: Hand Written
+source: human
+---
+
+# Hand Written
+
+A note a human wrote by hand, with a type this project does not allow.
+"""
+
+# The same record, missing one required field instead. `source` is set-once, and
+# a field absent from the previous write and present now is a first set — so
+# adding it is a fix rather than a second violation.
+INCOMPLETE_GUIDE = """---
+type: guide
+id: tnd-w5-0002
+permalink: tnd-w5-0002
+title: Incomplete Guide
+review-by: 2027-01-01
+---
+
+# Incomplete Guide
+
+A guide whose author forgot where it came from.
+"""
+
+FIXED_GUIDE = INCOMPLETE_GUIDE.replace(
+    "review-by: 2027-01-01\n",
+    "review-by: 2027-01-01\nsource: human\n",
+)
+
+
+async def stored_violations(
+    project: Project,
+    session_maker: async_sessionmaker[AsyncSession],
+) -> list[ViolationRow]:
+    """Every violation row the project holds, in the repository's own order."""
+    async with db.scoped_session(session_maker) as session:
+        return await ViolationRepository(project_id=project.id).list_for_project(
+            session, project.id
+        )
+
+
+async def write_and_index(
+    test_project: Project,
+    project_config,
+    content: str,
+    *,
+    file_name: str = "hand-written.md",
+    force_full: bool = False,
+) -> Path:
+    """Write a note to disk and run a real index pass over the project."""
+    path = project_config.home / "notes" / file_name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+    await run_local_project_index_for_project(
+        test_project,
+        runtime_factory=LocalProjectIndexRuntimeFactory(batch_size=10),
+        force_full=force_full,
+    )
+    return path
+
+
+async def test_local_project_index_persists_violations_for_a_hand_edited_note(
+    test_project: Project,
+    project_config,
+    session_maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """Indexing an off-vocabulary file leaves a row, not just a log line.
+
+    This is the whole of W5 mechanism A: the sync path is the only thing that
+    reads a hand-edited file, and until now its finding lived in a log.
+    """
+    govern_project(test_project)
+
+    await write_and_index(test_project, project_config, UNGOVERNABLE_NOTE, force_full=True)
+
+    rows = await stored_violations(test_project, session_maker)
+    assert [(row.rule, row.field, row.severity) for row in rows] == [
+        ("unknown-type", "type", "error")
+    ]
+    assert rows[0].file_path == "notes/hand-written.md"
+
+
+async def test_local_project_index_persists_nothing_on_an_ungoverned_project(
+    test_project: Project,
+    project_config,
+    session_maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """The positive control: the same file, no vocabulary.yml, no rows.
+
+    Without this the test above would pass over a corpus that records everything,
+    which would prove nothing about what governance means.
+    """
+    assert not vocabulary_path(test_project.external_id).exists()
+
+    await write_and_index(test_project, project_config, UNGOVERNABLE_NOTE, force_full=True)
+
+    assert await stored_violations(test_project, session_maker) == []
+
+
+async def test_local_project_index_reindex_clears_violations_a_human_fixed(
+    test_project: Project,
+    project_config,
+    session_maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """A record that now checks clean stops being reported, with no explicit delete.
+
+    Delete-then-insert is what buys this: the rows are the checker's whole answer
+    for the record, so a rule that stopped firing has to disappear.
+    """
+    govern_project(test_project)
+
+    path = await write_and_index(test_project, project_config, INCOMPLETE_GUIDE, force_full=True)
+    rows = await stored_violations(test_project, session_maker)
+    assert [(row.rule, row.field) for row in rows] == [("missing-required-field", "source")]
+
+    path.write_text(FIXED_GUIDE, encoding="utf-8")
+    await run_local_project_index_for_project(
+        test_project,
+        runtime_factory=LocalProjectIndexRuntimeFactory(batch_size=10),
+    )
+
+    assert await stored_violations(test_project, session_maker) == []
+
+
+async def test_local_project_index_second_pass_does_not_duplicate_violations(
+    test_project: Project,
+    project_config,
+    session_maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """Re-checking an unchanged record collapses onto the row it already wrote."""
+    govern_project(test_project)
+
+    await write_and_index(test_project, project_config, UNGOVERNABLE_NOTE, force_full=True)
+    assert len(await stored_violations(test_project, session_maker)) == 1
+
+    await run_local_project_index_for_project(
+        test_project,
+        runtime_factory=LocalProjectIndexRuntimeFactory(batch_size=10),
+        force_full=True,
+    )
+
+    assert len(await stored_violations(test_project, session_maker)) == 1
+
+
+async def test_local_project_index_deleting_a_note_clears_its_violations(
+    test_project: Project,
+    project_config,
+    session_maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """Deleting the record takes its violations with it, through the FK cascade."""
+    govern_project(test_project)
+
+    path = await write_and_index(test_project, project_config, UNGOVERNABLE_NOTE, force_full=True)
+    assert len(await stored_violations(test_project, session_maker)) == 1
+
+    path.unlink()
+    await run_local_project_index_for_project(
+        test_project,
+        runtime_factory=LocalProjectIndexRuntimeFactory(batch_size=10),
+    )
+
+    assert await stored_violations(test_project, session_maker) == []
+
+
+async def test_local_project_index_refused_move_persists_no_violation_and_logs_it(
+    test_project: Project,
+    project_config,
+    entity_repository,
+    session_maker: async_sessionmaker[AsyncSession],
+    app_config,
+    config_manager,
+    logged_warnings,
+) -> None:
+    """A refused move logs the violation and stores no row.
+
+    The refusal changes nothing on disk: the file stays exactly as the human
+    moved it, still conforming, and the rows its last index pass wrote still
+    stand. Every violation here was judged against a permalink this arm declines
+    to write, so no row would describe the file that survives — and a permanent
+    ``set-once-changed`` row per hand-move is noise the nag repeats forever.
+
+    The log assertion is the positive control: without it, an empty row set
+    would also pass when the check never ran.
+    """
+    govern_project(test_project)
+    app_config.update_permalinks_on_move = True
+    config_manager.save_config(app_config)
+
+    original_path = await index_governed_note(
+        test_project, project_config, entity_repository, session_maker
+    )
+    # The clean note indexed clean, so any row below could only come from the move.
+    assert await stored_violations(test_project, session_maker) == []
+
+    moved_path = project_config.home / "archive" / "moved-note.md"
+    moved_path.parent.mkdir(parents=True, exist_ok=True)
+    logged_warnings.clear()
+    original_path.rename(moved_path)
+
+    await run_local_project_index_for_project(
+        test_project,
+        runtime_factory=LocalProjectIndexRuntimeFactory(batch_size=10),
+    )
+
+    assert [line for line in logged_warnings if "'permalink' is set once and cannot change" in line]
+    assert await stored_violations(test_project, session_maker) == []
+
+
+async def test_local_project_index_ungoverned_move_persists_no_violation(
+    test_project: Project,
+    project_config,
+    entity_repository,
+    session_maker: async_sessionmaker[AsyncSession],
+    app_config,
+    config_manager,
+) -> None:
+    """The rewrite arm of the same move, which is only reachable ungoverned here.
+
+    A governed move over the real index path always refuses: the first pass
+    stamps ``permalink`` into the file's frontmatter, so any later move is a
+    change to a set-once field. That leaves the rewrite arm reachable only
+    without a vocabulary — where there are never violations — so what it can be
+    asserted to persist is nothing. The arm's write path is covered at the
+    planner level by
+    ``test_plan_moved_file_content_persists_violations_when_it_rewrites``.
+
+    The permalink rewrite it does perform is asserted by
+    ``test_local_project_index_move_updates_permalink_when_configured``.
+    """
+    assert not vocabulary_path(test_project.external_id).exists()
+    app_config.update_permalinks_on_move = True
+    config_manager.save_config(app_config)
+
+    original_path = await index_governed_note(
+        test_project, project_config, entity_repository, session_maker
+    )
+    moved_path = project_config.home / "archive" / "moved-note.md"
+    moved_path.parent.mkdir(parents=True, exist_ok=True)
+    original_path.rename(moved_path)
+
+    second = await run_local_project_index_for_project(
+        test_project,
+        runtime_factory=LocalProjectIndexRuntimeFactory(batch_size=10),
+    )
+
+    assert second.moved_files == 1
+    assert await stored_violations(test_project, session_maker) == []
 
 
 async def test_local_project_index_treats_rename_over_existing_path_as_modify_and_delete(

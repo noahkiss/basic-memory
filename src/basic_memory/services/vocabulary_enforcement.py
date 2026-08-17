@@ -109,10 +109,10 @@ def apply_vocabulary(
         # written file or a committed row behind is worse than no rejection.
         raise VocabularyViolationError(file_path, violations)
 
-    # Logged, not persisted. GAPS W5 mechanism A writes these rows to a table
-    # keyed by entity so `bm doctor` can query them; that table, its Alembic
-    # migration, and the revalidation trigger are W5's scope and are deliberately
-    # not built here.
+    # Logged here, persisted by the caller. The funnel stays session-free (GAPS
+    # W4), so writing the `violation` rows belongs to the record-mode callers that
+    # already hold both a session and the entity id: `EntityService` and the move
+    # planner in `index/local_moves.py` (GAPS W5 item 3).
     for violation in violations:
         message = f"Vocabulary violation in {file_path}: {violation.message}"
         if violation.severity == "error":

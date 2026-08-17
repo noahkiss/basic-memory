@@ -8,6 +8,8 @@ fast CLI path can reach it.
 """
 
 from basic_memory.vocabulary.checker import (
+    HISTORY_DERIVED_RULES,
+    RELATION_DERIVED_RULES,
     Severity,
     Violation,
     check_frontmatter,
@@ -28,6 +30,8 @@ from basic_memory.vocabulary.model import (
 
 __all__ = [
     "DEFAULT_VOCABULARY",
+    "HISTORY_DERIVED_RULES",
+    "RELATION_DERIVED_RULES",
     "VOCABULARY_FILENAME",
     "DeclaredField",
     "FieldKind",

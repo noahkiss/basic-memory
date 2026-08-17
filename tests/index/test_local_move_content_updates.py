@@ -1,11 +1,12 @@
 """Tests for local moved-file content planning and post-commit writes."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import pytest
 import yaml
+from sqlalchemy import Delete, Insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from basic_memory.file_utils import compute_checksum
@@ -54,6 +55,7 @@ def _updater(
         entity_service=cast(LocalMoveEntityService, entity_service),
         file_service=FileService(tmp_path),
         project_external_id=project_external_id,
+        project_id=1,
     )
 
 
@@ -66,8 +68,22 @@ def _moved_file(new_path: str = "archive/renamed.md") -> ProjectIndexMovedFile:
     )
 
 
-def _session() -> AsyncSession:
-    return cast(AsyncSession, object())
+@dataclass(slots=True)
+class RecordingSession:
+    """The one capability the planner uses on a session: executing a statement.
+
+    Enough for a planner unit test, and it keeps the violation writes visible —
+    a plan that records nothing executes nothing (GAPS W5 item 3).
+    """
+
+    statements: list[Any] = field(default_factory=list)
+
+    async def execute(self, statement: Any, *args: Any, **kwargs: Any) -> None:
+        self.statements.append(statement)
+
+
+def _session(recorder: RecordingSession | None = None) -> AsyncSession:
+    return cast(AsyncSession, recorder if recorder is not None else RecordingSession())
 
 
 def test_merged_frontmatter_markdown_updates_existing_frontmatter() -> None:
@@ -246,3 +262,72 @@ async def test_plan_moved_file_content_still_sets_a_first_permalink_on_a_governe
     assert content_update.permalink == "main/archive/renamed"
     assert [line for line in logged_warnings if "is not in this project's vocabulary" in line]
     assert not [line for line in logged_warnings if "'permalink' is set once" in line]
+
+
+@pytest.mark.asyncio
+async def test_plan_moved_file_content_stores_no_rows_when_it_refuses_the_rewrite(
+    config_home: Path,
+    tmp_path: Path,
+    logged_warnings: list[str],
+) -> None:
+    """A refused rewrite logs and stores nothing, because it changes nothing.
+
+    The violations were judged against a permalink this arm declines to write,
+    so no row would describe the file that stays on disk. The file is unchanged
+    and conforming, its last index pass's rows still stand, and a permanent
+    ``set-once-changed`` row per hand-move is noise the nag repeats forever.
+    """
+    _govern("governed-project")
+    moved_file = _moved_file()
+    _write_moved_note(
+        tmp_path,
+        moved_file,
+        "---\ntype: state\nid: tnd-0001\npermalink: tnd-0001\n"
+        "title: Kept\nsource: human\n---\n\n# Kept\n",
+    )
+    updater = _updater(
+        tmp_path,
+        StaticMoveEntityService(app_config=MovePermalinkConfig()),
+        project_external_id="governed-project",
+    )
+    recorder = RecordingSession()
+
+    assert await updater.plan_moved_file_content(_session(recorder), moved_file) is None
+
+    assert recorder.statements == []
+    # The log assertion is what stops "no statements" from also passing when the
+    # check never ran at all.
+    assert [line for line in logged_warnings if "'permalink' is set once and cannot change" in line]
+
+
+@pytest.mark.asyncio
+async def test_plan_moved_file_content_persists_violations_when_it_rewrites(
+    config_home: Path,
+    tmp_path: Path,
+) -> None:
+    """The rewrite arm writes its rows on the batch's own transaction.
+
+    Positive control for the refusal above, and the arm where persisting is the
+    only thing that can work: the batch stamps the entity with the planned
+    content's checksum, so the rewritten file never presents as modified and no
+    later index pass re-checks it (GAPS T23).
+
+    The note carries no permalink to change, so the rewrite goes ahead, and its
+    ``type: note`` is off-vocabulary, so the check has a row to store.
+    """
+    _govern("governed-project")
+    moved_file = _moved_file()
+    _write_moved_note(tmp_path, moved_file, "---\ntype: note\ntitle: Fresh\n---\n\n# Fresh\n")
+    updater = _updater(
+        tmp_path,
+        StaticMoveEntityService(app_config=MovePermalinkConfig()),
+        project_external_id="governed-project",
+    )
+    recorder = RecordingSession()
+
+    assert await updater.plan_moved_file_content(_session(recorder), moved_file) is not None
+
+    # A replace is a delete then an insert. The insert is the row itself; the
+    # delete is what stops a re-check accumulating duplicates.
+    assert [isinstance(statement, Delete) for statement in recorder.statements] == [True, False]
+    assert isinstance(recorder.statements[1], Insert)

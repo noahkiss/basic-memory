@@ -35,9 +35,10 @@ from basic_memory.runtime.storage import (
     STORAGE_OBJECT_CREATED_EVENTS,
     STORAGE_OBJECT_DELETED_EVENT,
 )
+from basic_memory.repository.violation_repository import ViolationRepository
 from basic_memory.services import FileService
 from basic_memory.services.vocabulary_enforcement import enforce_vocabulary
-from basic_memory.vocabulary.checker import Violation
+from basic_memory.vocabulary.checker import RELATION_DERIVED_RULES, Violation
 
 
 class LocalMoveEntitySource(Protocol):
@@ -126,6 +127,40 @@ class LocalProjectIndexMoveContentUpdater(ProjectIndexMoveContentUpdater):
     entity_service: LocalMoveEntityService
     file_service: FileService
     project_external_id: str
+    project_id: int
+
+    async def _persist_move_violations(
+        self,
+        session: AsyncSession,
+        entity_id: int,
+        violations: Sequence[Violation],
+    ) -> None:
+        """Store what the rewritten record breaks, on the batch's own transaction.
+
+        Called only where the planner rewrites the permalink, so every row here
+        describes bytes that reach disk. The refusal arm stores nothing: it
+        changes no file, so its last index pass's rows still hold.
+
+        A rewrite's rows are the ones nothing else can recover: the batch stamps
+        the entity with the planned content's checksum, so the rewritten file
+        never presents as modified and no later index pass re-checks it (GAPS
+        T23). Persisting here is what makes them reachable at all.
+
+        It parses no relations, so the rules that read them are preserved rather
+        than cleared — a move must not erase a violation a real write recorded.
+
+        Unlike the sync path this does not skip ungoverned projects. A move is
+        rare where an index pass is per-file, so the replace runs unconditionally
+        rather than reading ``vocabulary.yml`` a second time to learn that it has
+        nothing to delete.
+        """
+        await ViolationRepository(project_id=self.project_id).replace_for_entity(
+            session,
+            entity_id,
+            self.project_id,
+            violations,
+            preserve_rules=tuple(RELATION_DERIVED_RULES),
+        )
 
     async def plan_moved_file_content(
         self,
@@ -167,7 +202,17 @@ class LocalProjectIndexMoveContentUpdater(ProjectIndexMoveContentUpdater):
             # and every edge binds to it (GAPS T9), so rewriting it on a governed
             # project orphans every relation pointing at the record. Skipping the
             # rewrite leaves the file exactly as the human moved it.
+            #
+            # Nothing is persisted here, and the WARNING above is the whole
+            # record. These violations were judged against a permalink this
+            # branch declines to write, so no row would describe the file that
+            # stays on disk; the file is unchanged, and whatever rows its last
+            # index wrote still stand. A permanent `set-once-changed` row for
+            # every hand-move is noise the nag would repeat forever, over a
+            # refusal that already did its job.
             return None
+
+        await self._persist_move_violations(session, moved_file.entity_id, violations)
 
         planned_content = merged_frontmatter_markdown(content, {"permalink": permalink})
         # Invariant: the move batch stamps entity/note_content rows from this

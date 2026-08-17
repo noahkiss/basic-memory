@@ -24,6 +24,7 @@ from basic_memory.models.knowledge import Entity
 from basic_memory.models.project import Project
 from basic_memory.repository import ObservationRepository, RelationRepository
 from basic_memory.repository.entity_repository import EntityRepository
+from basic_memory.repository.violation_repository import ViolationRepository
 from basic_memory.runtime.note_move import normalize_note_move_destination_path
 from basic_memory.schemas import Entity as EntitySchema
 from basic_memory.schemas.base import Permalink
@@ -119,6 +120,10 @@ class EntityService(BaseService[EntityModel]):
         self._project_external_id_cache: str | None = None
         self._vocabulary_cache: Vocabulary | None = None
         self._vocabulary_loaded = False
+        # Built here rather than injected: a repository is a session-free query
+        # builder in this tree, and every construction site of EntityService
+        # already knows the project id this one needs.
+        self._violation_repository = ViolationRepository(project_id=entity_repository.project_id)
 
     # --- Vocabulary enforcement, sync path only (GAPS W4, narrowed by GAPS T22)
     #
@@ -210,6 +215,44 @@ class EntityService(BaseService[EntityModel]):
             file_path=file_path,
             previous=previous,
             relation_types=relation_types,
+        )
+
+    async def _persist_vocabulary_violations(
+        self,
+        session: AsyncSession,
+        entity_id: int,
+        violations: Sequence[Violation],
+    ) -> None:
+        """Store what this record breaks, so ``bm doctor`` can read it back.
+
+        Called after the entity row exists, because the rows are keyed by its id.
+        A clean record persists an empty set, which clears whatever the last check
+        wrote — that is how a fixed note stops being reported (GAPS W5 item 3).
+
+        Skipped entirely on an ungoverned project. No rule applies there, so there
+        is nothing to clear, and a DELETE per file on every index pass of every
+        ungoverned corpus would be the common case paying for the rare one. The
+        one state that does leave rows behind — a ``vocabulary.yml`` that was
+        deleted — is cleared in a single pass by the revalidation trigger.
+
+        Uses the caller's session. A second one deadlocks the one-connection pool
+        (GAPS W4).
+        """
+        if await self._project_vocabulary(session) is None:
+            return
+
+        # `Repository.project_id` is typed optional for the unscoped repositories;
+        # an EntityRepository is always project-scoped, and a violation row cannot
+        # be filed without the project it belongs to.
+        project_id = self.repository.project_id
+        if project_id is None:  # pragma: no cover
+            raise ValueError("Recording violations requires a project-scoped entity repository")
+
+        await self._violation_repository.replace_for_entity(
+            session,
+            entity_id,
+            project_id,
+            violations,
         )
 
     async def detect_file_path_conflicts(
@@ -686,7 +729,7 @@ class EntityService(BaseService[EntityModel]):
             # unfindable, and silent (GAPS W4). Inside the session block so the
             # lookup reuses this transaction rather than deadlocking on the
             # single-connection pool.
-            await self._record_vocabulary_violations(
+            violations = await self._record_vocabulary_violations(
                 markdown.frontmatter.metadata,
                 file_path=file_path.as_posix(),
                 session=active_session,
@@ -695,10 +738,15 @@ class EntityService(BaseService[EntityModel]):
 
             # Use UPSERT to handle conflicts cleanly
             try:
-                return await self.repository.upsert_entity(active_session, model)
+                entity = await self.repository.upsert_entity(active_session, model)
             except Exception as e:
                 logger.error(f"Failed to upsert entity for {file_path}: {e}")
                 raise EntityCreationError(f"Failed to create entity: {str(e)}") from e
+
+            # After the upsert, not before: the check runs on markdown, but the
+            # rows are keyed by an entity id that only exists once the row does.
+            await self._persist_vocabulary_violations(active_session, entity.id, violations)
+            return entity
 
     async def update_entity_and_observations(
         self,
@@ -734,13 +782,14 @@ class EntityService(BaseService[EntityModel]):
             # Read before _apply_markdown_entity_fields overwrites entity_metadata
             # below — this row is the only record of what the note said before
             # this write, which is what the set-once rule compares against.
-            await self._record_vocabulary_violations(
+            violations = await self._record_vocabulary_violations(
                 markdown.frontmatter.metadata,
                 file_path=file_path.as_posix(),
                 session=active_session,
                 previous=db_entity.entity_metadata,
                 relation_types=[relation.type for relation in markdown.relations],
             )
+            await self._persist_vocabulary_violations(active_session, db_entity.id, violations)
 
             # Observations are owned by the markdown file, so re-indexing replaces the old set.
             # We only need the entity id here; loading the old relationship collection is wasted work.
@@ -867,13 +916,14 @@ class EntityService(BaseService[EntityModel]):
             # transaction: the pool holds one connection and a second acquire
             # would wait on the one this block already owns.
             if not vocabulary_checked:
-                await self._record_vocabulary_violations(
+                violations = await self._record_vocabulary_violations(
                     markdown.frontmatter.metadata,
                     file_path=entity.file_path,
                     session=active_session,
                     previous=entity.entity_metadata,
                     relation_types=[relation.type for relation in markdown.relations],
                 )
+                await self._persist_vocabulary_violations(active_session, entity_id, violations)
 
             # Clear existing relations first
             await self.relation_repository.delete_outgoing_relations_from_entity(

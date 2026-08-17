@@ -19,8 +19,10 @@ import pytest
 import yaml
 from mcp.server.fastmcp.exceptions import ToolError
 
+from basic_memory import db
 from basic_memory.file_utils import parse_frontmatter
 from basic_memory.mcp.tools import edit_note, move_note, write_note
+from basic_memory.repository.violation_repository import ViolationRepository
 from basic_memory.vocabulary.model import default_review_by, parse_vocabulary, vocabulary_path
 
 # The common four the checker requires, minus the type, plus a permalink equal to
@@ -583,3 +585,40 @@ async def test_supersedes_on_a_finding_is_accepted(app, test_project, govern_pro
     assert isinstance(result, dict)
     assert result["action"] == "created"
     assert [path.name for path in written_notes(test_project)] == ["Superseding Finding.md"]
+
+
+# --- GAPS W5 item 3: the reject path stores nothing ---
+
+
+@pytest.mark.asyncio
+async def test_a_refused_write_persists_no_violation(
+    app, test_project, govern_project, session_maker
+):
+    """Reject mode records nothing, because nothing happened.
+
+    Two reasons, and either alone would be enough. The funnel raises before the
+    runner accepts anything, so no entity id exists to key a row to; and the
+    whole mutation runs in one transaction that rolls back. A violation table is
+    a report about the corpus, and a refused write never joined the corpus.
+
+    The positive control is on the other path, where rows do get written:
+    ``tests/index/test_local_project_index.py``'s
+    ``test_local_project_index_persists_violations_for_a_hand_edited_note``.
+    """
+    govern_project()
+
+    with pytest.raises(ToolError):
+        await write_note(
+            project=test_project.name,
+            title="Off Vocabulary",
+            directory="notes",
+            content=note_content("Just a note.", **BASE_FRONTMATTER),
+        )
+
+    async with db.scoped_session(session_maker) as session:
+        rows = await ViolationRepository(project_id=test_project.id).list_for_project(
+            session, test_project.id
+        )
+
+    assert rows == []
+    assert written_notes(test_project) == []

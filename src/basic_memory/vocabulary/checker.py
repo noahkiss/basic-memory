@@ -61,6 +61,16 @@ _REQUIRED_COMMON: tuple[str, ...] = ("id", "permalink", "title", "source")
 _SUPERSEDES_RELATION = "supersedes"
 _SUPERSEDES_TYPES: frozenset[str] = frozenset({"finding"})
 
+# Rules a caller cannot decide from this write's frontmatter alone. Public
+# because the store needs them: a check that was never given the input a rule
+# reads can never emit it, so a writer that replaced a record's whole row set
+# would erase what a better-informed caller had recorded (GAPS W5 item 3).
+#
+#   relations — only a caller that parsed the body has them
+#   history   — only a caller that read the previous write has it
+RELATION_DERIVED_RULES: frozenset[str] = frozenset({"supersedes-not-on-type"})
+HISTORY_DERIVED_RULES: frozenset[str] = frozenset({"set-once-changed"})
+
 # Required beyond the common four, by type.
 _REQUIRED_BY_TYPE: Mapping[str, tuple[str, ...]] = {
     "finding": ("event-date", "review-by"),

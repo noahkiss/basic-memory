@@ -88,6 +88,51 @@ async def direct_project_ref(project_name: str | None) -> ProjectRef:
         return ProjectRef(name=project.name, external_id=project.external_id)
 
 
+async def direct_revalidate_vocabulary(project_name: str | None = None) -> int:
+    """Re-check records whose project's vocabulary changed. Return how many were checked.
+
+    ``project_name`` pins one project; ``None`` covers every project in the
+    registry, which is what an unscoped read means under GAPS W5-C. Both shapes
+    exist because the notice that consumes this reads either one count or a
+    roll-up depending on whether the cwd is marked.
+
+    This is the trigger's only caller for now, and it is deliberately not wired
+    into a scan or sync pass: violations go stale when the *vocabulary* changes,
+    not when files do, so firing on sync would leave counts wrong for anyone who
+    never syncs and right only by accident for everyone else. Reporting is
+    GAPS W5 item 6's; this returns a number and prints nothing.
+
+    Raises ValueError for an unknown project name, and ``VocabularyError`` for a
+    malformed ``vocabulary.yml`` — an unreadable vocabulary must not degrade into
+    "not governed" (GAPS W4).
+    """
+    # Deferred: the service layer pulls SQLAlchemy + Alembic, which must not
+    # load at CLI import time — only when a command actually runs (#886).
+    from basic_memory import db
+    from basic_memory.config import ConfigManager
+    from basic_memory.repository.project_repository import ProjectRepository
+    from basic_memory.services.initialization import ensure_project_registry
+    from basic_memory.services.vocabulary_revalidation import revalidate_if_vocabulary_changed
+
+    config = ConfigManager().config
+    _, session_maker = await db.get_or_create_db(config.database_path, config=config)
+    await ensure_project_registry(config)
+    async with db.scoped_session(session_maker) as session:
+        repository = ProjectRepository()
+        if project_name is None:
+            projects = await repository.find_all(session)
+        else:
+            project = await repository.get_by_name(session, project_name)
+            if project is None:
+                raise ValueError(f"Project not found: '{project_name}'")
+            projects = [project]
+
+        revalidated = 0
+        for registered in projects:
+            revalidated += await revalidate_if_vocabulary_changed(session, registered)
+        return revalidated
+
+
 async def direct_corpus_integrity_report(
     project_name: str,
 ) -> "tuple[list[UnresolvedRelationReportRow], list[PermalinkIntegrityIssue]]":

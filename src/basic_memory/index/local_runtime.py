@@ -269,6 +269,7 @@ class LocalWatchEventIndexRuntimeFactory:
                 entity_service=dependencies.entity_service,
                 file_service=dependencies.file_service,
                 project_external_id=dependencies.project_external_id,
+                project_id=dependencies.project_id,
             ),
         )
         maintenance_runner = StoreProjectIndexMaintenanceRunner(
