@@ -1600,7 +1600,7 @@ by hand is not an error. The right answer is that this path must reach the funne
 mode, which in turn needs the violation to survive the checksum stamp that suppresses re-indexing.
 That is the real work, and it is why this is not a one-line fix.
 
-### T24 — `EntityService.move_entity` has no production caller left
+### T24 — `EntityService.move_entity` has no production caller left — **CLOSED 2026-08-17: deleted, with its 13 tests and its funnel allowlist**
 **Opened 2026-08-16** while closing T22. Every note move now goes through
 `indexing/accepted_note_mutation_runner.py`: the single-note endpoint always did, and
 `move_directory` was rewritten to. `EntityService.move_directory`, its last caller, is deleted.
@@ -1635,6 +1635,27 @@ drop `move_entity` from `PATH_ONLY_WRITE` in `tests/services/test_vocabulary_fun
 Note the method is **not** guarded by the vocabulary funnel any more — it is allowlisted in that
 guard file. So it must not acquire a caller; if one is ever wanted, route it through the runner
 instead.
+
+**Close block, 2026-08-17 — deleted.** The method is gone; every move goes through
+`indexing/accepted_note_mutation_runner.py`, as T22 left it.
+
+- `src/basic_memory/services/entity_service.py` — the 104-line `move_entity` removed, plus the two
+  imports it was the last user of: `config.ProjectConfig` (the method's `project_config` parameter
+  was its only reference) and `runtime.note_move.normalize_note_move_destination_path`. That helper
+  is still live for the accepted path and `note_preparation`, so only the import went.
+- `tests/services/test_entity_service.py` — the whole `# Move entity tests` block, **12** tests.
+- `tests/services/test_entity_service_disable_permalinks.py` —
+  `test_move_entity_with_permalinks_disabled`, **1** test.
+- `tests/services/test_vocabulary_funnel_guard.py` — `PATH_ONLY_WRITE` removed entirely rather than
+  emptied. `move_entity` was its only entry, and `test_allowlists_name_only_methods_that_exist`
+  fails on an allowlist naming a method that no longer exists — which is that test working. The
+  `SERVICE_HINT` text lost its `PATH_ONLY_WRITE` arm to match.
+- **Test count: 0 `def test_` added, 13 removed.** All 13 called `entity_service.move_entity`
+  directly and had no second subject.
+- **Judgment call — nothing else was deleted.** `prepare_move_entity_content` shares the name and is
+  live on the accepted path (`accepted_note_write_runner.py:442`); it stays, and stays in the
+  guard's `READ_ONLY`. `KnowledgeClient.move_entity` and the v2 router's `move_entity` endpoint are
+  the live HTTP pair the entry's grep already distinguished; untouched.
 
 ### T25 — "an accepted note move deletes the note's observation and relation search rows" — **CLOSED 2026-08-16, no code change: the premise was wrong**
 
@@ -1804,7 +1825,7 @@ path, move included, because the runner-side rebuild that briefly covered it on 
 with T25. It is a question about that failure window, not about the missing rows this entry
 claimed, and it wants a reproduction before anyone builds for it.
 
-### T28 — a permalink rewrite on move leaves `entity_metadata` stale, so `bm doctor` reports drift
+### T28 — a permalink rewrite on move leaves `entity_metadata` stale, so `bm doctor` reports drift — **CLOSED 2026-08-16: both move paths write the key**
 **Opened 2026-08-16**, found reviewing T23's diff. Not introduced by T23 — T23's skip is what keeps
 a *governed* project clear of it. Every move path that rewrites the permalink is affected.
 
@@ -1862,6 +1883,15 @@ routine move manufactures its main finding.
   `..._move_updates_permalink_when_configured` test. Both carry positive controls: the scan test
   asserts the check is clean *before* the move, and the accepted test hand-edits the mirror through
   raw SQL and asserts drift is still reported.
+
+**Re-verified 2026-08-17, no further change.** The entry was handed to a later pass as still open,
+because only the *heading* had gone unmarked — the close block above was already accurate. The fix
+is in the tree at `project_index_maintenance.py:526-537` (the `json_set` CASE) and
+`accepted_note_write_runner.py:465-475` (the mirror rebind), and the two tests are
+`tests/mcp/test_tool_move_note_permalink_metadata.py` and
+`tests/index/test_local_project_index.py:1398-1434`. **0 `def test_` added, 0 removed.** The lesson
+is bookkeeping, not code: a close block without a marked heading reads as an open gap, and the next
+pass pays for the re-read.
 
 ### T29 — an advisory raised by an agent write is logged and then lost forever — **CLOSED 2026-08-17: the accepted create/update/edit sites persist what they accept**
 
@@ -2060,7 +2090,7 @@ and `httpx`.
 have inherited a client graph they never call, and the ban line is what keeps that from drifting
 back. The latency claim is retired.
 
-### T31 — `command_utils.run_project_index` has no callers and never had any on this tree
+### T31 — `command_utils.run_project_index` has no callers and never had any on this tree — **CLOSED 2026-08-17: deleted**
 
 **Found 2026-08-17** while reviewing T30. `command_utils` is now documented as "helpers for the CLI
 verbs that route through the in-process API client", and one of its two helpers is reached by
@@ -2081,6 +2111,21 @@ import-grep caveat (T19) does not apply.
 **Not deleted here.** A review pass fixing a stated defect is the wrong place to remove a public
 helper, and `bm reindex` is the obvious future caller. Delete it, or wire `bm reindex` to it,
 whichever the next pass over that module decides.
+
+**Close block, 2026-08-17 — deleted.** `run_project_index` is gone from
+`src/basic_memory/cli/commands/command_utils.py`, along with the two imports it was the only user
+of (`typing.Optional` and `project_marker.resolve_cli_project`). `get_project_info` is now the
+module's only helper and keeps every remaining import.
+
+- **No tests removed:** 0 `def test_` added, 0 removed. The reproduction grep already showed the
+  definition was the single hit across `src tests test-int`, so nothing exercised it.
+- **Judgment call — deleted rather than wired to `bm reindex`.** `bm reindex` does not exist, and
+  this fork does not keep code for a caller that has not been written (`AGENTS.md`: *"Don't spend
+  tokens on code we will never run"*). When `bm reindex` lands it will be a native verb, which
+  cannot import `command_utils` at all — that module pulls the MCP client graph (T30). So the
+  helper was not a head start on it; it was the wrong shape for it.
+- `local_schedulers._run_project_index` is a **different, live** method. The leading underscore is
+  the whole difference and the T31 grep matched both; it was not touched.
 
 ---
 
@@ -3128,7 +3173,9 @@ Every planned item shipped. What landed, in commit order:
 | J | affordances, notice wiring, the two guards, C3, brief F1, docs | this commit |
 
 Closed along the way: **T29**, **T30**, **W3**'s hookup, **W8** (both items), **W9**, **W19 item
-5**, **E1**, **C3**. Left open on purpose: **E2** (below) and **T28**.
+5**, **E1**, **C3**. Left open at the time and **closed 2026-08-17 in a follow-up pass**: **E2**,
+**V-J1**, **V-J2** (all three below). **T28** was left open here too and is closed under its own
+heading.
 
 #### Decisions taken by the campaign orchestrator, for the user to confirm or reverse
 
@@ -3146,11 +3193,11 @@ the code is, so reversing one is a change, not an archaeology exercise.
 | D5 | `bm mark <id> <status>` sets `status`, on a `task`, and nothing else. `bm done` is `bm mark <id> done`. |
 | D6 | The W9 headline file is `store/<external_id>/headline.md`, three lines, rewritten only when its bytes change. |
 | D7 | `--source` is optional and defaults to the literal `cli`. |
-| D8 | **Reversed mid-build.** `bm project add --governed` writes `DEFAULT_VOCABULARY`; plain `add` leaves the project ungoverned. Governing by default refused MCP's `write_note` (`type: note`) and broke 7 integration tests and `just doctor` — see item C2 above for the measurement. |
+| D8 | **Reversed mid-build; the breakage behind the reversal is fixed 2026-08-17.** `bm project add --governed` writes `DEFAULT_VOCABULARY`; plain `add` leaves the project ungoverned. Governing by default refused MCP's `write_note` (`type: note`) and broke 7 integration tests and `just doctor` — see item C2 above for the measurement. `DEFAULT_VOCABULARY` now declares `note`, so governing a project no longer breaks `write_note`; `--governed` stays opt-in on W4's own rule (an absent file means ungoverned, and declaring one is the human's act), and governed-by-default remains the user's decision to take. |
 | D9 | `bm path` prints one absolute path: no count line, no notices, no affordances, no `--quiet`. Documented as the one exception in `docs/OUTPUT_CONTRACT.md`. |
 | D10 | `bm show` prints the file's bytes verbatim; a supersession is a notice after the payload, dropped by `--quiet`. |
 | D11 | Body input is `--body <text>`, `--body -` for stdin, or `$EDITOR` when a terminal is attached. No interactive prompts. |
-| D12 | `bm edit` accepts `guide`, `profile`, `state`, `inbox`. A `task` is pointed at `bm done`/`bm mark`, a `finding` at `bm new --supersedes`. |
+| D12 | `bm edit` accepts `guide`, `profile`, `state`, `inbox`, and moves title, body and — on a `profile` only — the fields the project declares, with `--set name=value` (added 2026-08-17, V-J1). A `task` is pointed at `bm done`/`bm mark`, a `finding` at `bm new --supersedes`. |
 
 Four more, taken while building:
 
@@ -3161,14 +3208,15 @@ Four more, taken while building:
   unreadable line on stderr, and still exits 1 (`docs/OUTPUT_CONTRACT.md` rule 6).
 - **A malformed `vocabulary.yml` degrades one project, not the brief** (item J, W8 F1 below). The
   raise still happens — W4 forbids reading a broken file as "ungoverned" — but it is caught per
-  project, and `--verbose` names the file.
+  project, and `--verbose` names the file. The per-command notice degrades the same way as of
+  V-J2 below (2026-08-17).
 - **A write no longer names dirty files at the moment of its commit** (item C3 below, whose own
   recommendation this reverses). `emit_notices` is the single home for that condition, so the
   count a verb prints is scoped to the project it wrote to rather than to the whole store.
 
-One decision was taken and then narrowed by the code: **`bm edit` does not yet edit a `profile`'s
-declared fields**, which `.forked/schema.md` §11 Q6 said it would. Title and body only. Filed as
-V-J1 below.
+One decision was taken and then narrowed by the code: **`bm edit` did not edit a `profile`'s
+declared fields**, which `.forked/schema.md` §11 Q6 said it would — title and body only. Filed as
+V-J1 below and closed there 2026-08-17: `--set name=value` writes them, so the narrowing is gone.
 
 **Item A — the local write stack. Landed 2026-08-17.**
 `src/basic_memory/index/local_write_stack.py`:
@@ -3290,6 +3338,25 @@ Type 'note' is not in this project's vocabulary. …
 
 **Store-derived paths are unaffected** — that is C2 proper and stays the default. Only the
 vocabulary moved behind a flag.
+
+**FOLLOW-UP 2026-08-17: `note` is now in `DEFAULT_VOCABULARY`, so the breakage above cannot
+recur.** `DEFAULT_VOCABULARY.types` ends with `note` (`vocabulary/model.py`) — an ordinary open
+type, no required fields beyond the common four, no status, no glossary entry. The second
+reproduction above now reports `action: created`, and a governed project accepts every existing MCP
+caller's next write.
+
+Three things this does **not** change, stated because each is a decision rather than an oversight:
+
+- **`--governed` stays opt-in.** The reason is now W4's own rule and nothing else: an absent
+  `vocabulary.yml` means ungoverned, and declaring one is the human's act. Governed-by-default is
+  the user's decision to take, not this pass's.
+- **`note` is not a seventh record type.** It has no picking question in `vocabulary/glossary.py`
+  and no summary, so `bm new`'s `--type` help never offers it and the rejection message never lists
+  it. It exists so that governance does not break the write path an agent already uses.
+- **Off-vocabulary types are still refused.** Six tests asserted that by writing `type: note` under
+  a defaults-governed project; each now states an off-vocabulary type (`runbook`) instead, and
+  `tests/mcp/test_tool_vocabulary_enforcement.py` gained the positive control for the fix — the
+  default type is accepted under the default vocabulary.
 
 **A second defect the reversal exposed: the nested-path rule refused every store-derived project.**
 `add_project` rejects a path that shares a directory tree with an existing project, and
@@ -3497,17 +3564,42 @@ writes `- supersedes [[tnd-…]]`, so the refusal is about the target's existenc
 Tests: 2 added to `tests/cli/test_new_command.py` (17 → 19) — the missing target with its control,
 and the cross-project target.
 
-**E2 stays open** as filed. It is a different decision — what `bm new` should *say* when a human has
-removed `inbox` from their own vocabulary — and the vocabulary is the human's to shape.
+**E2 was left open here and is CLOSED below**, on the recommendation this paragraph made: the verb
+states it, the tree does not forbid the edit.
 
 **Item E2 — the W4 escape hatch fails closed on a project whose vocabulary drops `inbox`. Found in
-review 2026-08-17; open.**
-`resolve_note_type` (`cli/record_notes.py`) files an undeclared type as `inbox`, but the checker
-rejects a `type` that is not in `vocabulary.types` (`checker.py:162-164`). A human who removes
-`inbox` from their `vocabulary.yml` therefore turns W4's "agents propose, never enable" hatch into
-a hard rejection — the one case the hatch exists to prevent. `DEFAULT_VOCABULARY` declares `inbox`,
-so this is unreachable until someone edits the file. Recommended answer: `bm new` states it in the
-rejection rather than the tree forbidding the edit — the vocabulary is the human's to shape.
+review 2026-08-17; CLOSED 2026-08-17.**
+`resolve_note_type` (`cli/record_notes.py`) filed an undeclared type as `inbox`, but the checker
+rejects a `type` that is not in `vocabulary.types` (`checker.py`). A human who removes `inbox` from
+their `vocabulary.yml` therefore turned W4's "agents propose, never enable" hatch into a rejection
+one layer down, about a type the author never asked for — the one case the hatch exists to prevent.
+`DEFAULT_VOCABULARY` declares `inbox`, so it took an edit to that file to reach.
+
+**Decided: `bm new` refuses, and says why.** Never a silent success, never a write. The vocabulary
+is the human's to shape, so the tree does not forbid removing `inbox`; the verb states the
+consequence at the moment someone hits it.
+
+`resolve_note_type` now takes the project name and raises when the requested type is undeclared
+*and* the vocabulary declares no `inbox`. The type is resolved **before** the id is drawn
+(`cli/commands/new.py`), so a refused write spends nothing:
+
+```
+$ bm new runbook "Restart The Thing" -b steps -p no-inbox
+Error: 'runbook' is not a type project 'no-inbox' declares, and its vocabulary declares no 'inbox'
+type to file the proposal as — add 'inbox' to its vocabulary.yml or pick a declared type; run
+'bm types' to see the set
+$ echo $?
+1
+```
+
+The positive control is in the same test: a declared type on the same project still writes, so the
+refusal is about the missing `inbox` and not about the project being governed. The test also asserts
+`rglob("*.md")` is empty — the refusal precedes the write rather than following it.
+
+Files: `cli/record_notes.py` (the `INBOX_TYPE` constant and the raise), `cli/commands/new.py`
+(resolution moved ahead of the id draw, module docstring), `README.md`.
+Tests: 1 added to `tests/cli/test_new_command.py` (19 → 20); its `seed_project` helper gained a
+`types=` parameter so a vocabulary without `inbox` is expressible.
 
 **Item J — affordances, guards, and the phase's docs. Landed 2026-08-17.**
 The last item. It owns no verb of its own; it closes the ones the phase left half-wired.
@@ -3533,7 +3625,7 @@ The last item. It owns no verb of its own; it closes the ones the phase left hal
 - **Docs:** `README.md` gains a verb table; `AGENTS.md`'s four numbered capabilities are marked
   shipped and its flat verb list matches what exists; `docs/OUTPUT_CONTRACT.md` cross-references
   the path-verb exception from rule 4 and states `bm show`'s shape; `.forked/schema.md` §11 Q6 is
-  marked built, with the one narrowing (V-J1).
+  marked built, with the one narrowing (V-J1 — since closed, so the narrowing no longer applies).
 
 **Not done, deliberately:** item A's note says `direct_note_writer()` should move from
 `index/local_write_stack.py` to `cli/direct.py` in this item. It stays where it is. The move is
@@ -3598,17 +3690,51 @@ contributes no rows either way. `--query` is unaffected: a search reads no vocab
 Tests: 4 at the query layer (including the readable-second-project positive control and the pinned
 case) and 2 at the verb, in `tests/cli/test_brief.py`.
 
-**Item V-J1 — `bm edit` does not edit a `profile`'s declared fields. Found 2026-08-17; open.**
+**Item V-J1 — `bm edit` does not edit a `profile`'s declared fields. Found 2026-08-17; CLOSED
+2026-08-17 on the recommended answer.**
 `.forked/schema.md` §11 Q6 promised `bm edit` would replace *"title/body (plus declared fields on a
-`profile`)"*. What shipped moves the title and the body only (`cli/commands/record_write.py`), so a
-declared field on a profile — a project's own `vocabulary.yml` extension — can be set at creation
-and never changed except by hand. Hand-editing is exactly what D12 exists to keep off the routine
-path. Not urgent: no project in this tree declares fields yet. Recommended answer: `bm edit
---set <field>=<value>`, validated against the project's declared kinds, refusing every `_SET_ONCE`
-field with the checker's existing message.
+`profile`)"*. What shipped moved the title and the body only, so a declared field on a profile — a
+project's own `vocabulary.yml` extension — could be set at creation and never changed except by
+hand, which is exactly what D12 exists to keep off the routine path.
+
+**`bm edit <id> --set name=value`**, repeatable, and it is the only frontmatter this verb writes:
+
+```
+$ bm edit tnd-q8w3e1r5 --set owner=platform --set tier=gold -p ops
+```
+
+Four refusals, each naming what to do instead:
+
+- **not a `profile`** — a profile is the one type whose declared fields are mutable
+  (`.forked/schema.md` §1 table, §4 item 4); on every other type the frontmatter is what `bm new`
+  wrote.
+- **an ungoverned project** — an absent `vocabulary.yml` declares no fields (W4), so there is no
+  declared field to set, and inventing one would write a key nothing in the project validates.
+- **a field the project does not declare** — the message lists the declared names and points at
+  `bm types`. Agents select from the vocabulary; they never extend it from a write.
+- **any set-once field** — `checker.py` gained a public `SET_ONCE_FIELDS` (one list, read from two
+  places) so the verb refuses before it writes, instead of building the replacement and failing the
+  checker's own rule on it.
+
+**Values are deliberately not judged here.** Whether `bronze` is a legal `tier` is
+`check_frontmatter`'s rule, and the accepted write path still runs it — a second copy in the verb
+would be a second answer to the same question. A test asserts the enum miss is refused with nothing
+on stdout, which is what proves the write reaches the funnel.
+
+The fields ride to the write as `RecordNote(entity_metadata=...)`, which
+`prepare_update_entity_content` merges *over* the record's existing block — so a later `--set` on
+one field leaves the others standing, and no unmentioned field is dropped. `--set` also counts as
+"something to change": `bm edit <id> --set …` with no terminal no longer trips the
+nothing-to-change guard, and it does not open `$EDITOR`, on the same rule `--title` follows.
+
+Files: `cli/commands/record_write.py`, `vocabulary/checker.py`, `vocabulary/__init__.py`,
+`README.md`. No `docs/OUTPUT_CONTRACT.md` change was needed: the refusals are one stderr line and
+exit 1 with nothing on stdout (rule 6), and the payload line is unchanged.
+Tests: 7 added to `tests/cli/test_record_write_commands.py`; its `seed_project` helper gained a
+`fields=` parameter, since no project in the tree declared fields before this.
 
 **Item V-J2 — one malformed `vocabulary.yml` silences the per-command notice for every verb. Found
-2026-08-17; open.**
+2026-08-17; CLOSED 2026-08-17 on the recommended answer — both halves.**
 The same shape as W8 F1, one layer down and not fixed with it. `gather_notice_counts`
 (`cli/notices.py`) calls `direct_revalidate_vocabulary(scope.project)`, which walks **every**
 project when the scope is unscoped and raises `VocabularyError` on the first broken file.
@@ -3630,6 +3756,48 @@ Not fixed here because the fix is a decision, not a patch: either revalidation d
 the way `read_vocabularies` now does, or the notice gains a line of its own naming the unreadable
 file. Recommended answer: **both** — skip the broken project's counts, and say which file is
 broken, because a silently reduced count is the failure W5-B exists to prevent.
+
+**What shipped, 2026-08-17.** Both halves, in the shape `bm brief` already uses (W8 F1).
+
+`direct_revalidate_vocabulary` now returns a `RevalidationScan` — the count it rechecked, plus one
+`UnreadableVocabulary(project, path, reason)` per project it could not read — and catches
+`VocabularyError` per project instead of aborting the pass on the first one. The raise itself is
+untouched: `load_vocabulary` still refuses to degrade a broken file into "ungoverned" (W4), and a
+skipped project is *named*, never treated as governed-by-defaults.
+
+`gather_notice_counts` drops the skipped projects from the set it counts rows for — their violation
+rows are stale by definition, because the pass that would have refreshed them is the one that failed
+— and carries the reports out on `NoticeCounts.unreadable`. `notice_lines` prints one line for them
+**above every count**, since it is the line that says the counts below are incomplete:
+
+```
+$ printf 'nonsense_key: 1\n' > ~/.basic-memory/store/<other-eid>/vocabulary.yml
+$ bm ls
+… payload …
+vocabulary unreadable in 'other' — its records are not counted below:
+/…/store/<other-eid>/vocabulary.yml — run 'bm types'
+3 records need attention (…) — run 'bm doctor'
+```
+
+Judgment calls, both small and both deliberate:
+
+- **The line points at `bm types`, not `bm doctor`.** Doctor reads no vocabulary file at all — it
+  reports rows from the table — so it cannot explain a parse error. `bm types` prints it, naming the
+  file and the problem. The full `VocabularyError` message is too long for a notice line, so it goes
+  to the log at WARNING, which is where `emit_notices` already sends what it swallows.
+- **One line however many files are broken**, naming the first and counting the rest (`(+2 more)`).
+  A line per project would eat W8's two-notice cap and turn the notice into the report `bm doctor`
+  is for. The unreadable line does count against that cap, and the dirty-file count is skipped when
+  the cap is already full — no `git status` fork for a number that cannot print.
+
+A pinned notice on the broken project prints that one line and no counts, which is the same answer
+as before with a name attached to it.
+
+Files: `cli/direct.py`, `cli/notices.py`.
+Tests: 3 added to `tests/cli/test_notices.py` (19 → 22) — the rendering order at the pure layer, and
+two against real files and a real database: an unscoped gather whose *other* project still produces
+its count (the positive control that the pass ran rather than aborting), and a pinned gather on the
+broken project, with the file repaired at the end so the same corpus produces a count.
 
 ### W5 — the remaining schema-validation rules, inside `bm doctor` — **CLOSED 2026-08-16: all six items shipped; never a `bm check` command**
 **Rewritten 2026-08-03.** Two things were wrong with this entry, one naming and one substantive.
@@ -5902,10 +6070,15 @@ without them.
 
 **That order is fully walked as of 2026-08-17**, and the verbs phase after it is closed — see
 *Verbs phase — CLOSED 2026-08-17* under W4 for what shipped, and the decisions list beside it for
-the sixteen product decisions the orchestrator took on the user's behalf. What is open after it:
-**T24**, **T28**, **T31** (all three are dead-surface or index-drift entries, none of them
-blocking), plus the verbs phase's own **E2**, **V-J1** and **V-J2**. Every BLOCKER is closed.
-There is no agreed order for what remains; the next phase picks one.
+the sixteen product decisions the orchestrator took on the user's behalf. **T24**, **T28** and
+**T31** — the dead-surface and index-drift entries that were open after it — are all closed as of
+2026-08-17: T24 and T31 deleted their dead surface, T28 was already fixed and only needed its
+heading marked. The verbs phase's own **E2**, **V-J1** and **V-J2** are closed too, in a follow-up
+pass the same day: `bm new` refuses when a vocabulary drops `inbox`, `bm edit --set` writes a
+profile's declared fields, and a malformed `vocabulary.yml` degrades one project rather than
+silencing every verb's notice. The D8 breakage behind `--governed` being opt-in is fixed in the same
+pass — `DEFAULT_VOCABULARY` declares `note` — while the opt-in default itself stands as W4's rule.
+Every BLOCKER is closed. There is no agreed order for what remains; the next phase picks one.
 
 | | |
 |---|---|

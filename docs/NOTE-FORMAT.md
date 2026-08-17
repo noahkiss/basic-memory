@@ -36,7 +36,7 @@ YAML metadata between `---` fences at the top of the file.
 | Field | Required | Default | Description |
 |-------|----------|---------|-------------|
 | `title` | No | filename stem | Used for linking and references. Auto-set from filename if missing. |
-| `type` | No | `note` | Entity type. Used for filtering. |
+| `type` | No | `note` | Entity type. Used for filtering. On a governed project the type must be one the project declares; the default record vocabulary declares `note`, so an ordinary note is accepted there. |
 | `tags` | No | `[]` | List or comma-separated string. Used for organization and search. |
 | `permalink` | No | generated from title | Stable identifier. Persists even if the file moves. |
 | `created` | No | file ctime | Canonical semantic creation timestamp. Accepts ISO 8601 dates or datetimes. |

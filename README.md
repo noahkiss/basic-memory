@@ -69,11 +69,11 @@ id. `bm` is the short name for `basic-memory`; both run the same commands.
 
 | Command | What it does |
 |---|---|
-| `bm new <type> "<title>"` | Write a record and print its id. A type this project does not declare is filed as an inbox note proposing it. |
+| `bm new <type> "<title>"` | Write a record and print its id. A type this project does not declare is filed as an inbox note proposing it — unless the project declares no `inbox` type, when the write is refused and says so. |
 | `bm ls` | List records: id, type, status, title. Filter with `--type`, `--status`, `--area`. |
 | `bm show <id>` | Print a record's file, exactly as it is on disk. |
 | `bm path <id>` | Print a record's file path and nothing else, for `$EDITOR "$(bm path <id>)"`. |
-| `bm edit <id>` | Change a record that is kept current: a guide, profile, state, or inbox note. |
+| `bm edit <id>` | Change a record that is kept current: a guide, profile, state, or inbox note. `--set name=value` writes a field the project declares, on a profile. |
 | `bm mark <id> <status>` | Set a task's status. |
 | `bm done <id>` | Close a task. Exactly `bm mark <id> done`. |
 | `bm types` | Show the types, statuses, and areas this project allows. |
@@ -117,7 +117,9 @@ Code, add it as a `SessionStart` hook in `~/.claude/settings.json`.
 Every command that reads a project ends by naming what needs attention — records
 that break the vocabulary, reviews that expired, an unfiled inbox, uncommitted
 note files — with the command that answers it. At most two lines, after the
-payload. `--quiet` drops them.
+payload. `--quiet` drops them. A project whose `vocabulary.yml` cannot be parsed
+is named there too, with its file: its records are left out of the counts, and
+the other projects still report theirs.
 
 ## Pick up where you left off
 
