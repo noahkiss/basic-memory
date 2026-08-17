@@ -580,7 +580,7 @@ async def test_prepare_edit_entity_content_prepend_without_frontmatter_uses_simp
         content="Prepended line",
     )
 
-    assert prepared.markdown_content == "Prepended line\nOriginal body"
+    assert prepared.markdown_content == "Prepended line\nOriginal body\n"
 
 
 @pytest.mark.asyncio
@@ -735,8 +735,15 @@ async def test_prepare_edit_entity_content_metadata_only_edit_preserves_body_exa
 ) -> None:
     """A frontmatter-only request must not reflow the body (PR #1090 review).
 
-    Trailing hard-break spaces, extra blank lines, and a missing final newline
-    are all meaningful markdown; the merge must round-trip them byte-exact.
+    Trailing hard-break spaces and extra blank lines are meaningful markdown; the
+    merge must round-trip them byte-exact.
+
+    **A missing final newline is the one exception, and it is deliberate** (GAPS
+    U2): every note write terminates the file with exactly one newline, so a body
+    that arrived without one gains it. That is not a reflow — nothing inside the
+    body moves — and it is the fix for a body whose last word ran into the notice
+    printed under it. The two other kinds of trailing whitespace are still exact,
+    which is what this test is really guarding.
     """
     created = await entity_service.create_entity(
         EntitySchema(
@@ -758,18 +765,25 @@ async def test_prepare_edit_entity_content_metadata_only_edit_preserves_body_exa
     )
 
     assert parse_frontmatter(prepared.markdown_content)["status"] == "resolved"
-    assert prepared.markdown_content.endswith(f"---\n\n{body}")
+    assert prepared.markdown_content.endswith(f"---\n\n{body}\n")
+    # The hard-break spaces and the triple newline inside the body are untouched:
+    # only the file's terminator was added.
+    assert "hard break  \n\n\n  indented tail" in prepared.markdown_content
 
 
 @pytest.mark.asyncio
 async def test_prepare_edit_entity_content_metadata_only_edit_skips_append_newline(
     entity_service,
 ) -> None:
-    """The documented metadata-only pattern must be a true body no-op (PR #1090 review).
+    """The documented metadata-only pattern must not append to the body (PR #1090 review).
 
     An empty append normally appends "\\n" to content without a trailing
     newline; combined with metadata that mutated a body the caller asked to
     leave untouched.
+
+    The file's own terminator is a separate thing and is always added (GAPS U2),
+    so the assertion is that the body is unchanged *up to* that terminator — no
+    second newline, no appended blank line.
     """
     created = await entity_service.create_entity(
         EntitySchema(
@@ -788,7 +802,9 @@ async def test_prepare_edit_entity_content_metadata_only_edit_skips_append_newli
         metadata={"status": "resolved"},
     )
 
-    assert prepared.markdown_content.endswith("Plain body without trailing newline")
+    assert prepared.markdown_content.endswith("Plain body without trailing newline\n")
+    # One newline, not two: the empty append is still a no-op on the body.
+    assert not prepared.markdown_content.endswith("newline\n\n")
 
 
 @pytest.mark.asyncio

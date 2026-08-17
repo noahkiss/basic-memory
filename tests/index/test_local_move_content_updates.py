@@ -96,13 +96,13 @@ def test_merged_frontmatter_markdown_updates_existing_frontmatter() -> None:
     assert "title: Original" in merged
     assert "permalink: new" in merged
     assert "permalink: old" not in merged
-    assert merged.endswith("# Body")
+    assert merged.endswith("# Body\n")
 
 
 def test_merged_frontmatter_markdown_creates_frontmatter_when_missing() -> None:
     merged = merged_frontmatter_markdown("# Plain Body\n", {"permalink": "new"})
 
-    assert merged == "---\npermalink: new\n---\n\n# Plain Body"
+    assert merged == "---\npermalink: new\n---\n\n# Plain Body\n"
 
 
 def test_merged_frontmatter_markdown_treats_malformed_yaml_as_plain_markdown() -> None:

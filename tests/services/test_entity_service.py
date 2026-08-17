@@ -198,7 +198,7 @@ async def test_create_entity_file_exists(
 
     file_content, _ = await file_service.read_file(file_path)
     assert (
-        f"---\ntitle: Test Entity\ntype: test\npermalink: {generate_permalink(project_config.name)}/test-entity\n---\n\nfirst"
+        f"---\ntitle: Test Entity\ntype: test\npermalink: {generate_permalink(project_config.name)}/test-entity\n---\n\nfirst\n"
         == file_content
     )
 
@@ -648,7 +648,9 @@ async def test_create_with_content(entity_service: EntityService, file_service: 
         See the [[Git Cheat Sheet]] for reference.
 
         """).strip()
-    assert expected == file_content
+    # `+ "\n"`: every note write terminates the file with exactly one newline
+    # (GAPS U2), and `dedent(...).strip()` is what removes it from the expectation.
+    assert expected + "\n" == file_content
 
 
 @pytest.mark.asyncio
@@ -693,6 +695,7 @@ async def test_update_with_content(
             # Git Workflow Guide
             """
         ).strip()
+        + "\n"
         == file_content
     )
 
@@ -757,7 +760,7 @@ async def test_update_with_content(
     file_content, _ = await file_service.read_file(file_path)
 
     # assert content is in file
-    assert update_content.strip() == file_content
+    assert update_content.strip() + "\n" == file_content
 
 
 @pytest.mark.asyncio

@@ -308,6 +308,38 @@ def test_a_note_without_a_record_type_is_not_listed() -> None:
     assert result.stdout.strip().splitlines()[-1] == "1 records"
 
 
+def test_ls_marks_a_superseded_record_in_the_status_column() -> None:
+    """GAPS U3: a dead finding and a live one printed the same blank status column.
+
+    Positive control in the same listing: the successor is not marked, so the
+    marker is derived from the inbound edge and not from having one at all.
+    """
+    successor = note(
+        "tnd-dddd4444",
+        "finding",
+        "Backups now run on the host",
+        **{"event-date": "2026-08-01"},
+    )
+    seed({MAIN: [FINDING, successor]}, supersedes=("tnd-dddd4444", "tnd-cccc3333"))
+
+    result = runner.invoke(app, ["ls", "--project", MAIN, "--quiet"])
+
+    assert result.exit_code == 0, result.output
+    rows = {line.split()[0]: line for line in result.stdout.splitlines() if line.startswith("tnd-")}
+    assert "superseded" in rows["tnd-cccc3333"]
+    assert "superseded" not in rows["tnd-dddd4444"]
+
+
+def test_ls_leaves_an_unsuperseded_record_unmarked() -> None:
+    """The negative control the corpus gives for free: no edges, no markers."""
+    seed(BASIC_CORPUS)
+
+    result = runner.invoke(app, ["ls", "--project", MAIN, "--quiet"])
+
+    assert result.exit_code == 0, result.output
+    assert "superseded" not in result.stdout
+
+
 def test_ls_closes_with_its_affordance_and_quiet_drops_it() -> None:
     """W19 item 5: the verb names the next command, and --quiet leaves the payload alone."""
     seed(BASIC_CORPUS)
@@ -389,6 +421,48 @@ def test_quiet_drops_the_supersession_notice_and_the_affordance() -> None:
 
     assert result.exit_code == 0, result.output
     assert result.stdout == on_disk
+
+
+def test_show_notices_supersession_on_the_replaced_record_not_the_successor() -> None:
+    """GAPS U3: the notice belongs to the record that is dead, in that direction only.
+
+    The edge is stored on the successor, so the naive reading puts the notice
+    there — on the one record that does not need it. Both halves are asserted so
+    the direction cannot silently flip.
+    """
+    successor = note("tnd-dddd4444", "finding", "Backups now run on the host")
+    seed({MAIN: [FINDING, successor]}, supersedes=("tnd-dddd4444", "tnd-cccc3333"))
+
+    replaced = runner.invoke(app, ["show", "tnd-cccc3333", "--project", MAIN])
+    assert replaced.exit_code == 0, replaced.output
+    assert "superseded by tnd-dddd4444" in replaced.stdout
+
+    live = runner.invoke(app, ["show", "tnd-dddd4444", "--project", MAIN])
+    assert live.exit_code == 0, live.output
+    assert "superseded by" not in live.stdout
+
+
+def test_show_separates_a_body_with_no_final_newline_from_the_notice() -> None:
+    """GAPS U2: without a separator, the body's last word and the notice are one token.
+
+    The corpus's own files all end in a newline, so they cannot produce the
+    failure — this one is written without one, which is the shape every record
+    file had before U2's writer fix.
+    """
+    successor = note("tnd-dddd4444", "finding", "Backups now run on the host")
+    seeded = seed({MAIN: [FINDING, successor]}, supersedes=("tnd-dddd4444", "tnd-cccc3333"))
+    truncated = seeded.file(MAIN, FINDING["file_path"])
+    truncated.write_bytes(truncated.read_bytes().rstrip(b"\n"))
+
+    result = runner.invoke(app, ["show", "tnd-cccc3333", "--project", MAIN])
+
+    assert result.exit_code == 0, result.output
+    # The payload is still byte-exact: the newline is printed after it, not into it.
+    assert result.stdout.startswith(truncated.read_text(encoding="utf-8"))
+    lines = result.stdout.splitlines()
+    # The notice is its own line, and the body's last line ends where the body does.
+    assert "superseded by tnd-dddd4444" in lines
+    assert "The container is the thing being backed up." in lines
 
 
 def test_show_on_an_unknown_id_exits_one_with_one_stderr_line() -> None:

@@ -154,6 +154,7 @@ async def test_write_note_update_existing(app, test_project):
         )
         .format(permalink=f"{test_project.name}/test/test-note")
         .strip()
+        + "\n"
         == content
     )
 

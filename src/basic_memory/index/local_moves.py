@@ -16,6 +16,7 @@ from basic_memory.config import BasicMemoryConfig
 from basic_memory.file_utils import (
     ParseError,
     compute_checksum,
+    ensure_trailing_newline,
     has_frontmatter,
     parse_frontmatter,
     remove_frontmatter,
@@ -104,7 +105,10 @@ def merged_frontmatter_markdown(content: str, updates: Mapping[str, object]) -> 
     current_frontmatter, body = split_frontmatter(content)
     merged_frontmatter = {**current_frontmatter, **updates}
     yaml_block = yaml.dump(merged_frontmatter, sort_keys=False, allow_unicode=True)
-    return f"---\n{yaml_block}---\n\n{body.strip()}"
+    # Terminated like every other note write (GAPS U2). This one builds its bytes
+    # directly rather than through `dump_frontmatter`, so it needs the guarantee
+    # stated here: `body.strip()` has just removed whatever newline the body had.
+    return ensure_trailing_newline(f"---\n{yaml_block}---\n\n{body.strip()}")
 
 
 def _changes_set_once_permalink(violations: Sequence[Violation]) -> bool:

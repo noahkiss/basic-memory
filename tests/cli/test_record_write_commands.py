@@ -198,6 +198,24 @@ def test_edit_replaces_the_body_of_each_kept_current_type(note_type: str) -> Non
     assert "Original body." not in body
 
 
+def test_edit_leaves_the_file_ending_in_exactly_one_newline() -> None:
+    """GAPS U2: an edit is a write, so it owes the same line-orientation as a create.
+
+    A replacement body with no newline of its own is the case that broke it: the
+    edit path builds its content without passing through `dump_frontmatter`.
+    """
+    seed_project()
+    record_id = create(GOVERNED, "guide", "How To Restore")
+
+    result = runner.invoke(
+        app, ["edit", record_id, "--body", "no newline here", "-p", GOVERNED, "--quiet"]
+    )
+
+    assert result.exit_code == 0, result.output
+    written = payload_path(result.stdout).read_bytes()
+    assert written.endswith(b"no newline here\n"), written[-40:]
+
+
 def test_edit_replaces_the_title_and_keeps_the_file_path() -> None:
     """The file name carries the id other records link by, so a title change does not move it."""
     seed_project()

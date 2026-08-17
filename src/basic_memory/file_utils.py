@@ -492,7 +492,12 @@ def dump_frontmatter(post: frontmatter.Post) -> str:
         String containing markdown with properly formatted YAML frontmatter
     """
     if not post.metadata:
-        # No frontmatter, just return content
+        # No frontmatter, just return content — verbatim, including its line ending
+        # or the absence of one. Deliberately *not* terminated the way the branch
+        # below is (GAPS U2): a post with no metadata is not a note, no note-writing
+        # path can reach here, and `_build_prepared_write` terminates anything that
+        # does become a file. Adding a newline here would only change a documented
+        # pass-through.
         return post.content
 
     # Serialize YAML with block style for lists
@@ -507,9 +512,26 @@ def dump_frontmatter(post: frontmatter.Post) -> str:
 
     # Construct the final markdown with frontmatter
     if post.content:
-        return f"---\n{yaml_str}---\n\n{post.content}"
+        return ensure_trailing_newline(f"---\n{yaml_str}---\n\n{post.content}")
     else:
         return f"---\n{yaml_str}---\n"
+
+
+def ensure_trailing_newline(content: str) -> str:
+    """Return ``content`` ending in exactly one newline (GAPS U2).
+
+    A note file with no final newline runs its last word into whatever bm prints
+    next — `bm show` glued the body to the notice under it — and it fails POSIX
+    line-orientation, so the first later edit that *does* add a newline shows the
+    last line as changed in the store's git history.
+
+    Exactly one, not at least one: trailing blank lines are not content, and the
+    file is compared byte-for-byte by that history, so its shape has to be fixed.
+    Empty content stays empty — a lone newline is not a file with nothing in it.
+    """
+    if not content:
+        return content
+    return content.rstrip("\n") + "\n"
 
 
 def sanitize_for_filename(text: str, replacement: str = "-") -> str:

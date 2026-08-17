@@ -18,6 +18,7 @@ from basic_memory.config import BasicMemoryConfig
 from basic_memory.file_utils import (
     ParseError,
     dump_frontmatter,
+    ensure_trailing_newline,
     has_frontmatter,
     parse_frontmatter,
     remove_frontmatter,
@@ -315,6 +316,13 @@ async def _build_prepared_write(
     permalink: str | None,
     preserved_created_at: datetime | None = None,
 ) -> PreparedEntityWrite:
+    # Every accepted create, replace and edit funnels through here, and this is
+    # the last point where the bytes, the checksum and the parsed entity are still
+    # one string — so it is the only place a trailing-newline guarantee can hold
+    # for all three at once (GAPS U2). `dump_frontmatter` terminates what it
+    # renders, but an edit's content comes back from `apply_edit_operation`
+    # without passing through it.
+    markdown_content = ensure_trailing_newline(markdown_content)
     entity_markdown = await dependencies.entity_parser.parse_markdown_content(
         file_path=file_path,
         content=markdown_content,
