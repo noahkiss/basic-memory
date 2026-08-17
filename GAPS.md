@@ -5680,7 +5680,7 @@ first commit"):
 
 ---
 
-### O9 — `docs/NOTE-FORMAT.md` documents a Picoschema surface that no longer exists
+### O9 — `docs/NOTE-FORMAT.md` documents a Picoschema surface that no longer exists — **CLOSED 2026-08-17: every stale mention deleted**
 **Opened 2026-08-16**, found by the W21 docs pass.
 
 The `picoschema` package was stripped 2026-08-10 (recorded as **O-picoschema**), but the docs that
@@ -5729,6 +5729,30 @@ a confident wrong answer.
 `AGENTS.md`. Deliberately **not** done in the W21 pass:
 it is a ~210-line deletion in a file that pass only needed one paragraph of, and bundling it would
 have hidden the permalink work inside a docs strip.
+
+**CLOSED 2026-08-17.** All four instances fixed.
+
+- `docs/NOTE-FORMAT.md`: 542 → 255 lines. Deleted the whole `## Schemas` section (Picoschema
+  syntax, schema-to-note mapping, attachment, schema notes, validation modes and output,
+  `bm schema infer`, `bm schema diff`), the `schema` frontmatter row, and the two schema worked
+  examples. `## Complete Examples` became `## Complete Example` — one example is left, so the
+  sub-heading `### Simple Note (No Schema)` went too. Kept untouched: frontmatter, observations,
+  relations, permalinks, and the `IDENTITY.md` pointer, all of which describe live behaviour.
+- `src/basic_memory/man/bm.1`: deleted the `bm schema` entry and retitled its section
+  `Projects and schemas:` → `Projects:`; replaced "These emit JSON" with the one-rendering-per-verb
+  rule and an explicit "no `--json`" (W20); rewrote the `config.json` line to say the database owns
+  the project registry (B2).
+- `AGENTS.md`: dropped the `/picoschema` line from the directory-structure list.
+
+Control, run after the edits — `git grep -in picoschema` hits only `GAPS.md` history and
+`docs/manual-pages.md:140-141`, which O9 already identified as the *correct* mention (it names the
+strip and points at O-picoschema). Nothing user-facing presents Picoschema as live. The grep is its
+own positive control: it still returns hits, so it reaches both trees.
+
+**Judgment call taken.** O9 named only the `config.json` half of the `.SH FILES` block, but the next
+line called `memory.db` "derived; safe to rebuild with bm reindex". After B2 that is false and it
+would have contradicted the corrected line directly above it, so it now reads "SQLite index and
+project registry". This is the same B2 staleness O9 names, one line lower.
 
 ### O10 — one malformed transcript line makes `bm mine` print nothing for a whole directory — **CLOSED 2026-08-16: damage is counted, named, and survivable**
 **Opened 2026-08-16** by the W1 review, which re-ran W1's own corpus survey against the live

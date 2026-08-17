@@ -27,7 +27,10 @@ Knowledge operations:
 .TP
 .B bm tool
 CLI access to the MCP tools (write-note, read-note, search-notes,
-build-context, ...). These emit JSON and are the scriptable surface.
+build-context, ...). These render one plain-text form per verb, defined by
+docs/OUTPUT_CONTRACT.md. There is no
+.B \-\-json
+mode.
 .TP
 .B bm status
 Show sync status between files and the database.
@@ -45,13 +48,10 @@ List entities with no relations in the knowledge graph.
 .B bm format
 Run configured formatters over note files.
 .PP
-Projects and schemas:
+Projects:
 .TP
 .B bm project
 Add, remove, list, and move projects; set the default.
-.TP
-.B bm schema
-List, validate, infer, and drift-check Picoschema note-type contracts.
 .PP
 Data:
 .TP
@@ -99,10 +99,10 @@ bm reindex           # runs project indexing
 .SH FILES
 .TP
 .I ~/.basic-memory/config.json
-Projects, default project, and global settings.
+Global settings. The project registry is not here \(em the database owns it.
 .TP
 .I ~/.basic-memory/memory.db
-SQLite index (derived; safe to rebuild with bm reindex).
+SQLite index and project registry.
 .SH ENVIRONMENT
 .TP
 .B BASIC_MEMORY_LOG_LEVEL
