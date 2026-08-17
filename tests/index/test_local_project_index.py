@@ -1376,6 +1376,71 @@ async def test_local_project_index_move_updates_permalink_when_configured(
 
     assert not [line for line in logged_warnings if "Vocabulary violation" in line]
 
+    # GAPS T28: the frontmatter mirror follows the column, so the id check does
+    # not read a routine move as a hand-edited `permalink:`.
+    assert moved_entity.entity_metadata is not None
+    assert moved_entity.entity_metadata["permalink"] == expected_permalink
+
+
+async def test_local_project_index_move_leaves_no_permalink_drift(
+    test_project: Project,
+    project_config,
+    entity_repository,
+    session_maker: async_sessionmaker[AsyncSession],
+    search_service,
+    app_config,
+    config_manager,
+    monkeypatch,
+) -> None:
+    """A scan-detected move reports no drift afterwards (GAPS T28).
+
+    The move batch writes `permalink` and `entity_metadata` together. Before that
+    it wrote the column alone, so `find_permalink_integrity_issues` called every
+    tidied corpus drifted and the real hand-edit hid in the noise.
+    """
+    app_config.update_permalinks_on_move = True
+    config_manager.save_config(app_config)
+
+    original_path = project_config.home / "notes" / "drifty.md"
+    moved_path = project_config.home / "archive" / "drifty.md"
+    original_path.parent.mkdir(parents=True, exist_ok=True)
+    moved_path.parent.mkdir(parents=True, exist_ok=True)
+    original_path.write_text("# Drifty\n\nA note that moves.\n", encoding="utf-8")
+
+    await run_local_project_index_for_project(
+        test_project,
+        runtime_factory=LocalProjectIndexRuntimeFactory(batch_size=10),
+        force_full=True,
+    )
+
+    # Positive control: the check is clean before the move, so a clean result
+    # after it cannot mean the query never had anything to find.
+    async with db.scoped_session(session_maker) as session:
+        before = await EntityRepository(project_id=test_project.id).find_permalink_integrity_issues(
+            session
+        )
+    assert before == []
+
+    original_path.rename(moved_path)
+    second = await run_local_project_index_for_project(
+        test_project,
+        runtime_factory=LocalProjectIndexRuntimeFactory(batch_size=10),
+    )
+    assert second.moved_files == 1
+
+    async with db.scoped_session(session_maker) as session:
+        moved_entity = await entity_repository.get_by_file_path(session, "archive/drifty.md")
+        assert moved_entity is not None
+        issues = await EntityRepository(project_id=test_project.id).find_permalink_integrity_issues(
+            session
+        )
+
+    expected_permalink = f"{test_project.permalink}/archive/drifty"
+    assert moved_entity.permalink == expected_permalink
+    assert moved_entity.entity_metadata is not None
+    assert moved_entity.entity_metadata["permalink"] == expected_permalink
+    assert issues == []
+
 
 # --- GAPS T23: a hand-move on a governed project ---
 #

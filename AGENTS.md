@@ -242,8 +242,9 @@ See the [README.md](README.md) file for a project overview.
 - Impacted tests: `just fast-test` (pytest-testmon)
 - Unit: `just test-unit-sqlite` · integration: `just test-int-sqlite` · everything: `just test-sqlite`
 - Single test: `uv run pytest tests/path/to/test_file.py::test_function_name`
-- Local consistency check: `just doctor` — end-to-end file ↔ DB loop in a temp project. Runs with a
-  temporary HOME/config so it won't touch your local settings; leaves temp dirs in `/tmp`.
+- Local consistency check: `just doctor` — the `--self-test` file ↔ DB loop in a temp project.
+  Runs with a temporary HOME/config so it won't touch your local settings; leaves temp dirs in
+  `/tmp`.
 - Lint: `just lint` · format: `just format` · typecheck: `just typecheck` (or `just typecheck-pyright`)
 - All static checks: `just check` · DB migration: `just migration "message"`
 - Coverage HTML: `just coverage` · MCP smoke: `just test-smoke` · MCP Inspector: `just run-inspector`
@@ -443,7 +444,8 @@ separate `get_client()` + `get_active_project()` pair inside an MCP tool.
 
 ### Basic Memory Commands
 
-- Sync status: `basic-memory status` · file ↔ DB check: `basic-memory doctor`
+- Sync status: `basic-memory status` · corpus check: `basic-memory doctor` (integrity and
+  hygiene, `--only <group>`; `--self-test` checks the file ↔ DB loop instead)
 - Projects: `project list` / `project add "name" ~/path` / `project info` / `project check`
 - Config: `config list` (effective values, env overrides marked) / `config get <key>` /
   `config set <key> <value>` (validated through the config model) / `config unset <key>`

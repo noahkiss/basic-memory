@@ -434,8 +434,22 @@ async def prepare_accepted_note_move(
         permalink=permalink,
         db_checksum=await file_utils.compute_checksum(markdown_content),
     )
+    previous_permalink = entity.permalink
     entity.file_path = result.file_path
     entity.permalink = result.permalink
+    # Trigger: the move changed the permalink, so the prepared content rewrote
+    #     the `permalink:` line in the file's frontmatter.
+    # Why: entity_metadata mirrors that frontmatter, and a stale mirror makes the
+    #     id-integrity check report a routine move as drift (GAPS T28), burying
+    #     the hand-edit the check exists to find. Keyed on the permalink actually
+    #     changing rather than on the caller's intent, because the preparer
+    #     declines the rewrite when permalinks are disabled.
+    # Outcome: the mirror agrees with the bytes this move writes. Rebound rather
+    #     than mutated in place: a plain JSON column does not track item
+    #     assignment. A row with no mirror does not acquire one here, matching
+    #     the batch path, where json_set on NULL stays NULL.
+    if result.permalink != previous_permalink and entity.entity_metadata is not None:
+        entity.entity_metadata = {**entity.entity_metadata, "permalink": result.permalink}
     entity.last_updated_by = user_profile_value
     await session.flush()
     return result

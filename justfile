@@ -401,7 +401,7 @@ format:
 run-inspector:
     npx @modelcontextprotocol/inspector
 
-# Run doctor checks in an isolated temp home/config
+# Run the doctor self-test in an isolated temp home/config
 doctor:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -416,7 +416,7 @@ doctor:
     BASIC_MEMORY_ENV=test \
     BASIC_MEMORY_HOME="$TMP_HOME/basic-memory" \
     BASIC_MEMORY_CONFIG_DIR="$TMP_CONFIG" \
-    ./.venv/bin/python -m basic_memory.cli.main doctor
+    ./.venv/bin/python -m basic_memory.cli.main doctor --self-test
 
 
 # Update all dependencies to latest versions

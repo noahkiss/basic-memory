@@ -70,6 +70,20 @@ PROBE_SOURCE = textwrap.dedent(
         directory.mkdir(parents=True, exist_ok=True)
         (directory / "vocabulary.yml").write_text("types: [task, guide]\\n")
 
+    if command[0] == "mine":
+        # `bm mine` reads transcripts off disk and nothing else, so the guard
+        # needs one to read. The path is built here rather than baked into the
+        # parametrization because it has to sit under this probe's temp HOME.
+        from pathlib import Path
+
+        transcripts = Path.home() / "transcripts"
+        transcripts.mkdir(parents=True, exist_ok=True)
+        (transcripts / "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.jsonl").write_text(
+            '{"type":"user","timestamp":"2026-08-16T09:00:00Z",'
+            '"message":{"role":"user","content":"we chose sqlite"}}\\n'
+        )
+        command = [*command, "--dir", str(transcripts)]
+
     result = runner.invoke(app, command)
     assert result.exit_code == 0, result.output
     # The count line closes every record listing, so its presence proves the
@@ -82,10 +96,14 @@ PROBE_SOURCE = textwrap.dedent(
 
 # Every native command the guard covers, with the tail of its own last output
 # line — the assertion that proves the command rendered rather than exiting
-# early. `types` runs --quiet so the count line is last, not the affordance.
+# early. `types`, `mine` and `doctor` run --quiet so the count line is last, not
+# the affordance. `doctor` checks a corpus with nothing in it, so its last line
+# is the hygiene section's empty-result line rather than a count.
 NATIVE_COMMANDS = (
     (["project", "list"], " projects"),
     (["types", "--quiet"], " types"),
+    (["mine", "sqlite", "--quiet"], " turns"),
+    (["doctor", "--quiet"], "No issues"),
 )
 
 
@@ -108,6 +126,10 @@ def _probe(tmp_path, banned, command=("project", "list"), tail=" projects"):
         capture_output=True,
         text=True,
         env=env,
+        # cwd decides scope for an unscoped verb: `bm doctor` walks up looking
+        # for a `.bm.yml`, so running from the repo would make the result depend
+        # on whether the checkout happens to carry a marker.
+        cwd=str(tmp_path),
         timeout=120,
     )
 
@@ -115,7 +137,9 @@ def _probe(tmp_path, banned, command=("project", "list"), tail=" projects"):
     return json.loads(completed.stdout.strip().splitlines()[-1])
 
 
-@pytest.mark.parametrize("command,tail", NATIVE_COMMANDS, ids=["project-list", "types"])
+@pytest.mark.parametrize(
+    "command,tail", NATIVE_COMMANDS, ids=["project-list", "types", "mine", "doctor"]
+)
 def test_native_command_stays_off_api_and_mcp(tmp_path, command, tail):
     """A native command must not import the banned modules — alembic included once warm.
 
@@ -155,6 +179,10 @@ def test_guard_probe_detects_a_crossing(tmp_path):
         capture_output=True,
         text=True,
         env=env,
+        # cwd decides scope for an unscoped verb: `bm doctor` walks up looking
+        # for a `.bm.yml`, so running from the repo would make the result depend
+        # on whether the checkout happens to carry a marker.
+        cwd=str(tmp_path),
         timeout=120,
     )
 

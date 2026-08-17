@@ -51,6 +51,10 @@ _TYPE_ONLY_FIELDS: Mapping[str, frozenset[str]] = {
     "status": frozenset({"task"}),
     "not-before": frozenset({"task"}),
     "review-by": frozenset({"finding", "guide"}),
+    # An inbox record is unfiled by definition, so it is the only type that can
+    # say where it thinks it belongs. `bm doctor` reads this to make the inbox
+    # pile actionable (GAPS W2); on any other type the answer is the `type` field.
+    "proposed-type": frozenset({"inbox"}),
 }
 
 _REQUIRED_COMMON: tuple[str, ...] = ("id", "permalink", "title", "source")
@@ -105,7 +109,15 @@ _SET_ONCE: tuple[str, ...] = (
 # Every key any rule already judges. A schema key on the wrong type is reported
 # once, as `field-not-on-type` — never also as an unknown key.
 _SCHEMA_KEYS: frozenset[str] = frozenset(
-    (*_REQUIRED_COMMON, "type", "area", "status", *_SCHEMA_DATE_FIELDS, *_PROVENANCE)
+    (
+        *_REQUIRED_COMMON,
+        "type",
+        "area",
+        "status",
+        "proposed-type",
+        *_SCHEMA_DATE_FIELDS,
+        *_PROVENANCE,
+    )
 )
 
 # Basic Memory writes these itself. Flagging them would put a permanent advisory

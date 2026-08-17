@@ -7,7 +7,18 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from loguru import logger
-from sqlalchemy import RowMapping, bindparam, case, column, delete, select, table, text, update
+from sqlalchemy import (
+    RowMapping,
+    bindparam,
+    case,
+    column,
+    delete,
+    func,
+    select,
+    table,
+    text,
+    update,
+)
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from basic_memory import db
@@ -511,6 +522,19 @@ def _build_move_batch_update_values(
             permalinks_by_entity_id,
             value=Entity.id,
             else_=Entity.permalink,
+        )
+        # entity_metadata mirrors the file's frontmatter, and the planned content
+        # rewrote the permalink line in it. Leaving the mirror stale makes the
+        # id-integrity check call a routine move "drift" (GAPS T28), which buries
+        # the hand-edit that check exists to find. json_set on a NULL mirror
+        # stays NULL: a row with no frontmatter copy does not acquire one here.
+        entity_values["entity_metadata"] = case(
+            {
+                entity_id: func.json_set(Entity.entity_metadata, "$.permalink", permalink)
+                for entity_id, permalink in permalinks_by_entity_id.items()
+            },
+            value=Entity.id,
+            else_=Entity.entity_metadata,
         )
         note_content_values["db_checksum"] = case(
             checksums_by_entity_id,

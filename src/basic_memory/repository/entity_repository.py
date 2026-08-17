@@ -1,7 +1,7 @@
 """Repository for managing entities in the knowledge graph."""
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import List, Optional, Sequence, Union, Any
 
@@ -45,6 +45,32 @@ class PermalinkIntegrityIssue:
     issue: str  # "drift" (DB vs frontmatter) or "underscore" (slugification hazard)
     permalink: str
     frontmatter_permalink: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class HygieneRecord:
+    """One record a hygiene check wants a person to look at (GAPS W2).
+
+    ``detail`` is the value that made the record match — the date that expired,
+    the date that was guessed, the day the record last changed, the type an
+    inbox record proposes. Empty when the check has no value to show.
+    """
+
+    file_path: str
+    permalink: str | None
+    detail: str
+
+
+# Frontmatter keys the hygiene queries read out of ``entity_metadata``. Quoted
+# JSON paths because a bare ``$.review-by`` reads as an expression to some
+# json_extract implementations, and the mistake would be silent.
+_REVIEW_BY_PATH = '$."review-by"'
+_DATE_SOURCE_PATH = '$."date-source"'
+_PROPOSED_TYPE_PATH = '$."proposed-type"'
+_TYPE_PATH = "$.type"
+# The three type-owned date fields (schema.md §2). A record has at most one, so
+# coalesce names whichever it carries without the caller knowing its type.
+_DATE_PATHS = ("$.opened", '$."event-date"', "$.since")
 
 
 class EntityRepository(Repository[Entity]):
@@ -111,6 +137,120 @@ class EntityRepository(Repository[Entity]):
                     )
                 )
         return issues
+
+    # --- Hygiene: the checks that need a person, not a right answer (GAPS W2) ---
+    #
+    # All four read the frontmatter mirror in ``entity_metadata`` rather than a
+    # column, because these are schema fields and the schema is not the table.
+    # The predicates are the shape ``find_permalink_integrity_issues`` already
+    # uses, and migration ``d7e8f9a0b1c2`` indexes them.
+
+    async def find_review_due_records(
+        self, session: AsyncSession, today: date
+    ) -> List[HygieneRecord]:
+        """Find records whose ``review-by`` date has passed.
+
+        ISO-8601 dates sort lexicographically, so the string comparison the JSON
+        mirror allows is also the chronological one. Oldest first: a review that
+        expired last year is a different problem from one that expired today.
+        """
+        review_by = func.json_extract(Entity.entity_metadata, _REVIEW_BY_PATH)
+        query = (
+            select(Entity.file_path, Entity.permalink, review_by)
+            .where(
+                Entity.project_id == self.project_id,
+                review_by.is_not(None),
+                review_by < today.isoformat(),
+            )
+            .order_by(review_by.asc(), Entity.file_path.asc())
+        )
+        result = await session.execute(query)
+        return [
+            HygieneRecord(file_path=file_path, permalink=permalink, detail=str(due))
+            for file_path, permalink, due in result.all()
+        ]
+
+    async def find_inferred_date_records(self, session: AsyncSession) -> List[HygieneRecord]:
+        """Find records whose date was inferred rather than read from evidence.
+
+        ``date-source: inferred`` is the one rung that says nobody can re-open
+        the thing the date came from, so a person has to confirm or correct it.
+        """
+        inferred_date = func.coalesce(
+            *(func.json_extract(Entity.entity_metadata, path) for path in _DATE_PATHS)
+        )
+        query = (
+            select(Entity.file_path, Entity.permalink, inferred_date)
+            .where(
+                Entity.project_id == self.project_id,
+                func.json_extract(Entity.entity_metadata, _DATE_SOURCE_PATH) == "inferred",
+            )
+            .order_by(Entity.file_path.asc())
+        )
+        result = await session.execute(query)
+        return [
+            HygieneRecord(
+                file_path=file_path,
+                permalink=permalink,
+                detail="" if guessed_date is None else str(guessed_date),
+            )
+            for file_path, permalink, guessed_date in result.all()
+        ]
+
+    async def find_stale_state_records(
+        self, session: AsyncSession, updated_before: datetime
+    ) -> List[HygieneRecord]:
+        """Find ``state`` records untouched since ``updated_before``.
+
+        A state record says how things are now, so an old one is a claim nobody
+        has re-checked — the failure the predecessor tool hit with a ``status:
+        done`` that sat wrong on disk for six months (GAPS W5 rule 5).
+        """
+        query = (
+            select(Entity.file_path, Entity.permalink, Entity.updated_at)
+            .where(
+                Entity.project_id == self.project_id,
+                func.json_extract(Entity.entity_metadata, _TYPE_PATH) == "state",
+                Entity.updated_at < updated_before,
+            )
+            .order_by(Entity.updated_at.asc(), Entity.file_path.asc())
+        )
+        result = await session.execute(query)
+        return [
+            HygieneRecord(
+                file_path=file_path,
+                permalink=permalink,
+                detail=updated_at.date().isoformat(),
+            )
+            for file_path, permalink, updated_at in result.all()
+        ]
+
+    async def find_inbox_records(self, session: AsyncSession) -> List[HygieneRecord]:
+        """Find ``inbox`` records, with the type each one proposes.
+
+        ``proposed-type`` is legal on ``inbox`` alone and is what makes the pile
+        actionable: a person filing ten inbox records wants to know that six of
+        them already say where they belong. It reads empty on a corpus nothing
+        has proposed for yet, which is a true answer, not a broken query.
+        """
+        proposed_type = func.json_extract(Entity.entity_metadata, _PROPOSED_TYPE_PATH)
+        query = (
+            select(Entity.file_path, Entity.permalink, proposed_type)
+            .where(
+                Entity.project_id == self.project_id,
+                func.json_extract(Entity.entity_metadata, _TYPE_PATH) == "inbox",
+            )
+            .order_by(Entity.file_path.asc())
+        )
+        result = await session.execute(query)
+        return [
+            HygieneRecord(
+                file_path=file_path,
+                permalink=permalink,
+                detail="" if proposed is None else str(proposed),
+            )
+            for file_path, permalink, proposed in result.all()
+        ]
 
     async def create_pending_accepted_entity(
         self,

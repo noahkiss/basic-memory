@@ -324,7 +324,7 @@ basic-memory config unset cli_output_style      # revert to default
 
 # Health & maintenance
 basic-memory status
-basic-memory doctor              # file <-> DB consistency check
+basic-memory doctor              # check your notes; --self-test checks the install
 basic-memory tool edit-note ...  # CLI access to MCP tools
 
 # Imports
@@ -375,7 +375,7 @@ just test-int-sqlite    # Integration tests (semantic and benchmark excluded)
 just fast-check         # fix/format/typecheck (no tests)
 just fast-test          # Impacted tests (pytest-testmon)
 just gate               # lint + typecheck + unit tests (pre-push gate)
-just doctor             # File <-> DB consistency check (temp config)
+just doctor             # File <-> DB self-test (temp config)
 just lint               # ruff check --fix
 just typecheck          # ty (primary)
 just typecheck-pyright  # Pyright (supplemental)

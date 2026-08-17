@@ -299,6 +299,7 @@ def test_a_task_may_not_carry_a_findings_date():
         ("status", "open", "task"),
         ("not-before", "2026-08-01", "task"),
         ("review-by", "2027-08-01", "finding, guide"),
+        ("proposed-type", "guide", "inbox"),
     ],
 )
 def test_a_field_that_belongs_to_another_type(name: str, value: str, owners: str):
@@ -307,6 +308,16 @@ def test_a_field_that_belongs_to_another_type(name: str, value: str, owners: str
     assert violation.rule == "field-not-on-type"
     assert violation.field == name
     assert owners in violation.message
+
+
+def test_an_inbox_record_may_propose_the_type_it_thinks_it_is():
+    """`proposed-type` is a schema key on `inbox`, so it is neither error nor advisory.
+
+    The case above proves the key reports once on the wrong type. This proves it
+    reports nothing on `inbox`: without it, adding the key to `_SCHEMA_KEYS`
+    could have been wrong in the other direction and still passed.
+    """
+    assert check(INBOX | {"proposed-type": "guide"}) == []
 
 
 # --- 6. supersedes-not-on-type ---
