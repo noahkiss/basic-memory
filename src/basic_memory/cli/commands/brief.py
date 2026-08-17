@@ -10,11 +10,14 @@ Three constraints shape the whole file, and each one is a reversal of how upstre
    pulls fastmcp and the FastAPI ASGI app — measured at 4.2 s against a 1.0 s
    floor for a native CLI command. A blocking multi-second hook on every session start is
    the reason the previous home-grown auto-injection got retired. So this queries the
-   `entity` table directly through SQLAlchemy: no search index, no FTS, no HTTP, no MCP.
+   `entity` table directly through SQLAlchemy: no HTTP, no MCP. `--query` reaches the
+   FTS index through the repository layer, which is on the same direct path.
 
 2. **It must be silent when it has nothing to say.** No setup nudges, no "where to write"
    guidance, no placeholder headings. An empty brief prints nothing at all and exits 0.
-   A stale or padded blob at the top of a context window is worse than no blob.
+   A stale or padded blob at the top of a context window is worse than no blob. The one
+   exception is `--query`: a search someone typed gets `0 results` rather than silence,
+   because an unanswered question is not the same as a quiet corpus (contract rule 5).
 
 3. **It must never break a session start.** Every failure path degrades to empty output.
    `--verbose` adds a stated reason on stderr, because an empty brief and a broken one
@@ -23,15 +26,24 @@ Three constraints shape the whole file, and each one is a reversal of how upstre
 Scope follows GAPS W5-C: `--project` > nearest `.bm.yml` > **every project**. The
 registry default is gone from the read path — an unmarked cwd rolls every project up
 rather than picking one arbitrary project to be silent about the rest.
+
+**Sections come from each project's vocabulary, never from a hardcoded list** (GAPS W8
+item 2, closed 2026-08-17). The trio brief used to carry — `task` / `decision` /
+`session` — shares no member with W4's decided type set, so this is a rewrite rather
+than a generalization. W8's own amendment governs the shape: *sections* derive from the
+vocabulary, *rows* do not. `SECTION_RULES` below is the whole of that per-type judgment,
+and a declared type absent from it contributes nothing at all.
 """
 
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date
 from pathlib import Path
-from typing import Optional
+from types import MappingProxyType
+from typing import Literal, Optional
 
 import typer
 from loguru import logger
@@ -44,11 +56,63 @@ from basic_memory.cli.scope import ReadScope, resolve_read_scope
 # chars and that ceiling has not caused trouble, so it carries over unchanged.
 MAX_BRIEF_CHARS = 10_000
 
-# Per section. A brief is an orientation, not an inventory — `bm ls` is the place to go
-# wide. Five is what fits before the reader starts skimming.
+# Per section, and for the whole `--query` result. A brief is an orientation, not an
+# inventory — `bm ls` is the place to go wide. Five is what fits before the reader
+# starts skimming.
 MAX_ROWS = 5
 
-DEFAULT_TIMEFRAME_DAYS = 3
+# The statuses that close a task. The vocabulary declares its statuses but marks none of
+# them terminal (`vocabulary/model.py`), so the terminal set lives here — the one piece
+# of type knowledge brief cannot read out of a project's file.
+TERMINAL_STATUSES: frozenset[str] = frozenset({"done", "dropped"})
+
+# What an ungoverned project contributes. W4 decided that an absent `vocabulary.yml`
+# means *unchecked*, not *typeless*: records still carry a frontmatter `type`, and a
+# brief that went blank over a missing file would hide real open work. So the two types
+# whose rows are unconditional are assumed, and nothing else is.
+UNGOVERNED_TYPES: tuple[str, ...] = ("task", "state")
+
+# How a row is chosen for a section. Each is a predicate over the `entity` table, not a
+# ranking: "which records of this type belong in a session primer at all".
+type RowRule = Literal["non-terminal", "every", "review-due", "count"]
+
+
+@dataclass(frozen=True, slots=True)
+class SectionRule:
+    """What one record type contributes to a brief, if anything."""
+
+    heading: str
+    rule: RowRule
+
+
+# The per-type judgment W8's 2026-08-04 amendment demands, and the only place it lives.
+#
+# - `task` and `state` earn rows unconditionally — they are what "where was I" means.
+# - `finding` earns rows only when its `review-by` has passed. A finding is a durable
+#   conclusion; listing every one of them by recency would make the brief a table of
+#   contents, and only an expired review is a thing to act on.
+# - `inbox` earns a count and no rows. The pile's contents are not orientation, and
+#   W5-B's notice already names it with the command that lists it.
+# - `guide` and `profile` are absent on purpose: they are consulted on demand, and a
+#   brief that lists every guide is content, which W8 exists to forbid. Reverse this
+#   only with evidence that an agent failed to find a guide it needed.
+#
+# Iteration order here is the printed order, deliberately not the vocabulary file's: an
+# unscoped roll-up spans several files with no single order between them, and open work
+# belongs above a filing reminder either way.
+SECTION_RULES: Mapping[str, SectionRule] = MappingProxyType(
+    {
+        "task": SectionRule("Open tasks", "non-terminal"),
+        "state": SectionRule("Current state", "every"),
+        "finding": SectionRule("Findings past review-by", "review-due"),
+        "inbox": SectionRule("Unfiled inbox records", "count"),
+    }
+)
+
+# The `review-by` frontmatter key, as a JSON path. Quoted, because a bare `$.review-by`
+# reads as an expression to some json_extract implementations and the mistake is silent
+# (the same constant, for the same reason, is in `repository/entity_repository.py`).
+REVIEW_BY_PATH = '$."review-by"'
 
 
 @dataclass(frozen=True)
@@ -65,17 +129,51 @@ class Row:
 
 
 @dataclass(frozen=True)
-class Brief:
-    """The three query results, before rendering."""
+class Section:
+    """One heading and what sits under it.
 
-    project: Optional[str]
-    tasks: list[Row]
-    decisions: list[Row]
-    sessions: list[Row]
+    A section carries either rows or a count, never both: `count` is what a type
+    whose `RowRule` is `"count"` contributes, and it prints as a single line.
+    """
+
+    heading: str
+    rows: tuple[Row, ...] = ()
+    count: int = 0
 
     @property
     def is_empty(self) -> bool:
-        return not (self.tasks or self.decisions or self.sessions)
+        return not self.rows and not self.count
+
+
+@dataclass(frozen=True)
+class Brief:
+    """Every section a run produced, before rendering.
+
+    `query` is the search text when `--query` was given, and None otherwise. It
+    changes two things: the payload is search hits rather than sections, and an
+    empty result is stated rather than silent.
+    """
+
+    project: Optional[str]
+    sections: tuple[Section, ...] = ()
+    query: Optional[str] = None
+
+    @property
+    def is_empty(self) -> bool:
+        return all(section.is_empty for section in self.sections)
+
+    @property
+    def row_count(self) -> int:
+        return sum(len(section.rows) for section in self.sections)
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectRow:
+    """One in-scope project: what the queries filter on, and where its vocabulary is."""
+
+    id: int
+    name: str
+    external_id: str
 
 
 class UnknownProject(ValueError):
@@ -85,66 +183,194 @@ class UnknownProject(ValueError):
 # --- Query ---
 
 
-async def query(session_maker, scope: ReadScope, timeframe_days: int) -> Brief:
-    """Read open work straight out of the `entity` table.
+def declared_types(projects: Sequence[ProjectRow]) -> tuple[str, ...]:
+    """The union of every in-scope project's declared types, in printed order.
 
-    Deliberately not the search index: these are exact equality filters on `note_type`
-    and a frontmatter field, which is a plain indexed lookup. Routing them through FTS
-    or the vector store would add the entire MCP import cost to buy nothing.
+    Raises `VocabularyError` for a malformed `vocabulary.yml`: an unreadable
+    vocabulary must never degrade into "not governed" (GAPS W4). Brief's own
+    catch-all turns that into silence plus a `--verbose` reason.
+    """
+    # Deferred: the vocabulary reader pulls PyYAML, which has no business loading
+    # at CLI import time.
+    from basic_memory.vocabulary.model import load_vocabulary
+
+    seen: set[str] = set()
+    for project in projects:
+        vocabulary = load_vocabulary(project.external_id)
+        seen.update(vocabulary.types if vocabulary is not None else UNGOVERNED_TYPES)
+    return tuple(name for name in SECTION_RULES if name in seen)
+
+
+async def in_scope_projects(session, scope: ReadScope) -> list[ProjectRow]:
+    """Resolve the scope to projects, or raise when a pinned name is unknown.
+
+    An explicitly named project is read even when it is inactive — the caller
+    named it. The unscoped roll-up covers active projects only.
+    """
+    from sqlalchemy import select
+
+    from basic_memory.models.project import Project
+
+    statement = select(Project.id, Project.name, Project.external_id)
+    if scope.project is not None:
+        statement = statement.where(Project.name == scope.project)
+    else:
+        statement = statement.where(Project.is_active.is_(True))
+
+    projects = [ProjectRow(*row) for row in (await session.execute(statement)).all()]
+
+    # Trigger: a pinned project the registry does not hold.
+    # Why: an empty brief and a misspelled --project are the same output, which is
+    #      the diagnostic hole W8 recorded. Naming it gives --verbose something true
+    #      to say.
+    # Outcome: raise; the verb still exits 0, printing the reason only on --verbose.
+    if scope.project is not None and not projects:
+        raise UnknownProject(f"unknown project '{scope.project}'")
+    return projects
+
+
+async def query(session_maker, scope: ReadScope, query_text: Optional[str] = None) -> Brief:
+    """Read open work straight out of the `entity` table, or search when asked.
+
+    Deliberately not the search index for the section path: these are exact equality
+    filters on `note_type` and a frontmatter field, which is a plain indexed lookup.
+    `--query` is the one thing that needs FTS, and it goes through the repository
+    layer rather than hand-rolled SQL.
 
     Takes a session maker rather than opening one so the SQL can be exercised against a
     real database in tests without mocking the config or the global engine.
 
     An unscoped brief is one query per section across every active project, not one
-    query per project: `MAX_ROWS` is the whole brief's cap, so the roll-up shows the
-    five most recently touched rows overall. Capping per project instead would make a
-    brief grow with the registry, which is what W8's cap exists to prevent.
+    query per project: `MAX_ROWS` caps the section, not the project, so the roll-up
+    shows the five most recently touched rows across every project it covered. Capping
+    per project instead would make a brief grow with the registry, which is what W8's
+    cap exists to prevent. `MAX_BRIEF_CHARS` is what bounds the brief as a whole.
     """
-    from sqlalchemy import select
+    from sqlalchemy import func, or_, select
 
     from basic_memory.models.knowledge import Entity
     from basic_memory.models.project import Project
 
-    cutoff = datetime.now(timezone.utc) - timedelta(days=timeframe_days)
-
     async with session_maker() as session:
-        # Trigger: a pinned project the registry does not hold.
-        # Why: an empty brief and a misspelled --project are the same output, which is
-        #      the diagnostic hole W8 recorded. Naming it gives --verbose something true
-        #      to say.
-        # Outcome: raise; the verb still exits 0, printing the reason only on --verbose.
-        if scope.project is not None:
-            known = await session.scalar(select(Project.id).where(Project.name == scope.project))
-            if known is None:
-                raise UnknownProject(f"unknown project '{scope.project}'")
+        projects = await in_scope_projects(session, scope)
+        project_ids = [project.id for project in projects]
+
+        # Trigger: --query. Why: a search replaces the sections rather than joining
+        # them — the hits are what was asked for, and burying them under four standing
+        # sections spends the whole char budget on what nobody asked about.
+        if query_text is not None:
+            rows = await search_pointers(session, session_maker, projects, query_text)
+            heading = f'Matches for "{query_text}"'
+            return Brief(
+                project=scope.project,
+                sections=(Section(heading=heading, rows=rows),),
+                query=query_text,
+            )
+
+        if not project_ids:
+            return Brief(project=scope.project)
 
         def base(note_type: str):
-            statement = (
+            return (
                 select(Entity.title, Entity.permalink, Entity.file_path, Project.name)
                 .join(Project, Entity.project_id == Project.id)
-                .where(Entity.note_type == note_type)
-                .order_by(Entity.updated_at.desc())
+                .where(Entity.note_type == note_type, Entity.project_id.in_(project_ids))
                 .limit(MAX_ROWS)
             )
-            if scope.project is not None:
-                return statement.where(Project.name == scope.project)
-            return statement.where(Project.is_active.is_(True))
 
         status = Entity.entity_metadata["status"].as_string()
+        review_by = func.json_extract(Entity.entity_metadata, REVIEW_BY_PATH)
+        recent = Entity.updated_at.desc()
+        today = date.today().isoformat()
 
-        tasks = await session.execute(base("task").where(status == "active"))
-        decisions = await session.execute(base("decision").where(status == "open"))
-        sessions = await session.execute(base("session").where(Entity.updated_at >= cutoff))
+        sections: list[Section] = []
+        for note_type in declared_types(projects):
+            rule = SECTION_RULES[note_type]
+            if rule.rule == "count":
+                total = await session.scalar(
+                    select(func.count())
+                    .select_from(Entity)
+                    .where(Entity.note_type == note_type, Entity.project_id.in_(project_ids))
+                )
+                sections.append(Section(heading=rule.heading, count=total or 0))
+                continue
 
-        return Brief(
-            project=scope.project,
-            tasks=_rows(tasks),
-            decisions=_rows(decisions),
-            sessions=_rows(sessions),
+            statement = base(note_type)
+            if rule.rule == "non-terminal":
+                # A missing or undeclared status still counts as open. Hiding a task
+                # because its frontmatter is wrong would suppress open work over a
+                # schema fault the notice already reports.
+                statement = statement.where(
+                    or_(status.is_(None), status.not_in(sorted(TERMINAL_STATUSES)))
+                ).order_by(recent)
+            elif rule.rule == "review-due":
+                # Oldest expiry first: a review that lapsed last year is a different
+                # problem from one that lapsed today. ISO dates sort lexicographically,
+                # so the string comparison is also the chronological one.
+                statement = statement.where(review_by.is_not(None), review_by < today).order_by(
+                    review_by.asc()
+                )
+            else:
+                statement = statement.order_by(recent)
+
+            found = await session.execute(statement)
+            sections.append(Section(heading=rule.heading, rows=_rows(found)))
+
+        return Brief(project=scope.project, sections=tuple(sections))
+
+
+async def search_pointers(
+    session, session_maker, projects: Sequence[ProjectRow], query_text: str
+) -> tuple[Row, ...]:
+    """Full-text search reduced to pointers: permalink and title, never content.
+
+    W8 item 1 in one sentence — a brief may say *where* something is and must never
+    say what it contains. `content_snippet` is on every hit and is deliberately
+    dropped on the floor.
+
+    The repository is built directly rather than through `create_search_repository`,
+    which instantiates the embedding provider when semantic search is enabled — a
+    64 MB model load has no place on a session-start hot path. FTS retrieval never
+    touches the provider.
+
+    Constraint: the caller's session is passed through. The pool holds one
+    connection, so letting the repository open its own inside the caller's `async
+    with` would deadlock.
+    """
+    # Deferred: the search repository pulls the whole FTS stack, which a brief
+    # without --query must not pay for.
+    from basic_memory.repository.sqlite_search_repository import SQLiteSearchRepository
+    from basic_memory.schemas.search import SearchItemType, SearchRetrievalMode
+
+    scored: list[tuple[float, Row]] = []
+    for project in projects:
+        repository = SQLiteSearchRepository(session_maker, project_id=project.id)
+        hits = await repository.search(
+            search_text=query_text,
+            search_item_types=[SearchItemType.ENTITY],
+            retrieval_mode=SearchRetrievalMode.FTS,
+            limit=MAX_ROWS,
+            session=session,
+        )
+        scored.extend(
+            (
+                # bm25 scores are negative and ascending-best, so plain sort order is
+                # relevance order. A hit without one sorts last rather than first.
+                hit.score if hit.score is not None else 0.0,
+                Row(
+                    title=hit.title or hit.file_path or "(untitled)",
+                    ref=hit.permalink or hit.file_path or "",
+                    project=project.name,
+                ),
+            )
+            for hit in hits
         )
 
+    scored.sort(key=lambda pair: pair[0])
+    return tuple(row for _, row in scored[:MAX_ROWS])
 
-async def gather(scope: ReadScope, timeframe_days: int) -> Brief:
+
+async def gather(scope: ReadScope, query_text: Optional[str] = None) -> Brief:
     """Open the app database and run `query` against it."""
     from basic_memory.config import ConfigManager
     from basic_memory.db import DatabaseType, get_or_create_db, has_active_engine, shutdown_db
@@ -163,7 +389,7 @@ async def gather(scope: ReadScope, timeframe_days: int) -> Brief:
         config=config,
     )
     try:
-        return await query(session_maker, scope, timeframe_days)
+        return await query(session_maker, scope, query_text)
     finally:
         # Constraint: `get_or_create_db` caches the engine in a module global, and
         # brief runs it under its own `asyncio.run`. Leaving it cached would hand
@@ -172,15 +398,15 @@ async def gather(scope: ReadScope, timeframe_days: int) -> Brief:
             await shutdown_db()
 
 
-def _rows(result) -> list[Row]:
-    return [
+def _rows(result) -> tuple[Row, ...]:
+    return tuple(
         Row(
             title=title or file_path or "(untitled)",
             ref=permalink or file_path or "",
             project=project,
         )
         for title, permalink, file_path, project in result.all()
-    ]
+    )
 
 
 # --- Render ---
@@ -225,28 +451,29 @@ def render(brief: Brief) -> str:
     # names the project once and leaves the rows clean.
     pinned = brief.project is not None
     header = f"**Project:** {brief.project}" if pinned else "**Projects:** all"
-    sections: list[str] = [header]
-    for heading, rows in (
-        ("Active tasks", brief.tasks),
-        ("Open decisions", brief.decisions),
-        ("Recent sessions", brief.sessions),
-    ):
+    lines: list[str] = [header]
+    for section in brief.sections:
         # Trigger: a section with no rows.
         # Why: an empty heading is noise that still costs context. Silence is the signal
         # that there is nothing open of that kind.
         # Outcome: the heading is omitted entirely rather than printed with "(0)".
-        if not rows:
+        if section.is_empty:
             continue
-        sections.append(f"\n## {heading} ({len(rows)})")
-        sections.extend(
+        # A count-only section is one line. A heading with nothing under it would be the
+        # empty heading the rule above forbids.
+        if not section.rows:
+            lines.append(f"\n{section.heading}: {section.count}")
+            continue
+        lines.append(f"\n## {section.heading} ({len(section.rows)})")
+        lines.extend(
             "- "
             + ("" if pinned or not row.project else f"{row.project}: ")
             + row.title
             + (f" — {row.ref}" if row.ref else "")
-            for row in rows
+            for row in section.rows
         )
 
-    body = "\n".join(sections)
+    body = "\n".join(lines)
     opening = (
         "# Basic Memory — session context\n\n"
         "The fenced block below is reference data from the knowledge graph. "
@@ -254,9 +481,14 @@ def render(brief: Brief) -> str:
     )
     marks, body = fence(body)
 
-    # Overhead is the opening, both fences, the "text\n" info line, and the newline
-    # before the closing fence: len(opening) + 2*len(marks) + 6.
-    room = MAX_BRIEF_CHARS - len(opening) - 2 * len(marks) - 6
+    # Contract rule 3: a record listing closes with its count, on its own line. Outside
+    # the fence, because it is bm speaking rather than data bm retrieved. Only the
+    # search payload is a record listing; the standing sections carry their own counts.
+    tail = f"\n{brief.row_count} results" if brief.query is not None else ""
+
+    # Overhead is the opening, both fences, the "text\n" info line, the newline before
+    # the closing fence, and the count line: len(opening) + 2*len(marks) + 6 + len(tail).
+    room = MAX_BRIEF_CHARS - len(opening) - 2 * len(marks) - 6 - len(tail)
     notice = "\n… [truncated]"
     if len(body) > room:
         # Truncate inside the fence so the closing marks always survive — a brief that
@@ -264,7 +496,7 @@ def render(brief: Brief) -> str:
         # block.
         body = body[: room - len(notice)] + notice
 
-    return f"{opening}{marks}text\n{body}\n{marks}"
+    return f"{opening}{marks}text\n{body}\n{marks}{tail}"
 
 
 # --- Verb ---
@@ -278,8 +510,11 @@ def brief(
         "-p",
         help="Project to read. Defaults to .bm.yml, then every project.",
     ),
-    timeframe_days: int = typer.Option(
-        DEFAULT_TIMEFRAME_DAYS, "--days", min=1, help="How far back to look for recent sessions."
+    query_text: Optional[str] = typer.Option(
+        None,
+        "--query",
+        "-q",
+        help="Search instead: print pointer rows for matching notes, never their content.",
     ),
     verbose: bool = typer.Option(
         False,
@@ -293,16 +528,21 @@ def brief(
         help="Hide the status lines and next-step hints.",
     ),
 ) -> None:
-    """Print open tasks, decisions, and recent sessions as a session-start brief.
+    """Print what is open, by record type, as a session-start brief.
 
-    Reads every project unless `--project` or a `.bm.yml` above the working directory
-    pins one. An explicitly named project is read even when it is inactive; the
-    unscoped roll-up covers active projects only. Prints nothing when there is
+    Sections come from each project's own record vocabulary, so a type a human
+    added shows up here and a type they removed does not. Reads every project
+    unless `--project` or a `.bm.yml` above the working directory pins one. An
+    explicitly named project is read even when it is inactive; the unscoped
+    roll-up covers active projects only.
+
+    `--query` turns the same command into a pointer-shaped search: one line per
+    hit, permalink and title, never note content. Prints nothing when there is
     nothing open. Intended for a SessionStart hook, but it is an ordinary command
     and is worth running by hand.
     """
     # Trigger: any failure at all — unusable marker, unknown project, missing or locked
-    # database, un-migrated schema, malformed config.
+    # database, un-migrated schema, malformed config or vocabulary.
     # Why: this runs as a blocking session-start hook. A traceback on stdout would be
     # spliced into the agent's context; a non-zero exit would surface as a hook error.
     # An unknown --project is an addressing failure the contract would exit 1 on; brief
@@ -310,10 +550,15 @@ def brief(
     # Outcome: log for the operator, print nothing on stdout, exit 0.
     try:
         scope = resolve_read_scope(project, Path.cwd())
-        result = asyncio.run(gather(scope, timeframe_days))
+        result = asyncio.run(gather(scope, query_text))
         output = render(result)
         if output:
             typer.echo(output[:MAX_BRIEF_CHARS])
+        elif query_text is not None:
+            # Contract rule 5: a well-scoped search that matched nothing is a result.
+            # Silence is only right for the standing brief, which nobody asked a
+            # question of.
+            typer.echo("0 results")
         elif verbose:
             typer.echo(f"brief: nothing open — {scope.describe()}", err=True)
         # After the payload, never before (contract rule 4). A brief with nothing
