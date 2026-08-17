@@ -407,6 +407,32 @@ async def test_expired_reviews_and_the_inbox_pile_are_counted(
     assert counts.inbox == 1
 
 
+@pytest.mark.asyncio
+async def test_the_inbox_count_includes_a_record_that_proposes_nothing(
+    session_maker,
+    test_project: Project,
+) -> None:
+    """GAPS U5: a deliberate inbox record is still unfiled, and the notice still says so.
+
+    U5 softened `bm doctor`'s demand on such a record. This is the half that must
+    not move with it: the pile is a pile whether or not anything in it names a type
+    it wants to become. Both shapes are seeded, so a check that counted only
+    proposals would come back 1.
+    """
+    async with db.scoped_session(session_maker) as session:
+        await make_entity(session, test_project.id, record(1, type="inbox"), "notes/plain.md")
+        await make_entity(
+            session,
+            test_project.id,
+            record(2, type="inbox", **{"proposed-type": "runbook"}),
+            "notes/proposing.md",
+        )
+
+    counts = await gather_notice_counts(ReadScope(project=test_project.name, origin="flag"))
+
+    assert counts.inbox == 2
+
+
 def break_vocabulary(project: Project) -> Path:
     """Write a `vocabulary.yml` the parser refuses, and return its path."""
     path = vocabulary_path(project.external_id)

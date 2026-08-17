@@ -134,9 +134,25 @@ def render_hygiene(report: "ProjectDoctorReport") -> list[str]:
             f"unchanged for over {STALE_STATE_DAYS} days, last changed ",
         )
     )
+    # Trigger: an inbox record that carries no `proposed-type`.
+    # Why: "proposes no type" described the record correctly and asked for
+    #     something no verb can produce. A proposal only ever arrives as a side
+    #     effect of `bm new <undeclared-type>`; ask for `inbox` on purpose — which
+    #     is what the type is documented for — and there is no way to attach one,
+    #     then or later. The demand made the count unclosable for a corpus that
+    #     used the escape hatch as intended (GAPS U5).
+    # Why not drop the row: the W5-B notice counts every inbox record as unfiled
+    #     and points the reader at this command, so a doctor that showed nothing
+    #     would contradict the notice that sent them here.
+    # Outcome: the same row, with a demand that can be met — including by
+    #     deciding to leave it, which for an unclassifiable note is a real answer.
     for record in hygiene.inbox:
-        proposed = f"proposes '{record.detail}'" if record.detail else "proposes no type"
-        lines.append(f"  {record.file_path}  inbox  {proposed}")
+        state = (
+            f"proposes '{record.detail}'"
+            if record.detail
+            else "unfiled — file it with 'bm new <type>' or leave it"
+        )
+        lines.append(f"  {record.file_path}  inbox  {state}")
     lines.extend(_violation_lines(hygiene.advisories))
 
     if hygiene.issue_count == 0:

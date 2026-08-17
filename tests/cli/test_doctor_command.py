@@ -161,10 +161,31 @@ def test_doctor_hygiene_section_lists_every_check(stub_report):
         "  notes/f.md  stale-state  unchanged for over 30 days, last changed 2026-01-05"
     )
     assert lines[4] == "  notes/g.md  inbox  proposes 'runbook'"
-    assert lines[5] == "  notes/h.md  inbox  proposes no type"
+    assert lines[5] == "  notes/h.md  inbox  unfiled — file it with 'bm new <type>' or leave it"
     assert lines[6] == "  notes/broken.md  unknown-key  owner  unknown-key on 'owner'"
     assert lines[7] == "  6 issues"
     assert "integrity" not in result.stdout
+
+
+def test_doctor_asks_a_plain_inbox_record_for_something_it_can_do(stub_report):
+    """GAPS U5: a deliberate inbox record was asked for a proposal no verb can attach.
+
+    A proposal only ever arrives as a side effect of `bm new <undeclared-type>`, so
+    "proposes no type" made doctor's hygiene count unclosable for a corpus that
+    used the escape hatch as documented. The row stays — the W5-B notice counts
+    the record as unfiled and points here — and the demand becomes satisfiable.
+
+    The positive control is the row above it: a record that *does* carry a
+    proposal still reports the type it proposes.
+    """
+    stub_report([FULL_REPORT])
+
+    result = runner.invoke(app, ["doctor", "--only", "hygiene", "--quiet"])
+
+    assert result.exit_code == 0, result.output
+    assert "proposes no type" not in result.stdout
+    assert "notes/h.md  inbox  unfiled — file it with 'bm new <type>' or leave it" in result.stdout
+    assert "notes/g.md  inbox  proposes 'runbook'" in result.stdout
 
 
 def test_doctor_prints_both_groups_in_order(stub_report):
