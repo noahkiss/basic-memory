@@ -33,6 +33,8 @@ pytestmark = pytest.mark.usefixtures("bootstrapped_registry")
 
 GOVERNED = "governed"
 UNGOVERNED = "ungoverned"
+# A governed project whose human removed `inbox` from its vocabulary (GAPS E2).
+NO_INBOX = "no-inbox"
 
 
 @pytest.fixture(autouse=True)
@@ -110,8 +112,17 @@ class SeededProject:
     path: Path
 
 
-def seed_project(name: str, *, governed: bool = True, areas: tuple[str, ...] = ()) -> SeededProject:
+def seed_project(
+    name: str,
+    *,
+    governed: bool = True,
+    areas: tuple[str, ...] = (),
+    types: tuple[str, ...] = DEFAULT_VOCABULARY.types,
+) -> SeededProject:
     """Register one store-derived project, optionally governed by a vocabulary.
+
+    ``types`` is settable because a human's vocabulary is theirs to shape, and one
+    of the shapes it can take is "no `inbox`" (GAPS E2).
 
     Written straight into the `project` table rather than through
     `bm project add`: that command routes through the in-process ASGI app and
@@ -147,7 +158,7 @@ def seed_project(name: str, *, governed: bool = True, areas: tuple[str, ...] = (
                 (home / VOCABULARY_FILENAME).write_text(
                     yaml.safe_dump(
                         {
-                            "types": list(DEFAULT_VOCABULARY.types),
+                            "types": list(types),
                             "statuses": list(DEFAULT_VOCABULARY.statuses),
                             "areas": list(areas),
                             "review_months": DEFAULT_VOCABULARY.review_months,
@@ -385,6 +396,33 @@ def test_new_files_an_unknown_type_as_inbox_and_says_so() -> None:
     assert metadata["proposed-type"] == "runbook"
     assert "'runbook' is not a type this project declares" in result.stdout
     assert str(project.path / "inbox") in result.stdout
+
+
+def test_new_refuses_an_undeclared_type_when_the_vocabulary_declares_no_inbox() -> None:
+    """GAPS E2: with no `inbox` to file the proposal as, the verb says so and stops.
+
+    Before this, the hatch filed the record as `inbox` and the checker rejected it
+    one layer down, with a message about a type the author never asked for. The
+    positive control is the same project's declared type, which still writes — so
+    the refusal is about the missing `inbox`, not about the project being governed.
+    """
+    project = seed_project(NO_INBOX, types=("task", "guide"))
+
+    result = runner.invoke(
+        app, ["new", "runbook", "Restart The Thing", "-b", "steps", "-p", NO_INBOX]
+    )
+
+    assert result.exit_code == 1
+    assert f"is not a type project '{NO_INBOX}' declares" in result.stderr
+    assert "declares no 'inbox' type" in result.stderr
+    assert "bm types" in result.stderr
+    assert result.stdout.strip() == ""
+    # Nothing written anywhere: the refusal precedes the write, not follows it.
+    assert list(project.path.rglob("*.md")) == []
+
+    allowed = runner.invoke(app, ["new", "task", "Real Work", "-b", "x", "-p", NO_INBOX, "--quiet"])
+    assert allowed.exit_code == 0, allowed.output
+    assert written_file(project, allowed.stdout).is_file()
 
 
 def test_new_on_an_ungoverned_project_writes_and_notices() -> None:

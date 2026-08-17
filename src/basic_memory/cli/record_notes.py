@@ -61,6 +61,10 @@ RELATIONS_HEADING = "## Relations"
 # the edge and the predecessor is never touched.
 SUPERSEDES_RELATION = "supersedes"
 
+# The type an undeclared proposal is filed as — W4's escape hatch, and the one
+# type a governed project cannot do without (GAPS E2).
+INBOX_TYPE = "inbox"
+
 # What a record says its content came from when a human authored it at the
 # prompt (VERBS_PLAN D7). A real `file#L1-L4` reference is what the migration
 # workflow passes; making `--source` mandatory would only make every interactive
@@ -169,7 +173,9 @@ def record_path(note_type: str, record_id: str, title: str) -> str:
     return f"{record_directory(note_type)}/{record_id}{SEPARATOR}{record_slug(title)}.md"
 
 
-def resolve_note_type(requested: str, vocabulary: Vocabulary | None) -> tuple[str, str | None]:
+def resolve_note_type(
+    requested: str, vocabulary: Vocabulary | None, *, project: str
+) -> tuple[str, str | None]:
     """Return the type to write and the type to record as *proposed*, if any.
 
     An unknown type is the W4 escape hatch, never an error: the record is filed
@@ -179,11 +185,28 @@ def resolve_note_type(requested: str, vocabulary: Vocabulary | None) -> tuple[st
 
     An ungoverned project has no declared list, so the closed six are the only
     types it can be measured against.
+
+    Trigger: the project's vocabulary declares no `inbox` type (GAPS E2).
+    Why: the hatch files the record as `inbox`, and the checker then rejects a
+        type the project does not declare — so the write would fail one layer
+        down with a message about `inbox`, a type the author never asked for.
+        Writing it anyway is worse: the content would land unchecked or not at
+        all, which is the drop the hatch exists to prevent.
+    Outcome: refuse here, before an id is spent or a file is written, naming the
+        project and the fix. The vocabulary is the human's to shape, so the verb
+        states the consequence rather than the tree forbidding the edit.
     """
     allowed = vocabulary.types if vocabulary is not None else tuple(TYPE_DIRS)
     if requested in allowed:
         return requested, None
-    return "inbox", requested
+    if INBOX_TYPE not in allowed:
+        raise ValueError(
+            f"'{requested}' is not a type project '{project}' declares, and its vocabulary "
+            f"declares no '{INBOX_TYPE}' type to file the proposal as — add "
+            f"'{INBOX_TYPE}' to its vocabulary.yml or pick a declared type; "
+            f"run 'bm types' to see the set"
+        )
+    return INBOX_TYPE, requested
 
 
 # --- Editing a body by hand ---

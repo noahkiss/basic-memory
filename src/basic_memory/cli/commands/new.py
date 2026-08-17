@@ -12,7 +12,9 @@ are load-bearing and none of them may be relaxed later:
 - **An unknown `--type` files an `inbox` record**, carrying `proposed-type`
   (GAPS W4). Agents propose a type; only a human enables one. Rejecting the
   write instead would send the content nowhere, which is the drop the escape
-  hatch exists to prevent.
+  hatch exists to prevent. The one exception is a project whose vocabulary
+  declares no `inbox` type at all: there is nowhere to file the proposal, so the
+  verb refuses and says so rather than failing in the checker (GAPS E2).
 
 Scope is the **write** chain — `--project`, then the nearest `.bm.yml`, then the
 default project (`project_marker.resolve_cli_project`). Reads go unscoped when
@@ -203,10 +205,16 @@ async def create_record(
                 f"project '{project.name}'"
             )
 
+        # Resolved before an id is drawn: a type this project cannot file is a
+        # refusal, and spending an id on a write that never happens leaves a gap
+        # in the sequence for no reason (GAPS E2).
+        vocabulary = load_vocabulary(project.external_id)
+        note_type, proposed_type = resolve_note_type(
+            requested_type, vocabulary, project=project.name
+        )
+
         record_id = await allocate_record_id(session, project.project_id)
 
-    vocabulary = load_vocabulary(project.external_id)
-    note_type, proposed_type = resolve_note_type(requested_type, vocabulary)
     file_path = record_path(note_type, record_id, title)
 
     content = record_markdown(
