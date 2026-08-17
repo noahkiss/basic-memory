@@ -87,19 +87,17 @@ NO_FRONTMATTER_WRITE = frozenset(
     }
 )
 
-# Renames a file and, at most, its permalink. It is not on any agent path — the
-# API's move endpoints go through the accepted-note runner, which is guarded
-# above — and it holds no parsed markdown to hand the checker.
-PATH_ONLY_WRITE = frozenset({"move_entity"})
-
-EXEMPT = READ_ONLY | NO_FRONTMATTER_WRITE | PATH_ONLY_WRITE
+# Why there is no path-only allowlist: `move_entity` was the sole entry, and it
+# is deleted (GAPS T24). Every move now goes through the accepted-note
+# runner, which the guard above covers.
+EXEMPT = READ_ONLY | NO_FRONTMATTER_WRITE
 
 SERVICE_HINT = (
     "Every public async method on EntityService must reach {funnel}, directly or "
     "through another method that does. These do not: {names}. Either call the "
-    "funnel, or add the method to READ_ONLY / NO_FRONTMATTER_WRITE / "
-    "PATH_ONLY_WRITE in this file with a reason. Adding it to neither is how a "
-    "write path silently stops being validated (GAPS W4)."
+    "funnel, or add the method to READ_ONLY / NO_FRONTMATTER_WRITE in this file "
+    "with a reason. Adding it to neither is how a write path silently stops "
+    "being validated (GAPS W4)."
 )
 
 

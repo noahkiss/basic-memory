@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from basic_memory import db
-from basic_memory.config import ProjectConfig, BasicMemoryConfig
+from basic_memory.config import BasicMemoryConfig
 from basic_memory.file_utils import remove_frontmatter
 from basic_memory.markdown import EntityMarkdown
 from basic_memory.markdown.entity_parser import (
@@ -25,7 +25,6 @@ from basic_memory.models.project import Project
 from basic_memory.repository import ObservationRepository, RelationRepository
 from basic_memory.repository.entity_repository import EntityRepository
 from basic_memory.repository.violation_repository import ViolationRepository
-from basic_memory.runtime.note_move import normalize_note_move_destination_path
 from basic_memory.schemas import Entity as EntitySchema
 from basic_memory.schemas.base import Permalink
 from basic_memory.schemas.response import (
@@ -1223,110 +1222,6 @@ class EntityService(BaseService[EntityModel]):
             new_content,
             position,
         )
-
-    async def move_entity(
-        self,
-        identifier: str,
-        destination_path: str,
-        project_config: ProjectConfig,
-        app_config: BasicMemoryConfig,
-    ) -> EntityModel:
-        """Move entity to new location with database consistency.
-
-        Args:
-            identifier: Entity identifier (title, permalink, or memory:// URL)
-            destination_path: New path relative to project root
-            project_config: Project configuration for file operations
-            app_config: App configuration for permalink update settings
-
-        Returns:
-            Success message with move details
-
-        Raises:
-            EntityNotFoundError: If the entity cannot be found
-            ValueError: If move operation fails due to validation or filesystem errors
-        """
-        logger.debug(f"Moving entity: {identifier} to {destination_path}")
-
-        # 1. Resolve identifier to entity with strict mode for destructive operations
-        entity = await self.link_resolver.resolve_link(identifier, strict=True)
-        if not entity:
-            raise EntityNotFoundError(f"Entity not found: {identifier}")
-
-        current_path = entity.file_path
-        old_permalink = entity.permalink
-
-        # 2. Validate and normalize the destination with the shared move-path
-        # rules so move_entity and move_note accept identical inputs.
-        destination_path = normalize_note_move_destination_path(destination_path)
-
-        # 3. Validate paths
-        # NOTE: In tenantless/cloud mode, we cannot rely on local filesystem paths.
-        # Use FileService for existence checks and moving.
-        if not await self.file_service.exists(current_path):
-            raise ValueError(f"Source file not found: {current_path}")
-
-        if await self.file_service.exists(destination_path):
-            raise ValueError(f"Destination already exists: {destination_path}")
-
-        # 4. Derive the permalink the move will write, if any.
-        new_permalink: str | None = None
-        if not app_config.disable_permalinks and (
-            app_config.update_permalinks_on_move or old_permalink is None
-        ):
-            new_permalink = await self.resolve_permalink(destination_path)
-
-        try:
-            # 5. Ensure destination directory if needed (no-op for S3)
-            await self.file_service.ensure_directory(Path(destination_path).parent)
-
-            # 6. Move physical file via FileService (filesystem rename or cloud move)
-            await self.file_service.move_file(current_path, destination_path)
-            logger.info(f"Moved file: {current_path} -> {destination_path}")
-
-            # 7. Prepare database updates
-            updates = {"file_path": destination_path}
-
-            # 8. Write the permalink resolved in step 4, when the move updates it
-            if new_permalink is not None:
-                # Update frontmatter with new permalink
-                await self.file_service.update_frontmatter(
-                    destination_path, {"permalink": new_permalink}
-                )
-
-                updates["permalink"] = new_permalink
-                if old_permalink is None:
-                    logger.info(
-                        f"Generated permalink for entity with null permalink: {new_permalink}"
-                    )
-                else:
-                    logger.info(f"Updated permalink: {old_permalink} -> {new_permalink}")
-
-            # 9. Recalculate checksum
-            new_checksum = await self.file_service.compute_checksum(destination_path)
-            updates["checksum"] = new_checksum
-
-            # 10. Update database
-            async with db.scoped_session(self.session_maker) as session:
-                updated_entity = await self.repository.update(session, entity.id, updates)
-                if not updated_entity:
-                    raise ValueError(f"Failed to update entity in database: {entity.id}")
-
-                return updated_entity
-
-        except Exception as e:
-            # Rollback: try to restore original file location if move succeeded
-            try:
-                if await self.file_service.exists(
-                    destination_path
-                ) and not await self.file_service.exists(current_path):
-                    await self.file_service.move_file(destination_path, current_path)
-                    logger.info(f"Rolled back file move: {destination_path} -> {current_path}")
-            except Exception as rollback_error:  # pragma: no cover
-                logger.error(f"Failed to rollback file move: {rollback_error}")
-
-            # Re-raise the original error with context
-            raise ValueError(f"Move failed: {str(e)}") from e
 
     async def delete_directory(
         self,
