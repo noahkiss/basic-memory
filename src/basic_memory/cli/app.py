@@ -80,6 +80,8 @@ def app_callback(
     # repository layer directly and their own bootstrap calls
     # ensure_project_registry, so initialize_app here would be a second, slower
     # copy of work they already do (the shape 'doctor' and 'project' use).
+    # Skip for 'undo' for the same reason: it restores files with git and then
+    # reindexes them through its own bootstrap.
     # ('brief' returns above, before this point.)
     skip_init_commands = {
         "doctor",
@@ -97,6 +99,7 @@ def app_callback(
         "tool",
         "reset",
         "reindex",
+        "undo",
         "watch",
     }
     if (

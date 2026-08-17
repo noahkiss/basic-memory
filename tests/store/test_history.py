@@ -11,9 +11,13 @@ from basic_memory.store import history
 from basic_memory.store.history import (
     HistoryError,
     commit_paths,
+    commits_for_session,
     dirty_count,
     dirty_paths,
     ensure_store_repo,
+    latest_commit,
+    paths_in_commit,
+    restore_from_commit,
     store_path,
     sweep_commit,
 )
@@ -239,3 +243,123 @@ def test_sweep_commit_with_nothing_dirty_returns_none(data_dir: Path) -> None:
     ensure_store_repo()
 
     assert sweep_commit("bm history commit --all") is None
+
+
+# --- Reading history, for undo (GAPS W3, verbs item H) ---
+
+
+def test_latest_commit_on_a_store_with_no_history_is_none(data_dir: Path) -> None:
+    """An empty repository is a result, not an error: `bm undo` says so and exits 0."""
+    ensure_store_repo()
+
+    assert latest_commit() is None
+
+
+def test_latest_commit_returns_the_newest_commit(data_dir: Path) -> None:
+    store = ensure_store_repo()
+    write(store, "notes/one.md", "one\n")
+    commit_paths(["notes/one.md"], "create notes/one.md", actor="cli", session_id=None)
+    write(store, "notes/one.md", "two\n")
+    second = commit_paths(["notes/one.md"], "update notes/one.md", actor="cli", session_id=None)
+
+    assert second is not None
+    assert latest_commit() == second.sha
+    assert git(store, "rev-parse", "HEAD").strip() == second.sha
+
+
+def test_commits_for_session_returns_only_that_session_newest_first(data_dir: Path) -> None:
+    store = ensure_store_repo()
+    write(store, "notes/one.md", "one\n")
+    first = commit_paths(["notes/one.md"], "create one", actor="agent", session_id="s-1")
+    write(store, "notes/two.md", "two\n")
+    commit_paths(["notes/two.md"], "create two", actor="agent", session_id="s-2")
+    write(store, "notes/three.md", "three\n")
+    third = commit_paths(["notes/three.md"], "create three", actor="agent", session_id="s-1")
+
+    assert first is not None and third is not None
+    assert commits_for_session("s-1") == (third.sha, first.sha)
+
+
+def test_commits_for_session_anchors_the_whole_trailer_line(data_dir: Path) -> None:
+    """A session id that is a prefix of another must not pull in its commits."""
+    store = ensure_store_repo()
+    write(store, "notes/one.md", "one\n")
+    commit_paths(["notes/one.md"], "create one", actor="agent", session_id="s-1-longer")
+
+    assert commits_for_session("s-1") == ()
+    # Positive control: the full id does match the commit that carries it.
+    assert len(commits_for_session("s-1-longer")) == 1
+
+
+def test_commits_for_session_on_a_store_with_no_history_is_empty(data_dir: Path) -> None:
+    ensure_store_repo()
+
+    assert commits_for_session("s-1") == ()
+
+
+def test_restore_from_commit_puts_back_the_parent_s_content(data_dir: Path) -> None:
+    store = ensure_store_repo()
+    write(store, "notes/one.md", "first\n")
+    commit_paths(["notes/one.md"], "create one", actor="cli", session_id=None)
+    write(store, "notes/one.md", "second\n")
+    second = commit_paths(["notes/one.md"], "update one", actor="cli", session_id=None)
+
+    assert second is not None
+    assert restore_from_commit(second.sha) == ("notes/one.md",)
+    assert (store / "notes/one.md").read_text(encoding="utf-8") == "first\n"
+
+
+def test_restore_from_a_commit_that_added_a_file_deletes_it(data_dir: Path) -> None:
+    """A path the commit created has no parent version, so restoring it removes it."""
+    store = ensure_store_repo()
+    write(store, "notes/one.md", "first\n")
+    commit_paths(["notes/one.md"], "create one", actor="cli", session_id=None)
+    write(store, "notes/two.md", "two\n")
+    second = commit_paths(["notes/two.md"], "create two", actor="cli", session_id=None)
+
+    assert second is not None
+    assert restore_from_commit(second.sha) == ("notes/two.md",)
+    assert not (store / "notes/two.md").exists()
+    # Positive control: the earlier commit's file is untouched.
+    assert (store / "notes/one.md").read_text(encoding="utf-8") == "first\n"
+
+
+def test_restore_from_the_root_commit_deletes_every_path_it_added(data_dir: Path) -> None:
+    """The root commit has no parent, so nothing it introduced has a prior version."""
+    store = ensure_store_repo()
+    write(store, "notes/one.md", "one\n")
+    write(store, "notes/two.md", "two\n")
+    root = commit_paths(
+        ["notes/one.md", "notes/two.md"], "create both", actor="cli", session_id=None
+    )
+
+    assert root is not None
+    assert sorted(restore_from_commit(root.sha)) == ["notes/one.md", "notes/two.md"]
+    assert not (store / "notes/one.md").exists()
+    assert not (store / "notes/two.md").exists()
+
+
+def test_restore_from_a_commit_that_deleted_a_file_brings_it_back(data_dir: Path) -> None:
+    store = ensure_store_repo()
+    write(store, "notes/one.md", "first\n")
+    commit_paths(["notes/one.md"], "create one", actor="cli", session_id=None)
+    (store / "notes/one.md").unlink()
+    removal = commit_paths(["notes/one.md"], "remove one", actor="cli", session_id=None)
+
+    assert removal is not None
+    assert restore_from_commit(removal.sha) == ("notes/one.md",)
+    assert (store / "notes/one.md").read_text(encoding="utf-8") == "first\n"
+
+
+def test_paths_in_commit_reads_without_touching_the_worktree(data_dir: Path) -> None:
+    """`bm undo` reads what it would overwrite before it overwrites anything."""
+    store = ensure_store_repo()
+    write(store, "notes/one.md", "first\n")
+    commit_paths(["notes/one.md"], "create one", actor="cli", session_id=None)
+    write(store, "notes/one.md", "second\n")
+    second = commit_paths(["notes/one.md"], "update one", actor="cli", session_id=None)
+
+    assert second is not None
+    assert paths_in_commit(second.sha) == ("notes/one.md",)
+    # The file is untouched: reading is not restoring.
+    assert (store / "notes/one.md").read_text(encoding="utf-8") == "second\n"

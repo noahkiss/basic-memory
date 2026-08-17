@@ -10,6 +10,7 @@ The repository is local-only. It must never gain a public remote.
 """
 
 import os
+import re
 import subprocess
 import time
 from collections.abc import Sequence
@@ -195,6 +196,104 @@ def sweep_commit(message: str, paths: Sequence[str] | None = None) -> CommitResu
     if not targets:
         return None
     return commit_paths(targets, message, actor=None, session_id=None)
+
+
+# --- Reading history, for undo ---
+
+
+def latest_commit() -> str | None:
+    """The store's newest commit, or None when nothing has been committed yet.
+
+    An empty repository is a result, not an error: `bm undo` on a store with no
+    history says so and exits 0 (output contract rule 5).
+    """
+    store = ensure_store_repo()
+    result = _git(store, "rev-parse", "--quiet", "--verify", "HEAD")
+    # `--quiet --verify` exits 1 for "not a valid ref" and 128 for a repository
+    # that is broken, so the two cases stay distinguishable.
+    if result.returncode == 1:
+        return None
+    _require(result, store, "read the newest commit from the note store")
+    return result.stdout.strip()
+
+
+def commits_for_session(session_id: str) -> tuple[str, ...]:
+    """Every commit carrying ``Session: <session_id>``, newest first.
+
+    This is what W3 meant by "`undo --session` is a `git log --grep` away". The
+    pattern is anchored to a whole line and the id is escaped, so one session id
+    that is a prefix of another cannot pull in the wrong commits.
+    """
+    if latest_commit() is None:
+        return ()
+
+    store = store_path()
+    pattern = f"^Session: {re.escape(session_id)}$"
+    result = _git(store, "log", "--extended-regexp", f"--grep={pattern}", "--format=%H")
+    _require(result, store, f"find commits for session '{session_id}' in the note store")
+    return tuple(result.stdout.split())
+
+
+def paths_in_commit(sha: str) -> tuple[str, ...]:
+    """The store-relative paths one commit changed, touching nothing.
+
+    Read-only on purpose: `bm undo` has to know what it is about to overwrite
+    *before* it overwrites anything, so it can refuse a restore that would
+    discard an uncommitted edit.
+    """
+    store = ensure_store_repo()
+    return tuple(path for _, path in _commit_changes(store, sha))
+
+
+def restore_from_commit(sha: str) -> tuple[str, ...]:
+    """Put every path ``sha`` touched back to the content its parent held.
+
+    A path the commit *added* has no parent version, so restoring it means
+    deleting it. Nothing here commits and nothing resets: the caller writes a new
+    commit, because history is the thing this subsystem exists to protect.
+
+    Returns the store-relative paths it acted on, in the order git reported them.
+    """
+    store = ensure_store_repo()
+    parent = _parent_commit(store, sha)
+    changes = _commit_changes(store, sha)
+
+    for status, path in changes:
+        # A root commit has no parent, so every one of its paths is an addition
+        # whichever status git reported.
+        if parent is None or status.startswith("A"):
+            (store / path).unlink(missing_ok=True)
+        else:
+            _require(
+                _git_retrying_lock(store, "checkout", parent, "--", path),
+                store,
+                f"restore '{path}' from commit {parent} in the note store",
+            )
+    return tuple(path for _, path in changes)
+
+
+def _parent_commit(store: Path, sha: str) -> str | None:
+    """The commit before ``sha``, or None when ``sha`` is the root commit."""
+    result = _git(store, "rev-parse", "--quiet", "--verify", f"{sha}^")
+    if result.returncode == 1:
+        return None
+    _require(result, store, f"read the commit before {sha} in the note store")
+    return result.stdout.strip()
+
+
+def _commit_changes(store: Path, sha: str) -> tuple[tuple[str, str], ...]:
+    """Return ``(status, path)`` for every file one commit changed.
+
+    ``--root`` makes the first commit report its files instead of nothing, and
+    ``-z`` keeps paths byte-exact for names git would otherwise quote. Rename
+    detection is deliberately off: without it a rename arrives as a delete plus
+    an add, which is exactly the pair the restore above already handles.
+    """
+    result = _git(store, "diff-tree", "--no-commit-id", "--name-status", "--root", "-r", "-z", sha)
+    _require(result, store, f"read the files changed by commit {sha} in the note store")
+
+    fields = [field for field in result.stdout.split("\0") if field]
+    return tuple(zip(fields[::2], fields[1::2]))
 
 
 # --- git plumbing ---

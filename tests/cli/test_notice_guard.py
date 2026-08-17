@@ -153,6 +153,7 @@ def test_the_verbs_the_notice_covers_are_the_ones_w5_named() -> None:
         ("doctor.py", "doctor"),
         ("history.py", "dirty"),
         ("history.py", "commit"),
+        ("history.py", "undo"),
         ("orphans.py", "orphans"),
         ("project.py", "list_projects"),
         ("project.py", "ls_project_command"),
