@@ -76,13 +76,20 @@ def app_callback(
     # must not block installing the offline docs
     # Skip for 'mine' - it reads Claude Code transcripts and never touches the
     # database, so paying for initialization would be the whole cost of the verb
+    # Skip for the record read verbs 'ls', 'show' and 'path' - they reach the
+    # repository layer directly and their own bootstrap calls
+    # ensure_project_registry, so initialize_app here would be a second, slower
+    # copy of work they already do (the shape 'doctor' and 'project' use).
     # ('brief' returns above, before this point.)
     skip_init_commands = {
         "doctor",
         "history",
+        "ls",
         "man",
         "mcp",
         "mine",
+        "path",
+        "show",
         "status",
         "sync",
         "project",

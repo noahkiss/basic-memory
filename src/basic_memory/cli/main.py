@@ -29,6 +29,7 @@ if not _version_only_invocation(sys.argv[1:]):
         mine,
         orphans,
         project,
+        records,
         status,
         tool,
         types,
