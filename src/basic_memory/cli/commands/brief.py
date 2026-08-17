@@ -141,11 +141,18 @@ class Section:
 
     A section carries either rows or a count, never both: `count` is what a type
     whose `RowRule` is `"count"` contributes, and it prints as a single line.
+
+    `total` is how many records the section's predicate actually matched, which is
+    not `len(rows)` once `MAX_ROWS` has cut the list. The heading prints `total`,
+    and says the list is capped when it is (GAPS U4): a count that silently meant
+    "rows I chose to print" told an agent this project had five open tasks when it
+    had twenty-three, and was indistinguishable from a true count.
     """
 
     heading: str
     rows: tuple[Row, ...] = ()
     count: int = 0
+    total: int = 0
 
     @property
     def is_empty(self) -> bool:
@@ -325,12 +332,14 @@ async def query(session_maker, scope: ReadScope, query_text: Optional[str] = Non
         if not project_ids:
             return Brief(project=scope.project, skipped=scan.skipped)
 
+        # No `.limit()` here: the caller adds it after the ordering, so the same
+        # predicate can be counted unlimited first (GAPS U4). A heading that
+        # reported `len(rows)` was a count of bm's own cap, not of the corpus.
         def base(note_type: str):
             return (
                 select(Entity.title, Entity.permalink, Entity.file_path, Project.name)
                 .join(Project, Entity.project_id == Project.id)
                 .where(Entity.note_type == note_type, Entity.project_id.in_(project_ids))
-                .limit(MAX_ROWS)
             )
 
         # Deferred with the rest of the vocabulary reader: it pulls PyYAML, which
@@ -372,8 +381,16 @@ async def query(session_maker, scope: ReadScope, query_text: Optional[str] = Non
             else:
                 statement = statement.order_by(recent)
 
-            found = await session.execute(statement)
-            sections.append(Section(heading=rule.heading, rows=_rows(found)))
+            # Two queries per row-section, both over the same predicate: one COUNT
+            # for the honest heading, one capped SELECT for the rows. The
+            # alternative — fetching every match and counting in Python — makes a
+            # session-start hook's cost grow with the corpus, which is what
+            # MAX_ROWS exists to stop.
+            total = await session.scalar(
+                select(func.count()).select_from(statement.order_by(None).subquery())
+            )
+            found = await session.execute(statement.limit(MAX_ROWS))
+            sections.append(Section(heading=rule.heading, rows=_rows(found), total=total or 0))
 
         return Brief(project=scope.project, sections=tuple(sections), skipped=scan.skipped)
 
@@ -501,6 +518,20 @@ def fence(body: str) -> tuple[str, str]:
     return "`" * max(5, longest + 1), body
 
 
+def _heading_count(section: Section) -> str:
+    """What a section heading's parenthetical says (GAPS U4).
+
+    The real count always, plus `showing N` when `MAX_ROWS` cut the list. The
+    output contract's rule is that a count is the real count and that an unknown
+    count is absent rather than a sentinel; a count that meant "rows I printed"
+    was worse than either, because nothing distinguished it from a true one.
+    """
+    total = max(section.total, len(section.rows))
+    if len(section.rows) < total:
+        return f"{total}, showing {len(section.rows)}"
+    return str(total)
+
+
 def render(brief: Brief) -> str:
     """Render to markdown, or to the empty string when there is nothing to report."""
     if brief.is_empty:
@@ -523,7 +554,7 @@ def render(brief: Brief) -> str:
         if not section.rows:
             lines.append(f"\n{section.heading}: {section.count}")
             continue
-        lines.append(f"\n## {section.heading} ({len(section.rows)})")
+        lines.append(f"\n## {section.heading} ({_heading_count(section)})")
         lines.extend(
             "- "
             + ("" if pinned or not row.project else f"{row.project}: ")

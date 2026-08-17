@@ -10,6 +10,7 @@ Sections come from each project's `vocabulary.yml` (GAPS W8 item 2), so most of
 these write one. A test that wants the ungoverned path writes none.
 """
 
+from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -441,6 +442,79 @@ async def test_unscoped_keeps_the_row_cap(session_maker, test_project, config_ho
     assert len(_required_section(result, "task").rows) == MAX_ROWS
 
 
+# --- Honest counts (GAPS U4) ---
+
+
+@pytest.mark.asyncio
+async def test_a_capped_section_carries_the_real_total(session_maker, test_project, config_home):
+    """GAPS U4: the section reports how many matched, not how many it printed.
+
+    With twice the cap open, the old heading said `(5)` and nothing said the list
+    was cut — so an agent reading the brief at session start was told this project
+    had five open tasks.
+    """
+    _govern(test_project, types="[task]")
+    for position in range(MAX_ROWS * 2):
+        await _make_entity(
+            session_maker,
+            test_project.id,
+            title=f"Task {position}",
+            note_type="task",
+            metadata={"status": "open"},
+        )
+
+    result = await query(session_maker, _scope(test_project.name))
+
+    section = _required_section(result, "task")
+    assert len(section.rows) == MAX_ROWS
+    assert section.total == MAX_ROWS * 2
+
+
+@pytest.mark.asyncio
+async def test_an_uncapped_section_totals_exactly_its_rows(
+    session_maker, test_project, config_home
+):
+    """The positive control: under the cap, the total and the row count agree."""
+    _govern(test_project, types="[task]")
+    for position in range(2):
+        await _make_entity(
+            session_maker,
+            test_project.id,
+            title=f"Task {position}",
+            note_type="task",
+            metadata={"status": "open"},
+        )
+
+    result = await query(session_maker, _scope(test_project.name))
+
+    section = _required_section(result, "task")
+    assert section.total == len(section.rows) == 2
+
+
+@pytest.mark.asyncio
+async def test_the_total_counts_only_what_the_rule_matches(
+    session_maker, test_project, config_home
+):
+    """A closed task is not open work, so it must not inflate the open-tasks total.
+
+    Without this, a `COUNT` over the type rather than over the rule's predicate
+    would report an honest-looking number for the wrong question.
+    """
+    _govern(test_project, types="[task]")
+    for status in ("open", "done", "dropped", "blocked"):
+        await _make_entity(
+            session_maker,
+            test_project.id,
+            title=f"Task {status}",
+            note_type="task",
+            metadata={"status": status},
+        )
+
+    result = await query(session_maker, _scope(test_project.name))
+
+    assert _required_section(result, "task").total == 2
+
+
 # --- `--query`: pointers, never content (GAPS W8 item 1) ---
 
 
@@ -515,6 +589,13 @@ def test_render_omits_empty_sections():
     out = render(_brief(Section("Open tasks", (Row("T", "t"),)), Section("Current state")))
     assert "Open tasks (1)" in out
     assert "Current state" not in out
+
+
+def test_render_states_the_real_count_and_says_the_list_is_capped():
+    """The heading form: `(23, showing 5)` when cut, a bare `(2)` when not."""
+    capped = Section(heading="Open tasks", rows=tuple(Row(f"T{n}", f"r{n}") for n in range(5)))
+    assert "## Open tasks (23, showing 5)" in render(_brief(replace(capped, total=23)))
+    assert "## Open tasks (5)" in render(_brief(replace(capped, total=5)))
 
 
 def test_render_count_section_is_one_line():
