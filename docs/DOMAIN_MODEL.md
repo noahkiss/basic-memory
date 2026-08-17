@@ -49,7 +49,10 @@ which graph and search projections attach.
   may change when the resource moves.
 - `permalink` is the human/agent-facing semantic address for Markdown content. It is
   project-scoped, may be absent when permalinks are disabled or inapplicable, and changes only
-  according to the configured move and permalink policies.
+  according to the configured move and permalink policies. On a governed project it is **set once**
+  and never changes: every relation binds to it, so a rewrite orphans them. The normalization rules
+  that decide what a permalink *is* are the identity contract — see
+  [IDENTITY.md](IDENTITY.md).
 - `title` is mutable display metadata, not identity.
 - For Markdown notes, `created_at` and `updated_at` project the canonical `created` and `modified`
   frontmatter values. Missing values fall back independently to file ctime and mtime for legacy
@@ -168,6 +171,10 @@ A move changes `file_path`. It preserves `external_id`, updates storage atomical
 configured permalink policy. Code that handles a move must keep frontmatter, entity state,
 materialization state, graph links, and search records coherent.
 
+A move on a governed project must **not** change the permalink. The accepted write path refuses
+such a move; the watcher's move planner logs the violation and then declines the rewrite. See
+[IDENTITY.md](IDENTITY.md) §5.
+
 ### Delete
 
 A delete removes canonical content through the service that owns the storage boundary, then
@@ -207,3 +214,5 @@ Before adding a model, abstraction, or workflow, answer:
 
 - [Architecture](ARCHITECTURE.md)
 - [Engineering Style](ENGINEERING_STYLE.md)
+- [Note Identity](IDENTITY.md) — the permalink normalization and set-once contract
+- [Querying Frontmatter](METADATA-QUERIES.md) — the metadata filter grammar

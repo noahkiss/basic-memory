@@ -1286,7 +1286,43 @@ not re-derived:
 - The audit's baseline counts are **stale and internally contradictory** (it claimed 236 picoschema
   tests in one place and 134 in another; 134 is correct today). Re-measure; do not inherit.
 
-### T21 — `--filter` on a DB-column date silently matches nothing and exits 0
+### T21 — `--filter` on a DB-column date silently matches nothing and exits 0 — **CLOSED 2026-08-16: column names are refused by the filter grammar**
+
+**Close block, 2026-08-16.** The grammar now rejects entity column names, per the decided fix.
+
+- **One list, one message, three surfaces.** `repository/metadata_filters.py` holds
+  `_ENTITY_COLUMN_GUIDANCE` and `validate_metadata_filter_keys(...)`, called from the top of
+  `parse_metadata_filters` and from `search_notes` before any project routing. A refused key
+  raises `ValueError`, which is already a **400** at the API
+  (`api/v2/routers/search_router.py` maps it), a **ToolError** on MCP, and **exit 1 with the
+  message on stderr** on `bm tool` (`cli/commands/tool.py` catches `ValueError` into `_fail`).
+  The message is one line, per `docs/OUTPUT_CONTRACT.md` rule 6.
+- **The list is every `Entity` column except the three that are real frontmatter.** `title`,
+  `type` and `permalink` are **not** rejected: `markdown/utils.py` stores every raw frontmatter
+  key in `entity_metadata`, basic-memory writes all three into frontmatter, and
+  `entity_repository.py` already reads `json_extract(entity_metadata, '$.permalink')`. Rejecting
+  them would have broken filters that work today. A test walks `Entity.__table__.columns` and
+  fails if a new column is added without being classified — the trap this entry describes is a
+  column name nobody thought about, so the guard has to notice new ones.
+- **A dotted key is frontmatter, not a column.** `schema.updated_at` parses normally; only a
+  bare single-segment key can collide, and the match is case-insensitive.
+- **`note_type` keeps its alias and never reaches the refusal from the tool.** `search_notes`
+  aliases `note_type` → `type` (#642) and *then* validates, so the alias still works. The alias
+  table moved to module scope and the validation sits beside it, which also fixes the
+  all-projects fan-out: both used to run after project routing. `note_type` is still in the
+  refusal list for callers that reach the API or repository directly, where no alias applies.
+- **The question the brief asked — keep a note carrying literal `updated_at:` frontmatter
+  reachable?** No. A note may legitimately carry the key, and that filter now fails rather than
+  answering. Rejecting is still safer: a filter that silently reads the wrong store is the O8
+  class, while a refusal is visible and names the fix. Anyone who genuinely stores a date in
+  frontmatter can spell the key something other than a column name.
+- **Tests drive the real caller paths, each with a positive control.**
+  `tests/cli/test_cli_tool_json_output.py` runs the unmocked `bm tool search-notes --filter
+  '{"updated_at": ...}'` and asserts exit 1, empty stdout, and the message on stderr;
+  `tests/mcp/test_tool_search.py` raises through the live tool for four column names and then
+  filters the same corpus by a real frontmatter key; `tests/api/v2/test_search_router.py`
+  asserts the 400 and then a 200 over the same entity.
+
 **Opened 2026-08-04**, promoted out of **O4**. O4 established this as its fact 1 and then shipped
 its *fix* at the repository layer only — so the entry reads as closed while the trap is still live
 on the user-facing path. A defect recorded inside a SHIPPED entry is a defect nobody will find.
@@ -1806,6 +1842,25 @@ predicate that the frontmatter copy is not authoritative. **Writing the key is t
 and the right one:** `entity_metadata` claims to mirror the file, the file *was* rewritten, so a
 stale copy is simply wrong regardless of what reads it.
 
+**CLOSED 2026-08-16 — both move paths now write the key, and doctor's integrity section is honest.**
+Fixed inside W5 item 5, as the item's plan recommended: the section is not worth printing while a
+routine move manufactures its main finding.
+
+- **Scan/watcher.** `_build_move_batch_update_values` adds an `entity_metadata` CASE beside the
+  `permalink` one, `json_set(entity_metadata, '$.permalink', <planned>)`, keyed on the same entity
+  ids. It is built only when content repair was planned, so a path-only move still touches nothing.
+  `json_set` on a NULL mirror stays NULL: a row with no frontmatter copy does not acquire one.
+- **Accepted (`move_note`).** `prepare_accepted_note_move` rebinds `entity.entity_metadata` with the
+  new permalink. **Judgment call:** the branch is keyed on the permalink *actually changing*, not on
+  the caller's `should_update_permalink`. The preparer declines the rewrite when permalinks are
+  disabled, and stamping the mirror there would silently repair a real hand-edit — the drift this
+  check exists to report.
+- **Tests.** A scan move and an MCP `move_note` each assert `find_permalink_integrity_issues`
+  returns no drift afterwards, plus the assertion the entry asked for on the existing
+  `..._move_updates_permalink_when_configured` test. Both carry positive controls: the scan test
+  asserts the check is clean *before* the move, and the accepted test hand-edits the mirror through
+  raw SQL and asserts drift is still reported.
+
 ### T29 — an advisory raised by an agent write is logged and then lost forever
 
 **Opened 2026-08-16** while wiring W5 item 3. W5's mechanism A now persists a violation from the
@@ -1854,6 +1909,47 @@ was explicitly "persists nothing". That is right about *rejections* and wrong ab
 which is why this is filed rather than folded in.
 
 **Blocks:** W5 item 5's hygiene section, which is otherwise honest only about hand-edited files.
+
+### T30 — every native command pays the MCP client graph through `run_with_cleanup`'s module
+
+**Opened 2026-08-16** while moving `bm doctor` onto the fast path (W5 item 5). The plan's premise
+for that move was that `cli/commands/doctor.py` importing `basic_memory.mcp.async_client` and
+`basic_memory.mcp.clients` at module level made doctor pay "the whole MCP graph". Pushing those
+imports inside the self-test is right and the guard now covers `doctor` — but the saving is smaller
+than the plan assumed, because **`cli/commands/command_utils.py` imports the same modules at module
+level**, and every native verb imports it for `run_with_cleanup`:
+
+```
+$ git grep -n "^from basic_memory.mcp" -- src/basic_memory/cli/commands/command_utils.py
+src/basic_memory/cli/commands/command_utils.py:10:from basic_memory.mcp.async_client import get_client
+src/basic_memory/cli/commands/command_utils.py:11:from basic_memory.mcp.clients import ProjectClient
+src/basic_memory/cli/commands/command_utils.py:12:from basic_memory.mcp.project_context import get_active_project
+```
+
+Measured on this tree (`.venv`, warm page cache):
+
+```
+$ python -c "import time; t=time.perf_counter(); import basic_memory.cli.commands.command_utils; print('%.3fs' % (time.perf_counter()-t))"
+0.306s
+$ python -c "import time; t=time.perf_counter(); import basic_memory.mcp.async_client, basic_memory.mcp.clients, basic_memory.mcp.project_context; print('%.3fs' % (time.perf_counter()-t))"
+0.248s
+```
+
+**Positive control** that the modules really are loaded by the CLI helper, rather than the timing
+being coincidence: after `import basic_memory.cli.commands.command_utils`, `sys.modules` holds
+`basic_memory.mcp.async_client`, `basic_memory.mcp.clients` and each of its six client modules, and
+`httpx`.
+
+So ~0.25 s of the ~0.95 s warm floor (`AGENTS.md`, "Measured baseline") is an MCP client graph that
+`project list`, `types`, `mine` and now `doctor` never call. The import guard does not catch it:
+`mcp.async_client` is not `mcp.tools`, and the banned list names the seconds-scale offenders.
+
+**Fix:** split `run_with_cleanup` (and `NewerSchemaError` handling) into a module that imports
+nothing from `basic_memory.mcp`, and leave the client-routed helpers where they are. Then add
+`basic_memory.mcp.async_client` to `BANNED_MODULES`, which is the part that keeps it fixed.
+
+Not fixed in W5 item 5: `command_utils` is shared by every verb including the client-routed ones,
+so the split is its own change with its own blast radius, and item 5 already moved a command.
 
 ---
 
@@ -2151,6 +2247,10 @@ smaller than feared because `bm brief` had already prototyped the chain in-tree:
   `bm orphans`, `run_project_index`, and `bm brief` (already had it). `bm doctor --project` and
   the `bm project *` management commands stay explicit-name-only on purpose — registry
   manipulation should never be implicitly retargeted by cwd.
+  **Stale for reads since 2026-08-16 — see W5-C for the live statement.** `bm brief` and
+  `bm status` now resolve reads through `cli/scope.resolve_read_scope`, which ends at "every
+  project" rather than the default one, and brief's forgiving marker wrapper is gone. This
+  bullet remains accurate for the **write** chain (`resolve_cli_project`).
 - **Known hazard, accepted:** a `.bm.yml` anywhere above a working directory changes the default
   project for commands run below it. That is the feature; the validation error names the marker
   path so surprises are diagnosable. Nothing writes markers yet — humans create them; the store
@@ -2163,7 +2263,7 @@ smaller than feared because `bm brief` had already prototyped the chain in-tree:
 These are the `tend` features, built as `bm` subcommands rather than a wrapper (see `AGENTS.md`,
 "What this fork is for"). Listed here so the gap list is the single place to look.
 
-### W1 — `bm mine`: decision mining over Claude Code transcripts
+### W1 — `bm mine`: decision mining over Claude Code transcripts — **SHIPPED 2026-08-16**
 Recovers decisions made in conversation and never written down. **Measured 2026-07-26: no index is
 needed** — plain `rg` over the 4 pilot slugs (106 MB / 77 sessions) is ~20 ms, worst case 0.47 s,
 and `rg --json` plus a full parse is 0.039 s. An index would add a staleness problem for nothing.
@@ -2267,6 +2367,92 @@ call was never the trap — tool *results* are), and coverage of Codex/OpenCode 
 entry deliberately avoided, plus an external dependency for a shipped feature. **Treat it as a
 possible later source, never the classifier.**
 
+**SHIPPED 2026-08-16.** `bm mine "<term>"` reads this directory's Claude Code transcripts and
+prints correctly attributed turns. It judges nothing — the split decided 2026-08-06 holds exactly.
+
+What landed: `src/basic_memory/mine/` (`locate` finds transcripts, `turns` classifies them,
+`search` matches with a context window) and `src/basic_memory/cli/commands/mine.py`. The verb
+touches no database, so it is in `skip_init_commands` and is the cheapest verb in the tree; the
+import guard covers it cold and warm.
+
+**The survey behind the classifier.** The build recorded 1,909 `.jsonl` files, 85,092 non-empty
+lines and 0 parse failures. **The review re-ran it on the same tree and got different numbers**
+(2026-08-16): 1,919 files, **464,253** non-empty lines, and **12 parse failures**. The file count
+matches, so the build's line count counted something narrower than every line of every transcript;
+the figures below are the reproducible ones, and the failures are now GAPS **O10**.
+
+| `type: user` line shape | count |
+|---|---|
+| carrying a `tool_result` | 85,434 |
+| harness injection (`meta`) | 5,839 |
+| genuine human text | 5,417 |
+
+So **94% of `role: user` lines were written by something other than the person**, 88% of them tool
+output — the trap this entry opened on, now measured over a whole corpus rather than a 47-hit
+sample.
+
+**Two findings the entry did not have, both load-bearing:**
+
+1. **Tool results are not the only impostor wearing the user's role.** A second class is harness
+   injection: `isMeta: true` (412), and text opening `<command-name>` (238), `<system-reminder>`
+   (186), `<local-command-stdout>` (101), `[Request interrupted` (43), `<command-message>` (11),
+   `<bash-input>`/`<bash-stdout>` (2/2). These classify as `meta`, never `human`. A classifier that
+   only special-cased `tool_result` would still have attributed a slash command to the person.
+   **A third impostor the build missed, added 2026-08-16 by the review:** multi-agent traffic.
+   `<teammate-message>` (1,121) and `<task-notification>` (328) were classified `human` — 1,449 of
+   the 6,864 human turns, 21% of the default output. Both are now in `INJECTED_PREFIXES`, with a
+   test.
+2. **`sessionId` is the wrong session identity for a sub-agent transcript.** All 1,106 sub-agent
+   files carry their *parent's* `sessionId`, while all 808 main files have
+   `sessionId == filename stem` (re-verified 2026-08-16 over the whole tree; the build sampled
+   205/195). A `date-ref` built from the field points `#L<line>` at a file that
+   does not contain that line — a citation that resolves to the wrong place is worse than one that
+   fails. `bm mine` uses the file stem, and a test carries it.
+
+**The four search-path requirements, discharged.** (1) The `*.jsonl` filter is a positive allowlist
+inside `locate.py`, reachable by no flag, and hidden files never qualify whatever their extension —
+a test reads a hidden `.context-window-*.json` sidecar on purpose and shows it *would* have
+classified as human speech, which is why a blocklist was never an option. (2)/(3) do not arise:
+the reader is pure Python, so there is no `--max-columns` to avoid and no `path:lineno:content`
+string to split. (4) A parse failure raises `TurnParseError` naming the file and line, and the verb
+exits 1 — never a skip. **The premise under (4) does not hold at tree scale**: 12 lines in 464,253
+fail, so three project directories are unmineable rather than degraded. That is **O10**, and the
+decision it needs is the user's.
+
+**One classifier defect found by the review and fixed in the same pass:** a thinking block is
+classified by the block, not by the text it yields. Real thinking blocks carry an **empty**
+`thinking` string — the reasoning is redacted and only the signature is written (46,915 of 46,917).
+The first cut branched on extracted text, so it fell through and labelled 46,898 reasoning lines
+`tool_use` with empty text; a reasoning turn shown under `--context` claimed to be a tool call.
+The judgment call below — "Reasoning is `thinking`, not `assistant`" — was right and the code did
+not implement it. A tool call now outranks a thinking block on the rare line carrying both, because
+the call has text a caller can search.
+
+**Judgment calls:**
+
+- **No `--json`.** The brief for this build asked for one; `docs/OUTPUT_CONTRACT.md` v2 forbids it
+  and W20 records that keeping `--json` as a secondary mode was proposed and rejected by the user.
+  Shipping one on a new verb would re-open a closed decision, so `bm mine` has a single rendering:
+  ref first, then time, speaker, text; a `N turns` count line; notices and affordances after.
+- **Speakers are finer than `human|assistant|tool_result|attachment`.** The parser also assigns
+  `thinking`, `tool_use`, `meta`, and `other`. `--speaker` still takes only `human` (default),
+  `assistant`, or `all`, because that is the question a caller asks — but the speaker column always
+  prints the true class, so `all` never flattens a tool result into "assistant".
+- **The default filter announces what it hid.** `2 turns` followed by `12 more turns matched other
+  speakers — 2 assistant, 2 attachment, 4 meta, 1 thinking, 2 tool_result, 1 tool_use.` A caller
+  who does not know how much of a transcript is machinery would otherwise read a small count as
+  "nothing there".
+- **Reasoning is `thinking`, not `assistant`.** A quote lifted from a thinking block must never be
+  presented as something the assistant said out loud.
+- **Matching is against extracted text, never the raw JSON line**, so a search for `content` or
+  `role` cannot return every line in the corpus.
+
+**Scoped out, deliberately:** no regex or `--ignore-case` flag (matching is always
+case-insensitive substring); no date range; no `rg` backend; no `bm doctor` check for
+never-mined sessions — that mitigation is still the additive candidate this entry names, and it
+belongs with W5's checks rather than here. Nothing about the "make the ask cheap and habitual"
+exposure changed: it is still accepted, and still unmitigated.
+
 ### W2 — the gardener — **DECIDED 2026-08-05 (user): no `bm gc` command; the jobs are checks inside `bm doctor`**
 Strictly lossless — may move, index, dedupe, re-label, and flag; may never summarize, merge, or
 resolve. Ship the flag-only version first so the constraint is structural rather than aspirational.
@@ -2299,6 +2485,25 @@ which kind of problem it has before asking.
 - **`AGENTS.md` names `bm gc` twice** — in the planned-features list and in the flat-verb list. Both
   must be corrected when this lands, or the file advertises a command that does not exist.
 - Doctor's output grows enough that grouping is now required rather than cosmetic.
+
+**CLOSED 2026-08-16 — the gardener's jobs are `bm doctor --only hygiene`.** Shipped as W5 item 5.
+
+- Four of the five jobs are queries in `EntityRepository` over `json_extract(entity_metadata, …)`:
+  expired `review-by`, `date-source: inferred`, `state` records untouched for over 30 days, and the
+  `inbox` pile with the type each record proposes. They print under a `hygiene` heading, one record
+  per line, alongside every `advisory` violation.
+- **The fifth job — "content that is now re-derivable" — is not built**, as this entry said it
+  would not be. It has no query and needed human judgment even in the original design.
+- **Staleness is 30 days, fixed in code and printed on every stale row.** `vocabulary.yml` declares
+  no staleness key (`types`, `statuses`, `areas`, `review_months`, `fields`), so there was nothing
+  to read it from. The number sits on the row rather than in a footnote, because a reader who sees
+  one line out of context still has to know what "stale" means here.
+- **`proposed-type` is now a schema key, legal on `inbox` alone.** Nothing writes it yet — `bm new`
+  will — so the check reads empty on today's corpus. That is the alternative this entry ruled out:
+  omitting it would be doctor staying silent about the thing it was built to surface.
+- **`AGENTS.md` no longer advertises `bm gc`.** Both lists were already correct by the time this
+  landed; the one surviving mention is the sentence explaining why the command does *not* exist,
+  which is the record, not an advertisement.
 
 ### W3 — local git history on the write path — **SHIPPED 2026-08-10 (mechanism + verbs; W5's write path wires into it)**
 Every mutation commits into a local-only store repo so pruning is recoverable. Two traps: set
@@ -2941,6 +3146,80 @@ W5 stays open: nothing reports the rows yet (item 5) and nothing calls the trigg
   what W4 said record mode was for. The real-path coverage moved to
   `tests/index/test_local_project_index.py` accordingly.
 
+**PROGRESS 2026-08-16 — item 5 shipped: `bm doctor` reports both groups, on the fast path.** The
+mechanism is now end to end from a hand-edited file to a printed line. W5 stays open on item 6
+alone: nothing calls the revalidation trigger and no command carries the notice.
+
+- **Two groups, one command.** `integrity` prints dangling relations, permalink invariants and
+  every `severity="error"` violation; `hygiene` prints expired `review-by`, `date-source:
+  inferred`, `state` records untouched for over 30 days, the `inbox` pile with each record's
+  `proposed-type`, and every `advisory`. `--only <group>` asks one of them; an unknown value is an
+  addressing failure (exit 1, stderr, no payload). A clean corpus prints `No issues` per section
+  and exits 0 — violations are corpus state, never a command failure.
+- **Doctor is a native command now.** The MCP client graph moved inside the self-test, and
+  `doctor` joined `NATIVE_COMMANDS` in the import guard. The guard's probe gained `cwd=tmp_path`,
+  because an unscoped verb walks up looking for `.bm.yml` and would otherwise depend on whether
+  the checkout carries a marker.
+- **`bm doctor` with no flag is the corpus report; the self-test moved to `--self-test`.** The nag
+  item 6 builds says *"run 'bm doctor'"*, and the command that answered that had been creating a
+  throwaway project and saying nothing about the corpus. `just doctor` and the README name the
+  flag now.
+- **Scope C lives locally in `doctor` for now**, per the item's brief: `--project`, else a
+  `.bm.yml` walk-up, else every project. It does not fall back to the registry default. The shared
+  `cli/scope.py` swaps in later; the marker name is validated by the report's own project lookup,
+  which fails loudly rather than reporting a clean corpus for a name that resolves to nothing.
+- **Judgment call — the report is one call into `cli/direct.py`, not four.** `direct_doctor_report`
+  takes the projects and the two group flags, opens one session, and returns dataclasses;
+  `doctor.py` only renders. A group nobody asked for is not queried, so `--only` is a saving rather
+  than a filter. `direct_corpus_integrity_report` is gone: it was that function minus the
+  violations, and two report paths would drift.
+- **Judgment call — doctor does not fire the revalidation trigger.** Item 4 shipped it and item 6
+  owns its call site. Doctor therefore prints rows judged by the vocabulary that was in force at
+  the last write; after a vocabulary edit its violation rows are stale until item 6 lands. Worth
+  revisiting then: doctor is the surface that must never lie about the corpus, and the trigger is
+  one hash compare on the warm path.
+- **Judgment call — `proposed-type` is a fixed schema key, not a declared field.** It went into
+  `_SCHEMA_KEYS` and `_TYPE_ONLY_FIELDS` as legal on `inbox` alone, so writing it on any other type
+  is a `field-not-on-type` error rather than an `unknown-key` advisory. Nothing writes it yet.
+
+**PROGRESS 2026-08-16 — item 6a shipped: read scope C, in `bm brief` and `bm status`.**
+The default-project fallback has retired from the read path. W5 stays open: item 5 (doctor's
+report) and item 6's notice half are still owed, and the notice is what mechanism B is.
+
+- **`cli/scope.py` is the whole of C.** `resolve_read_scope(explicit, cwd)` returns a `ReadScope`
+  that is either pinned to one project or covers all of them: `--project` > nearest `.bm.yml`
+  (`find_marker` already returns the nearest, so a nested marker beats its parent) > every project.
+  `project_marker.resolve_cli_project` keeps the default-project tail and its docstring now says
+  that tail is for **writes** only.
+- **`bm brief` unscoped rolls up.** One query per section across every active project, ordered by
+  `updated_at` and capped at `MAX_ROWS` for the whole brief — not per project, which would make a
+  brief grow with the registry and defeat W8's cap. Each row carries its project as a label; a
+  pinned brief names the project once in the header and leaves rows unlabelled.
+- **`bm status` unscoped prints one plain section per project**, separated by a blank line
+  (contract rule 1). The per-project block is byte-identical to what a pinned run always printed.
+  An empty registry prints `no projects registered` and exits 0 (rule 5) rather than nothing.
+- **W8's `--verbose` is built, and it is the ~10 lines W8 estimated.** `bm brief --verbose` states
+  on stderr why it printed nothing: the scope it read and where that scope came from, or the
+  exception type and message. `bm brief` gained `UnknownProject` for the case W8 named first — a
+  bad project name — because an unknown project and a quiet corpus were otherwise the same output.
+- **Judgment call — an unusable marker raises rather than widening to all projects.** Brief's old
+  forgiving wrapper (`project_from_marker`) is gone. Degrading a broken marker to "read everything"
+  would hand a marked tree exactly the cross-project view the marker exists to exclude, and would
+  do it precisely when the configuration is wrong. Brief still degrades itself — the failure is
+  caught at the verb, prints nothing on stdout, and exits 0 — so constraint 3 holds.
+- **Judgment call — `bm brief` keeps exit 0 on an unknown `--project`.** The contract calls an
+  unaddressable request a failure (rule 5, exit 1). Brief is the documented exception because it
+  runs as a blocking session-start hook where a non-zero exit surfaces as a harness error;
+  `--verbose` is what makes it diagnosable instead.
+- **`bm status` does exit 1** on an unusable marker or an unknown project, unchanged: `MarkerError`
+  is a `ValueError` and the verb already treats that as an addressing failure.
+- **B5's "wired sites" list is stale in one line** as of this change: `bm brief` no longer keeps a
+  forgiving marker wrapper, and neither brief nor status ends at the default project on a read.
+  The live statement of scope is here, in W5-C.
+- **`bm tool search-notes` is left alone, deliberately.** It is the MCP path, not the fast path,
+  and W20 already treats it separately. Restated from the plan so the omission is not read as an
+  oversight.
+
 ### W6 — an idempotent, resumable importer — **CLOSED 2026-08-05 (user): no importer ships; it is a Claude workflow**
 The corpus is written by other sessions while a migration runs. Measured over twenty minutes in a
 single session: `project-a` 271 → 368 lines, `project-b` 292 → 438, `project-c` 21 → 31, and the
@@ -3185,6 +3464,23 @@ degrade to silence too**, so a genuinely broken brief is indistinguishable from 
 As built, failures log at DEBUG and `bm brief -p <name>` by hand is the only diagnostic. The fix is a
 `--verbose` flag, roughly 10 lines, and it was not built. Decide it when W8 lands; note it interacts
 with W20 rule 5, which makes an empty result a *stated* result rather than silence.
+
+**SHIPPED 2026-08-16 with W5 item 6a — `bm brief --verbose`, and the scope brief reads.** Two of
+this entry's open items are discharged, and W8 stays open on one:
+
+- **The `--verbose` flag above is built**, at the ten lines it was estimated at. It states on
+  stderr either the scope brief read and where that scope came from, or the exception type and
+  message. A bad project name is now a distinct condition (`UnknownProject`) rather than an empty
+  result, which is what made "empty" and "broken" the same output.
+- **Brief's project resolution now follows W5-C**: `--project` > nearest `.bm.yml` > every project.
+  An unscoped brief rolls every project up, each row labelled with its project, still capped at
+  `MAX_ROWS` for the whole brief.
+- **Item 1, the pointer-shaped search mode, is not built.** Brief still has no query flag.
+- **Item 2, sections derived from the vocabulary, is not built.** Brief still hardcodes
+  `task` / `decision` / `session`, and the 2026-08-04 amendment above says why that is a rewrite
+  rather than a generalization: W4's type set shares no member with the hardcoded trio, and the
+  amendment's own rule — derive *sections* from the vocabulary, not *rows* uniformly from it —
+  has to be designed per type. That is the whole of what W8 still owes.
 
 **Note — the `beans prime` comparison figures in this entry are no longer reproducible.** Probed
 2026-08-06 on the installed build: `beans prime` prints nothing and exits 0 outside a beans project,
@@ -3599,6 +3895,16 @@ because it is invisible.
 **Item 5 (workflow affordances) is still open** and is not blocking: it lands naturally with W5's
 verbs, where there is a next verb worth naming.
 
+**First affordance shipped 2026-08-16, on `bm mine` (W1).** It is the static three-line form this
+item specifies — fixed per verb, no conditions, no ordering logic, no memory, suppressed only by
+`--quiet`. Two of its three entries widen the search the caller just ran (`--context 2`,
+`--speaker all`) and the third names where a keeper goes. Item 5 stays open for the remaining verbs.
+
+**One correction to this item's own illustration:** it names `bm new`, which has not shipped, so the
+affordance points at `bm tool write-note` instead. An affordance exists to teach the surface at the
+moment the agent is standing in it; naming a verb that answers *no such command* teaches it wrongly.
+Swap it back when `bm new` lands.
+
 **Item 4 does not go inside `bm brief`.** W8 caps brief at ~50 tokens of pointer rows,
 unconditionally, every session; per-type explanations would burn that budget on every start for a
 decision an agent makes rarely. The split: **brief names the types** (it derives its sections from
@@ -3717,7 +4023,71 @@ the mode-precedence/JSON-envelope tests whose subject no longer exists); int 329
 `project list`, `search-notes`, `config list`, `orphans`, `status`, `project info` all render v2
 (columns, id first, trailing counts), streams clean.
 
-### W21 — the permalink normalization contract is undocumented, and permalinks are this fork's identity
+### W21 — the permalink normalization contract is undocumented, and permalinks are this fork's identity — **CLOSED 2026-08-16: recovered from the code into `docs/IDENTITY.md`; the query surface got `docs/METADATA-QUERIES.md`**
+
+**Close block, 2026-08-16.** Docs only, no code changed.
+
+- **Task 1 was already answered** in this entry (2026-08-10): `docs/NOTE-FORMAT.md` does not cover
+  normalization. Re-confirmed, and its permalink section was wrong on top of being thin — it said
+  the permalink is "derived from its title" when `generate_permalink` derives it from the **file
+  path** (`src/basic_memory/utils.py:30`). That line is corrected.
+
+- **Task 2 shipped as `docs/IDENTITY.md`**, 283 lines, every rule cited to `file:line`. It covers
+  what identity is and is not; the ASCII derivation in order (unidecode, camelCase split, lowercase,
+  `_`→`-`, apostrophes dropped rather than hyphenated, everything outside `[a-z0-9/.-]` to `-`,
+  periods and `/` kept); the separate CJK branch (ideographs preserved, fullwidth punctuation
+  deleted, hyphens inserted at CJK↔Latin boundaries, so **a permalink is not guaranteed ASCII**);
+  hyphen collapse and per-segment strip; the project-slug prefix and its default; explicit
+  `permalink:` stored byte-for-byte; the `-1`/`-2` collision suffix in **both** places that does it;
+  the DB unique index; advisory-only conflict detection; the set-once rule and `id == permalink`;
+  the three write paths with their two modes; governed vs ungoverned move; where wikilinks,
+  relation permalinks, and `memory://` bind; and what `bm doctor` checks.
+
+- **Judgment call — a new file, not a `DOMAIN_MODEL.md` section.** The brief left the choice open.
+  `DOMAIN_MODEL.md` was a 209-line invariants doc that cites no code and states *meaning*; this is
+  character-level *mechanism* with 71 citations that go stale whenever `utils.py` moves. Folding it
+  in would double that file and mix two registers and two maintenance cadences. `DOMAIN_MODEL.md`
+  and `NOTE-FORMAT.md` get pointers instead, and `DOMAIN_MODEL.md`'s Move section now states the
+  governed-move rule it was silent on.
+
+- **Task 3 decided: the query surface does need a doc.** `docs/METADATA-QUERIES.md`, 139 lines.
+  W20's contract governs *rendering*, not the query grammar — it is orthogonal and cannot cover
+  this. `--help` is worse than thin: `--filter` is described as "JSON metadata filter (advanced)"
+  (`src/basic_memory/cli/commands/tool.py:739-742`) and names **zero** operators. The operator set
+  lives in one docstring (`src/basic_memory/repository/metadata_filters.py:152-165`). Positive
+  control: `grep -n -iE 'contains|\$in|\$between|metadata filter' src/basic_memory/man/bm.1
+  src/basic_memory/mcp/resources/ai_assistant_guide.md` returns two hits, both
+  `ai_assistant_guide.md` (:97 and :99) and none in the man page — and :97's operator list omits
+  `$contains`. That file is also MCP-facing, not the CLI.
+  The doc records the grammar, the AND-combination, dates-as-text, the two boolean spellings, and
+  three traps: **T21** (`updated_at`/`created_at` read frontmatter and silently return `0 results`
+  — still open, documented rather than papered over), bare-list-means-AND vs `$in`, and
+  `--permalink` silently becoming a text search when dropped.
+
+- **Nothing was taken from the deleted `docs/character-handling.md`.** It was read once for
+  orientation (`git show 411d6251^:docs/character-handling.md`) and every rule was then re-derived
+  from the current tree. Its conflict-resolution half survives as §4's advisory-only note, which is
+  the part the code still does.
+
+- **Found while doing this, recorded as O9:** `docs/NOTE-FORMAT.md` still documents Picoschema,
+  `schema-infer`, and drift detection as live surface, months after the package was stripped.
+
+**Review pass, 2026-08-16.** All 71 `file:line` occurrences in `IDENTITY.md` were re-opened against
+the tree. Two were wrong and are fixed: `entity_repository.py:65-112` for
+`find_permalink_integrity_issues` (it is at `91-139`; W5's hygiene constants shifted it) and
+`:104-111` for the underscore check (it is at `130-138`). Every `metadata_filters.py` citation in
+`METADATA-QUERIES.md` had shifted by T21's 64-line insertion and is re-pointed. The derivation
+rules in §2 were re-read end to end and are correct as written.
+
+Four claims were corrected rather than re-cited: set-once also fires on a **dropped** field, not
+only a changed one; the funnel has **two** entry points (`enforce_vocabulary` and
+`apply_vocabulary`), because the sync path calls the second; the governed-move branch **logs** the
+violation and persists nothing, which "records" read as the opposite; and the first-index
+frontmatter stamp is gated on the default flags. T21's fix has landed in the tree, so
+`METADATA-QUERIES.md` §5.1 now states that column names error. **That section depends on T21's
+diff surviving verification** — if T21 is reverted, §5.1 and the `metadata_filters.py` line numbers
+revert with it.
+
 **Opened 2026-08-07**, by the `.forked/` reconciliation pass, from `.forked/pass4-5-inventory.md`
 before its deletion. That file flagged five doc deletions as *"product decisions, not strips"*. Three
 are moot; two are live and were recorded nowhere:
@@ -4217,6 +4587,117 @@ first commit"):
   `total: null` (or omit it) when the count is unknown; fold into the contract decision.
 
 ---
+
+### O9 — `docs/NOTE-FORMAT.md` documents a Picoschema surface that no longer exists
+**Opened 2026-08-16**, found by the W21 docs pass.
+
+The `picoschema` package was stripped 2026-08-10 (recorded as **O-picoschema**), but the docs that
+described it were never touched. `docs/NOTE-FORMAT.md` still gives Picoschema syntax,
+schema-to-note mapping, schema attachment, validation modes, validation output, `schema-infer`, and
+drift detection as live features — 210 of its 542 lines, plus two of its three worked examples.
+
+```
+$ git ls-files src/basic_memory/picoschema
+                                        # 0 files
+$ git grep -l -i picoschema -- src
+src/basic_memory/man/bm.1
+$ git grep -l -i picoschema -- docs
+docs/NOTE-FORMAT.md
+docs/manual-pages.md
+```
+
+**Amended 2026-08-16 by the W21 review.** The entry as first written recorded `git grep -l
+picoschema -- src` as returning "no output". That is false: it returns `src/basic_memory/man/bm.1`.
+The package directory is gone (`git ls-files` returns 0 files), but the man page still documents the
+verb. The corrected commands are above.
+
+Positive control: the `docs/` grep returns hits, so the search reaches both trees.
+`docs/manual-pages.md:140-141` is the *correct* mention — it names the strip
+and points at O-picoschema. `docs/NOTE-FORMAT.md` is the stale one: `## Schemas` at line 237 runs to
+`## Complete Examples` at 447, and two of the three worked examples below that are schema examples.
+
+**Three smaller instances of the same class, in `src/basic_memory/man/bm.1`:**
+
+- `bm.1:52-54` documents a `bm schema` command — "List, validate, infer, and drift-check Picoschema
+  note-type contracts." No such command exists: `src/basic_memory/cli/commands/` has no `schema.py`.
+  Found 2026-08-16 by the W21 review; O9 missed it because its `src` grep was recorded wrongly.
+- `bm.1:30` says the `bm tool *` commands "emit JSON". False since **W20** removed `--json`
+  (2026-08-10); `docs/OUTPUT_CONTRACT.md` v2 forbids it.
+- `bm.1:101-102` says `~/.basic-memory/config.json` holds "Projects, default project". False since
+  **B2** (2026-08-03) made the database the sole owner of the registry.
+
+`AGENTS.md`'s directory-structure list also still names `/picoschema`.
+
+**Why it matters:** an agent reading `NOTE-FORMAT.md` will write `$schema` frontmatter and call
+verbs that do not exist, and get no error that explains why. This is the doc-side of the O8 class —
+a confident wrong answer.
+
+**Fix:** delete the schema half of `NOTE-FORMAT.md` and its two schema examples, delete the
+`bm schema` entry from `bm.1` and correct its two other lines, and drop `/picoschema` from
+`AGENTS.md`. Deliberately **not** done in the W21 pass:
+it is a ~210-line deletion in a file that pass only needed one paragraph of, and bundling it would
+have hidden the permalink work inside a docs strip.
+
+### O10 — one malformed transcript line makes `bm mine` print nothing for a whole directory
+**Opened 2026-08-16** by the W1 review, which re-ran W1's own corpus survey against the live
+projects tree.
+
+W1 requirement 4 (from R-O1) says a `json.loads` failure is a hard error, and W1's close block
+states the correct rate is zero. **It is not zero.** Over the whole tree — 1,919 transcripts,
+464,253 non-empty lines, `*.jsonl` allowlist applied — 12 lines fail to parse. They are not
+truncation and not a live-write race: every one sits mid-file in a transcript last written hours or
+days earlier, ends with a newline, and still fails when re-read.
+
+```
+failures: 12
+  <session>.jsonl        line 148/346  last=False ends_nl=True still_bad=True age=7576min
+  agent-<id>.jsonl       line 199/327  last=False ends_nl=True still_bad=True age=7583min
+  ...
+  ordinals near the failure point: [110, 116, 123, 34, 112, 97, 114, 101]   # → 'nt{"pare'
+```
+
+The signature is the same in 10 of the 12: a record is cut short and the **next record starts on
+the same physical line** (`…{"parentUuid":`), so Claude Code occasionally writes two records without
+the newline between them. Two more fail at a different offset with the same cause.
+
+They cluster: 3 of 61 project directories hold all 12 (1 of 51,027 lines, 9 of 89,966, 2 of 22,206).
+Inside those three, `bm mine` exits 1 with a message and **nothing on stdout** — the directory is
+unmineable, not degraded. This repo's own project directory is clean today, which is why the build
+never hit it.
+
+**Reproduction** (read-only; run from a checkout, over your own projects tree):
+
+```python
+import json
+from pathlib import Path
+from basic_memory.mine.locate import is_transcript
+
+bad = total = 0
+for f in (Path.home() / ".claude" / "projects").rglob("*.jsonl"):
+    if not is_transcript(f):
+        continue
+    for n, raw in enumerate(f.open(encoding="utf-8"), 1):
+        if not raw.strip():
+            continue
+        total += 1
+        try:
+            json.loads(raw)
+        except json.JSONDecodeError:
+            bad += 1
+print(bad, "of", total)
+```
+
+*Positive control:* the same loop without `is_transcript` re-produces R-O1's Markdown sidecar
+failures on top of these, so the loop can fail and the allowlist is doing its job.
+
+**The decision this needs, which the reviewer did not take.** R-O1 rule 4's words are "Count them,
+report them, exit nonzero" — a counted, named, nonzero-exit skip satisfies all three, and would keep
+the other 463,000 lines readable. The shipped behaviour is stronger: it aborts the run and prints no
+payload, which `docs/OUTPUT_CONTRACT.md` rule 6 also requires of the error path. Weakening it is a
+change to a recorded decision *and* to the contract's error rule, so it belongs to the user, not to
+a review pass. Recommended: keep exit 1, still print the payload, and name each bad line in a notice
+— with rule 6 amended to say that a partial-corpus failure is the one case where a payload and a
+nonzero exit coexist.
 
 ## Docs swept
 

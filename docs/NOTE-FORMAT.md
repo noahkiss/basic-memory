@@ -203,11 +203,20 @@ Relations can link to entities that don't exist yet. Basic Memory resolves them 
 
 ## Permalinks and memory:// URLs
 
-Every document has a unique **permalink** — a stable identifier derived from its title. You can set one explicitly in frontmatter, or let the system generate it.
+Every document has a unique **permalink** — the identifier every relation, `memory://` URI, and
+search row binds to. You can set one explicitly in frontmatter, or let the system derive one from
+the file path.
 
 ```yaml
 permalink: auth-approaches-2024
 ```
+
+An explicit permalink is stored byte-for-byte. A derived one is normalized: Unicode transliterates
+to ASCII, case folds down, `_` becomes `-`, and the project slug is prefixed by default. On a
+governed project the permalink is **set once** and a move never changes it.
+
+**[IDENTITY.md](IDENTITY.md) is the full contract** — every normalization rule, collision
+suffixing, and what happens on a move, each cited to the code.
 
 Permalinks form the basis of `memory://` URLs:
 
