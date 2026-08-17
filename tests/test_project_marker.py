@@ -2,8 +2,11 @@
 
 The shared reader is strict — a marker that exists but cannot be used raises
 MarkerError instead of silently falling back to the default project, which
-would point commands (including writes) at the wrong project. `bm brief`'s
-forgiving wrapper is tested separately in tests/cli/test_brief.py.
+would point commands (including writes) at the wrong project.
+
+This chain is the **write** chain: it ends at the registry default. Reads use
+`basic_memory.cli.scope.resolve_read_scope`, tested in tests/test_cli_scope.py,
+which ends at "every project" instead (GAPS W5-C).
 """
 
 import pytest

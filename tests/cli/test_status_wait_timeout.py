@@ -52,13 +52,15 @@ async def test_status_wait_returns_current_project_index_observation(monkeypatch
     monkeypatch.setattr(status_module, "get_active_project", fake_get_active_project)
     monkeypatch.setattr(status_module, "ProjectClient", FakeProjectClient)
 
-    project_name, status = await run_status(
-        project="scratch",
+    reports = await run_status(
+        ["scratch"],
         wait=True,
         timeout=0.01,
         poll_interval=0.001,
     )
 
+    assert len(reports) == 1
+    project_name, status = reports[0]
     assert project_name == "scratch"
     assert status.total_files == 1
     assert status.observed_files[0].path == "notes/seed.md"

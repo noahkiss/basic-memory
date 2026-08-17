@@ -65,9 +65,12 @@ uv tool install git+https://github.com/noahkiss/basic-memory
 ## Session briefings
 
 `bm brief` prints a session-start orientation — open tasks, open decisions, and
-recent sessions. Wire it into your agent by hand; this fork ships no plugin
-package. For Claude Code, add it as a `SessionStart` hook in
-`~/.claude/settings.json`.
+recent sessions. It reads every project unless `--project` or a `.bm.yml` above
+the working directory pins one. It prints nothing when nothing is open; use
+`--verbose` to see on stderr why a brief came back empty.
+
+Wire it into your agent by hand; this fork ships no plugin package. For Claude
+Code, add it as a `SessionStart` hook in `~/.claude/settings.json`.
 
 ## Pick up where you left off
 

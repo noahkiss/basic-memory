@@ -77,11 +77,17 @@ def read_marker_project(marker: Path) -> Optional[str]:
 
 
 def resolve_cli_project(explicit: Optional[str], cwd: Optional[Path] = None) -> Optional[str]:
-    """CLI project chain: explicit flag > `.bm.yml` marker > registry default.
+    """CLI project chain for **writes**: explicit flag > `.bm.yml` marker > registry default.
 
     A marker-supplied name is validated against the registered projects so a
     stale marker fails with its own path in the message instead of a bare
     "project not found" from three layers down.
+
+    **Reads do not use this chain.** The default-project tail retired for reads
+    with GAPS W5 mechanism C: an unmarked cwd reads every project instead of
+    one arbitrary configured project. Use `basic_memory.cli.scope.
+    resolve_read_scope` for anything that reports rather than writes. The tail
+    survives here because a write outside a marker still needs a home.
     """
     # Deferred: the registry reader is only needed once a command actually
     # resolves a project, and it opens the SQLite file to do it.

@@ -13,6 +13,7 @@ import pytest
 from typer.testing import CliRunner
 
 from basic_memory.cli.main import app as cli_app
+from basic_memory.cli.scope import ReadScope
 from basic_memory.mcp.clients.project import ProjectClient
 from basic_memory.schemas.project_info import ProjectList
 from basic_memory.schemas.project_index import (
@@ -56,6 +57,11 @@ _MOCK_PROJECT_ITEM = MagicMock()
 _MOCK_PROJECT_ITEM.name = "test-project"
 _MOCK_PROJECT_ITEM.external_id = "11111111-1111-1111-1111-111111111111"
 
+# These tests measure rendering for one project, so they pin the scope. Reads resolve
+# through `resolve_read_scope` since GAPS W5-C; an unpinned run would report every
+# registered project instead.
+_PINNED_SCOPE = ReadScope(project="test-project", origin="flag")
+
 
 @asynccontextmanager
 async def _fake_get_client(project_name=None):
@@ -65,7 +71,10 @@ async def _fake_get_client(project_name=None):
 def _invoke_status(status: ProjectIndexStatusResponse, *args: str):
     """Run `bm status` against a stubbed project-index observation."""
     with (
-        patch("basic_memory.cli.commands.status.resolve_cli_project", return_value="test-project"),
+        patch(
+            "basic_memory.cli.commands.status.resolve_read_scope",
+            return_value=_PINNED_SCOPE,
+        ),
         patch(
             "basic_memory.cli.commands.status.get_active_project",
             new_callable=AsyncMock,
@@ -124,7 +133,10 @@ def test_status_wait_reads_the_observation_once():
     get_status = AsyncMock(return_value=PROJECT_INDEX_STATUS_WITH_FILES)
 
     with (
-        patch("basic_memory.cli.commands.status.resolve_cli_project", return_value="test-project"),
+        patch(
+            "basic_memory.cli.commands.status.resolve_read_scope",
+            return_value=_PINNED_SCOPE,
+        ),
         patch(
             "basic_memory.cli.commands.status.get_active_project",
             new_callable=AsyncMock,
