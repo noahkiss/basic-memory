@@ -125,6 +125,11 @@ class Entity(Base):
         cascade="all, delete-orphan",
         uselist=False,
     )
+    violations = relationship(
+        "Violation",
+        back_populates="entity",
+        cascade="all, delete-orphan",
+    )
 
     @validates("created_at", "updated_at")
     def _normalize_semantic_timestamp(self, attribute_name: str, value: datetime) -> datetime:
@@ -221,6 +226,62 @@ class NoteContent(Base):
         return (
             f"NoteContent(entity_id={self.entity_id}, external_id='{self.external_id}', "
             f"file_path='{self.file_path}', file_write_status='{self.file_write_status}')"
+        )
+
+
+class Violation(Base):
+    """One vocabulary rule broken by one record, as of its last check.
+
+    Sync and the move planner both check a record and write its violations here;
+    ``bm doctor`` and the notice count read them back (GAPS W5 mechanism A). The
+    rows are derived state, not a log: a re-check replaces an entity's whole set,
+    so a fixed record leaves none behind and nothing accumulates.
+    """
+
+    __tablename__ = "violation"
+    __table_args__ = (
+        CheckConstraint(
+            "severity IN ('error', 'advisory')",
+            name="ck_violation_severity",
+        ),
+        # One row per rule per field per entity: a re-check of an unchanged record
+        # must collapse onto the row it already wrote rather than duplicate it.
+        UniqueConstraint("entity_id", "rule", "field", name="uix_violation_entity_rule_field"),
+        # doctor and the notice both filter project + severity; the count query
+        # (GAPS W5-B) is served entirely from this index.
+        Index("ix_violation_project_severity", "project_id", "severity"),
+        Index("ix_violation_entity_id", "entity_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)  # pyright: ignore [reportIncompatibleVariableOverride]
+    entity_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("entity.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    # Duplicated from entity so the rolled-up count is one indexed query with no join.
+    project_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("project.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    rule: Mapped[str] = mapped_column(String, nullable=False)
+    # The frontmatter key at fault; "" when the record as a whole is at fault.
+    field: Mapped[str] = mapped_column(String, nullable=False)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    severity: Mapped[str] = mapped_column(String, nullable=False)
+    detected_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now().astimezone(),
+    )
+
+    entity = relationship("Entity", back_populates="violations")
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return (
+            f"Violation(id={self.id}, entity_id={self.entity_id}, rule='{self.rule}', "
+            f"field='{self.field}', severity='{self.severity}')"
         )
 
 

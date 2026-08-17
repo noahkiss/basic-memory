@@ -7,6 +7,7 @@ from .note_content_repository import (
 from .observation_repository import AcceptedObservationWrite, ObservationRepository
 from .project_repository import ProjectRepository
 from .relation_repository import AcceptedRelationWrite, RelationRepository
+from .violation_repository import ViolationReason, ViolationRepository, ViolationRow
 
 __all__ = [
     "EntityRepository",
@@ -18,4 +19,7 @@ __all__ = [
     "ProjectRepository",
     "AcceptedRelationWrite",
     "RelationRepository",
+    "ViolationReason",
+    "ViolationRepository",
+    "ViolationRow",
 ]

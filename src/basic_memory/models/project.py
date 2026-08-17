@@ -70,6 +70,12 @@ class Project(Base):
     last_scan_timestamp: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     last_file_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
+    # Revalidation trigger (GAPS W5 item 4): sha256 of the project's vocabulary.yml
+    # bytes when its violations were last computed, "" when the file is absent, and
+    # NULL when nothing has validated this project yet. Hashing beats mtime because
+    # W3's git checkouts of the store rewrite mtime without changing content.
+    vocabulary_stamp: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+
     # Define relationships to entities, observations, and relations
     # These relationships will be established once we add project_id to those models
     entities = relationship("Entity", back_populates="project", cascade="all, delete-orphan")

@@ -79,7 +79,7 @@ class DirectoryDeleteService:
         try:
             # scoped_session enables `PRAGMA foreign_keys=ON` for SQLite; this bulk
             # delete issues a Core DELETE on entity and relies on ON DELETE CASCADE
-            # for note_content/observations/relations, which a raw session_maker()
+            # for note_content/observations/relations/violation, which a raw session_maker()
             # connection (foreign_keys OFF by default) would leave orphaned.
             async with db.scoped_session(self.session_maker) as session:
                 accepted = await accept_directory_delete(
