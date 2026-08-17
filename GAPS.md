@@ -6050,6 +6050,196 @@ either way, so no loss is silent at line granularity:
    64 `{"` sequences abandons the rest of the line. Reproduced with a synthetic 1.2 MB line; the
    line is reported as damaged and the scan stays fast (that line parses in under 10 ms).
 
+## USAGE — found by using the verbs on real content
+
+**Opened 2026-08-17.** The first migration of this repo's own local tracking files into a governed
+bm project wrote 104 records in one pass (69 `finding`, 23 `task`, 10 `guide`, 1 `state`,
+1 `inbox`). Every entry below came out of that pass. They are usage defects, not build defects —
+each one was hit by an agent following the documented workflow, and none of them shows up in a
+test.
+
+Three things worked without a complaint and are worth recording as the baseline: every verb ran in
+0.3–0.6 s user CPU, `--source` accepts free text and round-trips verbatim, and the error messages
+are exact and actionable (`only a task carries a status; '<id>' is a finding`; `'finished' is not a
+status this project declares. Allowed values: open, doing, blocked, done, dropped.`; `no record
+'<id>' in scope`).
+
+### U1 — `bm new` cannot state a date it did not invent, and stamps `date-source: inline` to say so — **OPEN**
+
+**This is the entry that matters.** `bm new` has no flag for `opened`, `event-date`, `date-source`,
+`date-confidence` or `review-by`. It sets the date to today and writes `date-source: inline`
+unconditionally.
+
+```
+$ bm new --help | grep -E "^│ +--"
+│ --body        -b      TEXT  The note's body. Use '-' to read it from stdin;  │
+│ --source              TEXT  Where the content came from, e.g.                │
+│ --area        -a      TEXT  One of the areas this project declares.          │
+│ --supersedes          TEXT  The finding this one replaces, by id.            │
+│ --project     -p      TEXT  Project to write to. Defaults to .bm.yml.        │
+│ --quiet                     Hide the notices and the next-step hints.        │
+│ --help                      Show this message and exit.                      │
+```
+
+Migrating a decision the source dates 2026-08-05:
+
+```
+$ bm new finding "Store history: git add -A per mutation was reversed; commit only touched paths" \
+    --source ".forked/decisions.md#L189-L312" -b "Recorded 2026-08-05 in GAPS W3. ..."
+$ bm show tnd-gqntyk6p | sed -n '1,10p'
+---
+title: 'Store history: git add -A per mutation was reversed; commit only touched paths'
+type: finding
+permalink: tnd-gqntyk6p
+id: tnd-gqntyk6p
+source: .forked/decisions.md#L189-L312
+event-date: '2026-08-17'
+date-source: inline
+date-confidence: day
+review-by: '2027-08-17'
+```
+
+`event-date` is today. The content is twelve days old.
+
+**Why `date-source: inline` makes it worse rather than better.** `bm types` defines the field as
+"How you know the date", and the design docs define `inline` as the HIGHEST fidelity rung — a date
+written in the source text itself. bm writes the highest-confidence value for a date it invented.
+The other four rungs the vocabulary was designed around (`transcript`, `git`, `mtime`, `inferred`)
+cannot be expressed at all, and `inferred` is the one that exists specifically so a guess is
+visible rather than laundered.
+
+The design that this contradicts is not incidental: the migration workflow makes "never invent a
+date — if the source does not carry one, `date-source: inferred`" a hard rule for every extracting
+agent, and calls a fabricated date attached to a real record "the single worst failure mode
+available here". It is also what a hygiene check is supposed to flag. Neither is reachable from the
+CLI.
+
+**Workaround used for all 104 records, and it is a bad one:** the true date is written into the
+first line of every body as prose. That is not queryable, not checkable, and not what a validator
+reads.
+
+**Why it matters:** this is the pilot for migrating every repo's tracking files. Every record any
+of those passes writes will claim it was learned on the day it was migrated, with the frontmatter
+asserting the date came from the source text. Retrofitting a date after the fact is not possible
+either — `bm edit` sets a title, a body, and declared profile fields, and the date fields are
+set-once by design.
+
+**Fix, in the order the workflow needs it:** `bm new` takes `--date <YYYY-MM-DD>` and
+`--date-source <inline|transcript|git|mtime|inferred>` (defaulting to today/`inferred`, which is
+the honest default, not `inline`), plus `--date-ref` where the vocabulary requires one and
+`--review-by` for a finding or guide whose review is not twelve months from the migration run.
+
+### U2 — record output has no trailing newline, so the body runs into the notice — **OPEN**
+
+`bm show` and the note file on disk both end without a newline, so the last word of the body butts
+against whatever bm prints next.
+
+```
+$ bm show tnd-mmf8je9o | tail -2 | cat -A
+`just` is the entry point for every verification recipe in this repo, so a machine without it cannot run the gates. Whether that makes it a workstation-level dependency belonging in a tracked Brewfile is unresolved.1 unfiled record in the inbox M-bM-^@M-^T run 'bm doctor --only hygiene'$
+bm edit <id> change it M-BM-7 bm path <id> print its file path$
+```
+
+`unresolved.1 unfiled record` is one token to any reader, human or agent. The same is true on disk:
+
+```
+$ tail -c 40 "$(bm path tnd-b17jghub)" | cat -A
+ Relations$
+- supersedes [[tnd-on8v0ha8]]
+```
+
+— no `$` at the end, so the file has no final newline. That also makes every record file fail
+POSIX line-orientation, which matters for the store's own git history: a later edit that does add a
+newline shows the last line as changed.
+
+**Fix:** terminate the body with a newline on write, and again before notices and affordances are
+printed.
+
+### U3 — a superseded finding is indistinguishable from a live one — **OPEN**
+
+`--supersedes` works, and it writes the relation into the SUCCESSOR:
+
+```
+$ tail -2 "$(bm path tnd-b17jghub)"
+## Relations
+- supersedes [[tnd-on8v0ha8]]
+```
+
+Nothing is written to the superseded record, and nothing surfaces it:
+
+```
+$ bm ls | grep "R1 original"
+tnd-on8v0ha8  finding  -     R1 original — Never store what you can re-derive
+```
+
+Same shape, same blank status column, as any live finding. To learn that a finding is dead you have
+to read the body of every other finding in the project looking for a relation that names it.
+
+This is not a corner case for a migration: this repo's own decision ledger keeps a whole section of
+reversals precisely because the abandoned position is worth preserving, and the pass wrote eight
+such pairs. Sixteen records, eight of them dead, none of them marked. `bm types` says a finding
+"is replaced by a successor written with `bm new --supersedes`" — the replacement is real, the
+replacedness is invisible.
+
+**Fix:** either give `bm ls` a `superseded` marker in the status column derived from the inbound
+relation, or hide superseded findings behind a flag. The relation is already in the graph, so this
+is a read-side change.
+
+### U4 — `bm brief`'s section headings report the row count, not the real count — **OPEN**
+
+With 23 open tasks in the project:
+
+```
+$ bm brief | grep -E '^## '
+## Open tasks (5)
+## Current state (1)
+
+$ bm ls | awk '$2=="task" && $3=="open"' | wc -l
+23
+```
+
+The brief shows five rows and labels the section `(5)`. Nothing says the list is truncated. An
+agent reading the brief at session start — which is the entire purpose of the command — is told
+this project has five open tasks.
+
+The output contract's own rule for v2 is that a count is the real count, and that an unknown count
+is ABSENT rather than a sentinel. A count that silently means "rows I chose to print" is worse than
+either, because it is indistinguishable from a true count.
+
+**Positive control** that the section is genuinely capped rather than the other 18 being filtered
+out for some legitimate reason: all 23 carry `status: open`, none carries `not-before`, and
+`bm ls` lists every one of them.
+
+**Fix:** print the real count in the heading and say the list is capped — `## Open tasks (23, showing 5)`
+— or drop the parenthetical entirely and let `bm ls` own counting.
+
+### U5 — `bm doctor` flags a deliberate `inbox` record with a demand no verb can satisfy — **OPEN**
+
+```
+$ bm new inbox "Not migrated item by item — the six archived design documents" --source ".forked/archive/"
+$ bm doctor
+integrity  project 'basic-memory'
+  No issues
+
+hygiene  project 'basic-memory'
+  inbox/tnd-ybb8oq8h--not-migrated-item-by-item-the-six-archived-design-documents.md  inbox  proposes no type
+  1 issue
+```
+
+"Proposes no type" describes the record correctly and asks for something the CLI cannot produce. A
+proposing inbox record is only ever created as a side effect: `bm new <undeclared-type> …` files the
+record as `inbox` and records the rejected type. Ask for `inbox` on purpose — which is what the
+type is documented for, "use it when you cannot tell which type fits" — and there is no way to
+attach a proposal, and no way to add one afterwards.
+
+So the escape hatch the vocabulary provides is permanently one hygiene issue, and the count never
+reaches zero for a corpus that used it as intended. The migration workflow makes doctor's hygiene
+output the acceptance gate for a migration; a gate that cannot be closed is not a gate.
+
+**Fix:** either accept a bare `inbox` as clean and reserve the flag for records that DO carry a
+rejected type (rename the check to something like "unpromoted proposal"), or let `bm new inbox` and
+`bm edit` take the proposal explicitly.
+
 ## Docs swept
 
 **2026-07-26.** A ten-reader sweep reconciled the following into this file. The gaps they contained
@@ -6092,3 +6282,4 @@ Every BLOCKER is closed. There is no agreed order for what remains; the next pha
 | Settled/reversed decisions with turn cites | `.forked/decisions.md` (local, gitignored) |
 | Session-to-session state | `STATUS.local.md` (local, gitignored) |
 | Fork point, remotes, license, measured baseline | `AGENTS.md` in this repo |
+| Defects found by using the verbs, not by building them | the `USAGE` section above (`U*`) |
