@@ -17,6 +17,7 @@ from basic_memory.vocabulary.checker import (
 )
 from basic_memory.vocabulary.model import (
     DEFAULT_VOCABULARY,
+    TERMINAL_STATUSES,
     VOCABULARY_FILENAME,
     DeclaredField,
     FieldKind,
@@ -25,6 +26,7 @@ from basic_memory.vocabulary.model import (
     default_review_by,
     load_vocabulary,
     parse_vocabulary,
+    terminal_statuses,
     vocabulary_path,
 )
 
@@ -32,6 +34,7 @@ __all__ = [
     "DEFAULT_VOCABULARY",
     "HISTORY_DERIVED_RULES",
     "RELATION_DERIVED_RULES",
+    "TERMINAL_STATUSES",
     "VOCABULARY_FILENAME",
     "DeclaredField",
     "FieldKind",
@@ -44,5 +47,6 @@ __all__ = [
     "has_errors",
     "load_vocabulary",
     "parse_vocabulary",
+    "terminal_statuses",
     "vocabulary_path",
 ]

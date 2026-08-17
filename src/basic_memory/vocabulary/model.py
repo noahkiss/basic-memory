@@ -78,6 +78,30 @@ DEFAULT_VOCABULARY = Vocabulary(
 )
 
 
+# The status names that close a task. A vocabulary declares its statuses but
+# marks none of them terminal, so which names *mean* closed is type knowledge no
+# project file can carry. It lives here, once, because every caller that asks
+# "is this task still open" has to get the same answer — `bm brief` and the
+# headline file disagreeing about it would read as a bug in whichever the reader
+# checked second.
+TERMINAL_STATUSES: frozenset[str] = frozenset({"done", "dropped"})
+
+
+def terminal_statuses(vocabulary: Vocabulary | None = None) -> frozenset[str]:
+    """Which status names close a task, for one project or in general.
+
+    A governed project narrows the set to the terminal names it actually
+    declares, so a vocabulary that dropped ``dropped`` stops matching it. A
+    project that declares neither name says nothing about termination, and
+    guessing nothing there would leave every task permanently open — so the
+    defaults stand. Callers spanning several projects pass nothing and get them.
+    """
+    if vocabulary is None:
+        return TERMINAL_STATUSES
+    declared = TERMINAL_STATUSES & set(vocabulary.statuses)
+    return frozenset(declared) if declared else TERMINAL_STATUSES
+
+
 def default_review_by(vocabulary: Vocabulary, today: date) -> str:
     """The day a record created on ``today`` falls due for review, as an ISO date.
 

@@ -61,10 +61,11 @@ MAX_BRIEF_CHARS = 10_000
 # starts skimming.
 MAX_ROWS = 5
 
-# The statuses that close a task. The vocabulary declares its statuses but marks none of
-# them terminal (`vocabulary/model.py`), so the terminal set lives here — the one piece
-# of type knowledge brief cannot read out of a project's file.
-TERMINAL_STATUSES: frozenset[str] = frozenset({"done", "dropped"})
+# The statuses that close a task live in `vocabulary/model.py`, which is their one home:
+# a brief and a headline file that disagreed about whether a task is still open would read
+# as a bug in whichever the reader checked second. Read through `terminal_statuses()` at the
+# query site, unnarrowed — brief's rows span every in-scope project, and there is no single
+# project's vocabulary to narrow by.
 
 # What an ungoverned project contributes. W4 decided that an absent `vocabulary.yml`
 # means *unchecked*, not *typeless*: records still carry a frontmatter `type`, and a
@@ -278,6 +279,10 @@ async def query(session_maker, scope: ReadScope, query_text: Optional[str] = Non
                 .limit(MAX_ROWS)
             )
 
+        # Deferred with the rest of the vocabulary reader: it pulls PyYAML, which
+        # has no business loading at CLI import time.
+        from basic_memory.vocabulary.model import terminal_statuses
+
         status = Entity.entity_metadata["status"].as_string()
         review_by = func.json_extract(Entity.entity_metadata, REVIEW_BY_PATH)
         recent = Entity.updated_at.desc()
@@ -301,7 +306,7 @@ async def query(session_maker, scope: ReadScope, query_text: Optional[str] = Non
                 # because its frontmatter is wrong would suppress open work over a
                 # schema fault the notice already reports.
                 statement = statement.where(
-                    or_(status.is_(None), status.not_in(sorted(TERMINAL_STATUSES)))
+                    or_(status.is_(None), status.not_in(sorted(terminal_statuses())))
                 ).order_by(recent)
             elif rule.rule == "review-due":
                 # Oldest expiry first: a review that lapsed last year is a different

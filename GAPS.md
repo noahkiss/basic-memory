@@ -2843,6 +2843,58 @@ tests/cli/test_history_command.py); int 329/3 unchanged; doctor skipped — noth
 the file↔DB loop. Live scratch smoke: `history dirty` empty case, per-file listing, path commit,
 `--all` sweep with trailer-free message all conform.
 
+**CLOSED 2026-08-17 — the write path is wired in.** The line above ("not wired to any write path
+yet, by design") is now stale and this block supersedes it. `src/basic_memory/store/write_hook.py`
+is what a write path calls; `index/local_write_stack.py` calls it from all three entry points, so
+every native verb built on that stack records history without doing anything itself.
+
+What it decides, and why each decision is there rather than in `history.py`:
+
+- **Whether the project has a history at all.** A project whose path is not under `store_path()`
+  is not in the repository's worktree, so nothing about it can be staged. It writes normally and
+  gets one notice naming `bm project add` — **decision D3**, accepted by the orchestrator
+  2026-08-17. The alternative, refusing the write, stops the tool over a migration the user has
+  not been offered yet; the other alternative, silence, is the hole this entry's A/B blocks exist
+  to prevent. `test_project` in the unit suite is exactly this shape, so both halves have a caller.
+- **Which half of the A table a write falls under is decided by the content on disk, not by the
+  verb's name.** `update_note` creates the note when it does not exist, and an edit whose file is
+  gone is not an overwrite either. Both are labelled `create`, so the preflight lets them through
+  and a later failure message does not claim content was lost that never existed. Found in review:
+  the first cut refused an update-as-create on a broken repo, which is W3-A's warn-and-keep case
+  wearing the wrong label.
+- **What a failed commit costs**, per the W3-A table. A create warns and keeps the note; an
+  overwrite refuses. **The refusal runs before the write, not after** — `check_can_record` is
+  called ahead of the mutation, because a refusal issued after the file has been replaced protects
+  nothing. That is the one shape correction contact with the code produced: the table reads as a
+  post-commit decision and cannot be implemented as one.
+- **What the caller says.** Nothing here prints. `dirty_others` and the D3 notice come back on
+  `LocalNoteWriteResult.notices` for the verb to emit after its payload (contract rule 4). A
+  service that writes to stdout cannot be composed, and W20 already settled where notices go.
+
+Judgment calls:
+
+- **The store-relative path is derived from the project's path, not from its `external_id`.**
+  `AGENTS.md` says a directory name inside the store is "a human-browsing label that nothing
+  reads", so the path on disk is the authority. For the standard layout the two agree.
+- **The commit message is `<operation> <store-relative path>`** — no timestamp, no counter, no
+  title. Byte-stable by construction, which is what this entry requires of the serialization for
+  the same reason.
+- **The headline file rides in the note's commit** (see W9). It lives inside the store's worktree,
+  so a headline nobody commits would report as another actor's dirty file on every later write —
+  W3-B's nag, firing forever over the tool's own output.
+- `Actor:` is the write's `source`, which is `cli` for a native verb and whatever an agent-facing
+  caller passes. `Session:` is `CLAUDE_SESSION_ID` when the environment sets it, omitted otherwise.
+
+Not built here: **item C2** — `bm project add` creating `store/<external_id>/` as the project's
+path — **landed 2026-08-17** with items E and F; see its build-log entry. Projects created before
+it are still off-store and still take D3's notice branch on every write.
+
+Tests: `tests/store/test_write_hook.py` (17) drives the module directly against a real repo;
+`tests/index/test_local_write_stack.py` gains 9 that drive the real caller path — a store-rooted
+project commits the note and its headline in one commit and leaves the store clean, an off-store
+project writes and notices, a broken repo refuses an update with the file untouched and lets both
+a create and an update-as-create through with a warning.
+
 ### W4 — closed record vocabulary enforced in the write path — **SHIPPED 2026-08-10; reject mode relocated 2026-08-16 (T22)**
 
 > **Where enforcement lives, as of 2026-08-16.** One implementation in
@@ -3095,6 +3147,187 @@ module into one interpreter and several of them import fastapi, so an in-process
 assertion would report imports this module never made.
 
 Also closed here: **T29** (advisories from an accepted write now persist).
+
+**Items C and D — the history hookup and the headline. Landed 2026-08-17.**
+`src/basic_memory/store/write_hook.py` and `src/basic_memory/services/headline.py`, called from
+item A's three entry points. Both GAPS entries carry the full close blocks (**W3**, **W9**); what
+belongs here is the shape a later verb author must not undo:
+
+- **The refusal is a preflight, not a post-check.** `check_can_record` runs *before* an update or
+  an edit reaches the mutation service. W3-A reads as a decision about a failed commit, but a
+  commit fails after the file is already overwritten, and by then the prior content the refusal
+  protects is gone. A create needs no preflight and gets none.
+- **The headline is written first and committed with the note.** Both files sit in the store's
+  worktree. Committing only the note leaves the headline uncommitted, and W3-B's dirty-files notice
+  then fires on every subsequent write, about the tool's own output.
+- **Notices are returned, never printed.** `LocalNoteWriteResult` carries `history_sha` and
+  `notices`; the verb prints them after its payload (contract rule 4).
+- **Decisions D3 and D6 are accepted** as VERBS_PLAN recommended them, recorded in the W3 and W9
+  close blocks respectively.
+
+Tests: `tests/store/test_write_hook.py` (17), `tests/services/test_headline.py` (12), and 9 added
+to `tests/index/test_local_write_stack.py` (12 → 21) that drive the real caller path.
+
+Three corrections came out of review, all before the verifier ran:
+
+- **A failed headline write is a notice**, not an uncaught `OSError` — the note had already
+  succeeded (W9's close block states the rule).
+- **An update or edit with no prior content on disk is labelled `create`**, so the overwrite
+  preflight lets it through (W3's close block).
+- **The terminal-status set moved into `vocabulary/model.py`** and both askers call it. It had two
+  homes that behaved differently, which is the split a later reader reports as a bug.
+
+Left for J as filed: **item C3**, the two dirty-file notices that can print on one verb.
+
+**Item C2 — `bm project add` creates the project under the store. Landed 2026-08-17.**
+D3's other half. `bm project add <name>` now homes the project at `store/<external_id>/`, and the
+path argument became optional — it means an *import source*, which is what `AGENTS.md` already said
+it means. A project created without one takes D3's normal branch: its notes are in the history
+repo's worktree and every write commits.
+
+**The id has to exist before the path does**, because the path *is* the id. `add_project` draws the
+UUID itself and passes it in `project_data` rather than letting the row's `external_id` default
+fire, which would name the directory after an id the row had not chosen yet.
+
+Three files beyond the two this item named had to move, and the reason is worth keeping: the
+optional path could not reach the service at all. `ProjectInfoRequest.path` was `str = Field(...)`,
+so `bm project add <name>` failed validation at the router. It is now `Optional[str] = None`, the
+router's existing-project comparison treats an absent path as "no disagreement", and both other
+callers (`bm doctor`'s round-trip probe, the MCP `create_project` tool) still pass a path.
+
+**D8 lands here too:** `project add` writes `DEFAULT_VOCABULARY` to `store/<external_id>/
+vocabulary.yml`. Creating a project *is* the deliberate human act W4 requires, and it is the only
+place a project becomes governed — `bm new` never writes one.
+
+**A gap this item created, found by the smoke run and fixed in the same pass.** The vocabulary file
+lands inside the store's worktree, and nothing committed it, so W3-B's dirty-file notice fired on
+**every** subsequent note write — about the tool's own output, forever. That is the failure mode
+item D's headline file was shaped to avoid, reproduced one file over.
+`write_default_vocabulary` now commits it, and follows W3-A's create rule when the repository is
+unusable: warn, keep the project, do not fail the add. Reproduction, before the fix, against a
+temp `BASIC_MEMORY_CONFIG_DIR`:
+
+```
+$ basic-memory new task "Move backups off-container" --body "…" -p smoke
+tnd-qbptvkr6  task  …/store/<eid>/tasks/tnd-qbptvkr6--move-backups-off-container.md
+1 record
+note: 1 other file has uncommitted changes in the note store (not included in this commit)
+```
+
+After it, the store's first commit is `create <eid>/vocabulary.yml` and the notice is absent.
+
+Tests: 3 added to `tests/services/test_project_service.py` (33 → 36) covering the store-derived
+path, the vocabulary file, and the import-source branch as its positive control; 2 in
+`tests/cli/test_project_add.py`, one of which replaces `test_project_add_requires_a_path` — that
+test guarded the behaviour this item deliberately reversed.
+
+**Item E — `bm new`. Landed 2026-08-17.**
+`src/basic_memory/cli/commands/new.py`, on a new shared module
+`src/basic_memory/cli/record_notes.py`. `bm new <type> <title>` with `--body` (text, `-` for stdin,
+or `$EDITOR` when there is a terminal), `--source`, `--area`, `--supersedes`, `--project`,
+`--quiet`. Scope is the **write** chain, which still ends at the default project: a read covers
+every project when nothing pins it, a write needs one home.
+
+Two mechanics had to be discovered rather than assumed, and a later author will hit both:
+
+- **`EntitySchema.file_path` is computed from `directory` + `safe_title`** (`schemas/base.py`), so
+  nothing in the tree could put a note at `<type-dir>/<id>--<slug>.md`. `RecordNote` in
+  `cli/record_notes.py` is a Pydantic subclass that redeclares the computed field and states the
+  path. That is what makes `.forked/schema.md` §8 reachable, and it is also what lets `bm edit`
+  keep a record's path when its title changes.
+- **A declared `permalink` survives byte-for-byte only when it arrives in the note's own
+  frontmatter text.** `_apply_schema_frontmatter_overrides` reads it there and `resolve_permalink`
+  returns it unchanged when no other row claims it (`services/note_preparation.py`). Handed over as
+  `entity_metadata` instead, it is dropped and a slugified, project-prefixed permalink is derived —
+  and `permalink == id` (§2) quietly stops being true. So `bm new` renders its frontmatter as text.
+
+What it writes: `id`, `permalink` equal to it, `type`, `title`, `source` (defaulting to `cli`, D7),
+the type's one date field with `date-source: inline` and `date-confidence: day`, `area` when given,
+`status: open` on a task, `proposed-type` on the escape hatch, and a `## Relations` line for
+`--supersedes`. **`review-by` is not written here** — `prepare_accepted_note_create` stamps it, and
+stamping twice would validate one value and store another.
+
+Three judgment calls:
+
+- **`inline` / `day` for a new record's date.** Not `inferred`: that rung means nobody stated the
+  date, and `bm doctor` reports every inferred date for human review — stamping it here would put
+  the whole corpus in that pile on day one.
+- **The id loop lives in `cli/record_notes.py`.** `vocabulary/ids.py`'s `allocate_record_id` takes a
+  *synchronous* predicate and the only honest collision check is a database lookup, so the verb
+  loops over `new_record_id()` and raises that module's own `IdAllocationError`.
+- **A type a human added to `vocabulary.yml` gets a directory under its bare name.** It is legal to
+  write (W4), so refusing it a home would make the extension mechanism unusable, and pluralizing it
+  would guess at English.
+- **`$EDITOR` is opened by hand, not by `click.edit`.** typer 0.26 does not re-export `edit`, and
+  click is not a declared dependency of this tree — reaching past typer into it for one call would
+  add an undeclared one. `body_from_editor` in `cli/record_notes.py` is ten lines and both verbs
+  share it. It opens only when stdin is a terminal: an agent has none, and an editor launched
+  there is a hang with no prompt to explain it (D11).
+
+`--supersedes` on a non-finding is refused **by the funnel**, not by the verb, which is the point:
+the rule has one home. The verb checks only that the value is shaped like a record id, because a
+target that cannot be a permalink lands as a dangling relation that reads as a real edge.
+
+Tests: `tests/cli/test_new_command.py`, 15 tests, real path throughout — real command, real write
+stack, real database, real files, real funnel.
+
+**Item F — `bm edit`, `bm mark`, `bm done`. Landed 2026-08-17.**
+`src/basic_memory/cli/commands/record_write.py`. One module because the three share scope
+resolution, the identity-verified lookup, the write stack and the print shape; what differs is one
+rule each.
+
+- **`bm edit` accepts `guide`, `profile`, `state`, `inbox`** (D12). On a `task` and on a `finding` it
+  refuses with the *verb* that applies — `bm done <id>` / `bm mark <id> <status>`, and
+  `bm new finding "…" --supersedes <id>`. Naming the rule instead ("a finding is immutable") sends
+  an agent to file the correction somewhere else.
+- **`bm mark` sets `status`, on a `task`, validated against the project's declared statuses** (D5).
+  An ungoverned project declares none, so the write goes through unchecked and says so — absent
+  means ungoverned, never "use the defaults".
+- **`bm done` is `bm mark <id> done`**, through the same function, not a second path.
+
+**A frontmatter-only change must not reflow the body**, and the tree already had the shape for it:
+`prepare_edit_entity_content` treats `operation=append` with empty `content` plus a `metadata` block
+as metadata-only and skips the content operation outright (`services/note_preparation.py`). `mark`
+and `done` use exactly that, so a status change is a one-line diff in the history.
+
+Two judgment calls:
+
+- **An edited record keeps its file path even when its title changes.** The name carries the id
+  other records link by; the slug beside it is a human label. Renaming would be a move, with a
+  permalink rewrite behind it (§8, T28).
+- **`bm edit` with neither `--title` nor `--body` and no terminal is an error**, not a no-op write.
+  A rewrite with nothing stated produces a commit the caller cannot see.
+
+**Each command function calls `emit_notices` itself**, rather than a shared reporting helper doing
+it. `tests/cli/test_notice_guard.py` looks at the command functions, and it looks there
+deliberately — a guard over a helper proves nothing about whether the verbs reach it (T22). The
+first draft routed all three through one `_report`, which the guard would have failed.
+
+Tests: `tests/cli/test_record_write_commands.py`, 18 tests, records created by `bm new` rather than
+seeded — so every assertion is about a record the tool itself wrote. One of them closes the loop
+back to item D: closing the last open task removes the project's `headline.md`.
+`tests/cli/test_notice_guard.py` gains the four new verbs in its expected set; that file belongs to
+item J, but leaving it red would blind every pass after this one.
+
+**Item C3 — two dirty-file notices will print on one verb. Found in review 2026-08-17; owed to J.**
+A write now produces two lines about the same subject, from two places that count it differently:
+
+- `store/write_hook.py`'s `dirty_notices`, from `CommitResult.dirty_others` — **store-wide**, since
+  `commit_paths` reads one `git status` over the whole worktree.
+- `cli/notices.py`'s `emit_notices`, from `dirty_count(prefix)` — **pinned to the project** when the
+  scope is pinned, which is exactly what W5-C added the prefix for.
+
+So `bm new` in a project with one dirty file of its own and three in a sibling prints "1 other file
+has uncommitted changes in the note store" and "1 note file has uncommitted changes", or "4" and
+"1". Neither line is wrong; together they read as a bug. Reproduction is the pair of counts above —
+`tests/index/test_local_write_stack.py::test_another_dirty_store_file_surfaces_as_a_notice` already
+builds the store-wide half.
+
+Reviewed and left as-is here, deliberately: suppressing either line is a decision about which scope
+a write reports, and J owns the notice block on every verb. The write hook's line now says "in the
+note store" so the two are at least distinguishable while both stand. Recommended answer: keep the
+write hook's line, which is tied to a specific commit, and let `emit_notices` drop `dirty` when the
+payload already carried a history notice.
 
 ### W5 — the remaining schema-validation rules, inside `bm doctor` — **CLOSED 2026-08-16: all six items shipped; never a `bm check` command**
 **Rewritten 2026-08-03.** Two things were wrong with this entry, one naming and one substantive.
@@ -3849,6 +4082,52 @@ the headline file replaces the parsed one. They keep mattering everywhere else f
 flat file survives — but that is a dotfiles problem, not a `bm` gap, and it leaves with the
 transition.
 
+**CLOSED 2026-08-17 — the headline file ships; the replacement's first half is built.**
+`src/basic_memory/services/headline.py` writes `store/<external_id>/headline.md` on every write
+through `index/local_write_stack.py`. Point 1 (a fast source the statusline reads), point 2 (the
+derived value) and point 3 (the mtime trap) are built. Point 4 — repointing the harness reminder at
+`bm` — stays out, and stays a dotfiles change the user makes.
+
+- **Location and shape are decision D6**, accepted by the orchestrator 2026-08-17:
+  `store/<external_id>/headline.md`, three lines, `---` / `headline: <text>` / `---`. In the store
+  because the stop-list forbids writing outside this repo and `~/.basic-memory/`; writing next to a
+  working directory's `.bm.yml` would be `bm` editing someone else's tree. The shape is the
+  strictest consumer's parser, so the other two read the right line for free.
+- **The value** is the most recently updated non-terminal `task`, its title cut to 30 characters
+  and right-stripped. A task carrying no status counts as open: hiding work over incomplete
+  frontmatter would suppress the thing the file exists to show, over a fault `bm doctor` reports.
+- **Read-compare-skip, not write-always.** `refresh_headline` reads the existing bytes and returns
+  without writing when they match, so mtime survives a no-op — the staleness signal this entry was
+  opened for. The test asserts an unchanged mtime *and* has a positive control that a real change
+  moves it, because a function that never wrote at all would pass the first assertion alone.
+- **No open work removes the file** rather than writing an empty headline, which would render a
+  blank bar instead of letting a consumer fall back to its own default.
+
+Judgment calls:
+
+- **Which statuses are terminal is code, not vocabulary, and it has one home.** `vocabulary.yml`
+  declares statuses but marks none of them terminal, so `{done, dropped}` lives in
+  `vocabulary/model.py` as `TERMINAL_STATUSES` plus `terminal_statuses(vocabulary)`. Both askers
+  call it: the headline passes the project's vocabulary and gets the set narrowed to the terminal
+  names that project actually declares; `bm brief` passes nothing, because its rows span every
+  in-scope project and there is no single vocabulary to narrow by. A project declaring neither
+  name keeps the defaults, because an empty terminal set would make every task permanently open.
+  It started as two constants — `brief.py`'s and the headline's — which review flagged: two
+  callers answering "is this task still open" differently is a bug the second reader finds.
+- **The headline is committed with the note** (see W3's close block), not left for a later sweep.
+- **A headline the filesystem refuses is a notice, not a failed write.** By the time it is written
+  the note is on disk and indexed, so an `OSError` there degrades to a line the verb prints. The
+  same rule `cli/notices.py` states: the payload already succeeded, so a convenience file must not
+  become the exit code. Found in review; the test makes the path a directory, which is a real
+  refusal rather than a mock.
+- **It takes the caller's session.** A per-write lookup that opens its own session waits on a
+  connection the caller already holds, and the pool is one connection — the W4 deadlock, which
+  cost 600-second suite runs the first time.
+
+Tests: `tests/services/test_headline.py` (12), plus two in
+`tests/index/test_local_write_stack.py` that drive the real write path — one asserts the file it
+leaves behind is the three lines a consumer parses, the other that the note's commit contains it.
+
 ### W10 — an exclusion mechanism on the indexing path — **SHIPPED**
 **Done 2026-08-03.** The entry's premise ("no ignore file") was stale: upstream shipped an ignore
 mechanism before the fork point (`ignore_utils.py`, from `e0d8aeb1`) — a global
@@ -4499,6 +4778,109 @@ record first, because `show` and `path` exit 1 without one and would otherwise p
 were dead — `typer.Exit` is neither `ValueError` nor `LookupError`, so it already propagated past
 the handlers they guarded. A regression test now covers one id seeded into two projects, which is
 the `AmbiguousRecord` path `show` and `path` share, plus its positive control (`-p` resolves it).
+
+### V-H — `bm undo` — **SHIPPED 2026-08-17**
+
+`bm undo [--session <id>] [--yes]`, in `cli/commands/history.py` beside the two verbs that read the
+same repository, plus four additive helpers in `store/history.py`: `latest_commit()`,
+`commits_for_session(id)`, `restore_from_commit(sha)`, and the two private readers behind it.
+
+The verb restores every path the target commit touched to the version its parent held — a path the
+commit *added* has no parent version, so restoring it deletes it — writes a **new** commit, and then
+reindexes the projects that own those paths. `--session <id>` does the same for every commit
+carrying that trailer, newest first, so the store ends on the content it held before the session
+began. This is what W3 meant by "`undo --session` is a `git log --grep` away"; the grep is anchored
+to a whole trailer line and the id is `re.escape`d, so one session id that is a prefix of another
+cannot pull in the wrong commits.
+
+**Decision recorded, accepted 2026-08-17 by the campaign orchestrator per VERBS_PLAN D4; the user
+may revisit:** undo is a **restore plus a new commit, never a `reset`** — history is the thing this
+subsystem exists to protect, so undoing a change grows it. Dry-run-by-default was rejected (a verb
+that does nothing by default is the one nobody trusts); the verb acts, prints the paths it touched,
+and requires `--yes` only when more than one commit is involved.
+
+**Five judgment calls taken while building it:**
+
+1. **The reindex is a project index, not a per-file call.** No public per-file entry point
+   reconciles a *deletion*, and undoing a note's creation produces exactly that. The project index
+   is incremental — change detection compares mtime, size and checksum — so only the files undo
+   changed are re-read and re-indexed. It still walks the project directory to find them, so the
+   cost scales with the project's file count, not with the size of the undo. Reviewed 2026-08-17
+   and accepted: the alternative is a new per-file entry point that also handles deletes, which is
+   a bigger change than this verb warrants. `recover_project_materializations` runs first, for the
+   reason `bm reindex` already
+   documents (`cli/commands/db.py`): the scan reads a missing file as a delete, so a note stuck
+   mid-materialization would be destroyed by the scan that follows.
+2. **The undo commit carries `Actor: cli` and no `Session:` trailer.** An undo corrects a session's
+   work rather than joining it. Stamping the current id would fold the undo into the set that
+   `bm undo --session <that id>` walks, so a second run would undo the undo.
+3. **The payload prints before the reindex runs.** The restore and its commit are already on disk by
+   then, so a caller must see what moved even if indexing fails afterwards — the partial shape
+   output contract rule 6 names.
+4. **`emit_notices` is called, against the brief's suggestion that it was unnecessary.** `bm undo`
+   has no project scope, but neither do `history dirty` and `history commit`, and both already emit
+   against `STORE_SCOPE`. The verb opens the database for its reindex anyway, so the notice is free,
+   and item J needs no allowlist entry for it.
+5. **A restore that changes nothing is still a result.** `commit_paths` returns None when the store
+   already held that content; the verb says so as a notice rather than reporting an unexplained
+   missing sha.
+
+Registered flat as `bm undo` (AGENTS.md's verb list) while living in `history.py` — VERBS_PLAN §7:
+the documented verb list is the contract, the file layout is not. `undo` joins `app.py`'s
+`skip_init_commands` for the reason `ls`/`show`/`path` are there: its own bootstrap calls
+`ensure_project_registry`.
+
+Tests: `tests/cli/test_undo_command.py` (21) drives the real Typer command against a real store
+repository, real project rows, real files and the real project index — nothing stubs git and nothing
+stubs indexing. `tests/store/test_history.py` gains 10 for the helpers. Positive controls throughout:
+the "gone from the index" assertions are paired with the listing that shows the record present
+first, and the anchored-grep test is paired with the full id that does match.
+
+**Two items found in review 2026-08-17. H2 was fixed in this same commit; H3 stays owed to item J.**
+
+**H2 — `bm undo` silently discarded an uncommitted edit to a path it restores — FIXED 2026-08-17.**
+`git checkout <parent> -- <path>` overwrites the worktree with no warning, so a human edit made
+since the last commit was gone with no record anywhere. That is the one class of change W3-B is
+most careful about elsewhere: `commit_paths` refuses to stage what it did not write, and
+`dirty_others` exists so an outside edit is reported rather than swept in. Undo reached past both.
+
+Reproduction, against a temp `BASIC_MEMORY_CONFIG_DIR`:
+
+```
+# a note is created and updated, both committed by bm
+bm history commit notes/tasks/tnd-x--t.md      # sha A, content v1
+# ... bm updates it ...                        # sha B, content v2
+printf 'hand-edited\n' >> ~/.basic-memory/store/notes/tasks/tnd-x--t.md   # uncommitted
+bm undo                                        # before the fix: restored v1, the line was gone
+bm history dirty                               # the edit was not there either
+```
+
+After the fix that last `bm undo` exits 1 with
+`Error: undo would discard uncommitted changes in: notes/tasks/tnd-x--t.md. Record them first with
+'bm history commit --all', then re-run.` and touches nothing.
+
+**The fix, as recommended.** `store/history.py` gains `paths_in_commit(sha)` — a read-only sibling
+of `restore_from_commit` — and `bm undo` intersects it across every target commit with
+`dirty_paths()`. A non-empty intersection is a refusal: one stderr line naming each path and
+`bm history commit --all`, exit 1, nothing on stdout, and nothing touched on disk or in the history.
+A refusal, not a notice — a notice after the overwrite protects nothing, the same shape correction
+item C already took for `check_can_record`.
+
+**Judgment call: the refusal is checked ahead of the `--yes` gate.** A confirmation flag cannot
+clear it, so the run would be refused either way; naming the unfixable problem first spares the
+caller a two-step dance. Untracked paths count as dirty, because a path a commit added and a human
+then deleted and rewrote is untracked now and the restore would still discard it.
+
+Tests: three in `tests/cli/test_undo_command.py` (the refusal preserves the edit and leaves HEAD
+where it was; a dirty file *outside* the target set does not block, which is the positive control;
+the refusal precedes the `--yes` gate) and one in `tests/store/test_history.py` asserting
+`paths_in_commit` leaves the worktree alone.
+
+**H3 — `undo` is not in the import guard's `NATIVE_COMMANDS`.** `ls`, `show` and `path` were added
+there; `undo` was not, so nothing pins its fast path. `tests/cli/test_native_command_import_guard.py`
+belongs to item J, which is why this was not fixed here. J should add `(["undo", "--quiet"],
+"nothing to undo")` — the empty-store case needs no fixture and still exercises the whole import
+graph.
 
 ---
 

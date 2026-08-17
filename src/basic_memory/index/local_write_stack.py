@@ -21,11 +21,17 @@ process exits when the verb returns, so a task scheduled onto the event loop is 
 task that never runs. Relation resolution back-resolves inbound forward
 references that name the new note, and vector sync keeps semantic search current;
 both run inline here rather than being scheduled.
+
+**Every write ends in the store's history** (GAPS W3, verbs item C) and refreshes
+the project's headline file (GAPS W9, item D). The headline is derived from the
+state the write just produced, so it is written first and committed alongside the
+note: both files live in the store's worktree, and a store file nobody commits
+reports as someone else's dirty work forever after.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -65,12 +71,20 @@ from basic_memory.schemas.base import Entity as EntitySchema
 from basic_memory.schemas.request import EditEntityRequest
 from basic_memory.services.entity_service import EntityService
 from basic_memory.services.file_service import FileService
+from basic_memory.services.headline import headline_path, refresh_headline
 from basic_memory.services.link_resolver import LinkResolver
 from basic_memory.services.note_content_writes import (
     NoteContentMutationService,
     NoteContentMutationServiceError,
 )
 from basic_memory.services.search_service import SearchService
+from basic_memory.store.history import HistoryError
+from basic_memory.store.write_hook import (
+    HistoryOutcome,
+    WriteOperation,
+    check_can_record,
+    record_note_write,
+)
 
 # What a write from a native verb records as its origin. The accepted-note row
 # keeps it as `last_source`, so it is how a later reader tells a verb's write
@@ -112,6 +126,14 @@ class LocalNoteWriteResult:
     file_path: str
     title: str
     note_type: str
+    # The history commit this write produced, or None when there was nothing to
+    # record: an off-store project, unchanged bytes, or a create whose commit
+    # failed and became a notice (GAPS W3-A).
+    history_sha: str | None = None
+    # Lines the verb prints after its payload (output contract rule 4). The
+    # stack never prints: a notice belongs to the command the caller was already
+    # reading, and a service that writes to stdout cannot be composed.
+    notices: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -170,7 +192,7 @@ class LocalNoteWriteStack:
             )
         except NoteContentMutationServiceError as error:
             raise LocalNoteWriteError(note_write_error_message(error)) from error
-        return await self._materialize_and_follow_up(bundle, accepted)
+        return await self._materialize_and_follow_up(bundle, accepted, "create", source)
 
     async def update_note(
         self,
@@ -182,6 +204,10 @@ class LocalNoteWriteStack:
     ) -> LocalNoteWriteResult:
         """Replace one note's whole content, creating it when it does not exist."""
         bundle = await self._project_bundle(project_external_id)
+        operation, target = await self._write_operation(
+            bundle.project, entity_external_id, "update"
+        )
+        _refuse_unrecordable(bundle.project.path, target, operation)
         try:
             accepted = await bundle.mutation_service.update_note(
                 project_external_id=project_external_id,
@@ -192,7 +218,7 @@ class LocalNoteWriteStack:
             )
         except NoteContentMutationServiceError as error:
             raise LocalNoteWriteError(note_write_error_message(error)) from error
-        return await self._materialize_and_follow_up(bundle, accepted)
+        return await self._materialize_and_follow_up(bundle, accepted, operation, source)
 
     async def edit_note(
         self,
@@ -204,6 +230,8 @@ class LocalNoteWriteStack:
     ) -> LocalNoteWriteResult:
         """Edit one existing note in place (append, replace a section, and so on)."""
         bundle = await self._project_bundle(project_external_id)
+        operation, target = await self._write_operation(bundle.project, entity_external_id, "edit")
+        _refuse_unrecordable(bundle.project.path, target, operation)
         try:
             accepted = await bundle.mutation_service.edit_note(
                 project_external_id=project_external_id,
@@ -214,12 +242,14 @@ class LocalNoteWriteStack:
             )
         except NoteContentMutationServiceError as error:
             raise LocalNoteWriteError(note_write_error_message(error)) from error
-        return await self._materialize_and_follow_up(bundle, accepted)
+        return await self._materialize_and_follow_up(bundle, accepted, operation, source)
 
     async def _materialize_and_follow_up(
         self,
         bundle: _ProjectWriteBundle,
         accepted: RuntimeAcceptedNoteChange[RuntimeNoteContentResponsePayload],
+        operation: WriteOperation,
+        actor: str,
     ) -> LocalNoteWriteResult:
         """Write the file, index it, run the followups, and report what landed."""
         materialized = await bundle.materializer.materialize_write_change(accepted)
@@ -230,7 +260,81 @@ class LocalNoteWriteStack:
         await bundle.relation_runtime.resolve_relations()
         if self.config.semantic_search_enabled:
             await bundle.search_service.sync_entity_vectors(result.entity_id)
-        return result
+        return await self._record(bundle.project, result, operation, actor)
+
+    async def _write_operation(
+        self,
+        project: Project,
+        entity_external_id: str,
+        operation: WriteOperation,
+    ) -> tuple[WriteOperation, str]:
+        """Label a write by whether it has prior content to lose, and name it.
+
+        `update_note` creates the note when it does not exist, and an edit of a
+        note whose file is gone is not an overwrite either. W3-A's destructive
+        half is about content that exists: calling those a create keeps the
+        preflight from refusing a write that can lose nothing, and keeps the
+        message honest if the commit fails afterwards.
+
+        The name it returns is the file path when there is one, because that is
+        what the refusal has to show the reader; the external id is the only
+        thing available before the note exists.
+        """
+        async with db.scoped_session(self.session_maker) as session:
+            entity = await EntityRepository(project_id=project.id).get_by_external_id(
+                session, entity_external_id
+            )
+        if entity is None:
+            return "create", entity_external_id
+        # A row can outlive its file — a half-written note, or one deleted
+        # outside `bm`. With nothing on disk there is no prior content to protect.
+        if not Path(project.path, entity.file_path).exists():
+            return "create", entity.file_path
+        return operation, entity.file_path
+
+    async def _record(
+        self,
+        project: Project,
+        result: LocalNoteWriteResult,
+        operation: WriteOperation,
+        actor: str,
+    ) -> LocalNoteWriteResult:
+        """Refresh the headline, then commit both files as one history entry.
+
+        Order matters: the headline is derived from the state this write just
+        produced, and it lives inside the store's worktree. Committing the note
+        first would leave the headline uncommitted, and every later write would
+        then report it as someone else's dirty file (GAPS W3-B).
+        """
+        headline_notices: tuple[str, ...] = ()
+        try:
+            async with db.scoped_session(self.session_maker) as session:
+                headline_changed = await refresh_headline(session, project)
+        except OSError as error:
+            # Trigger: the headline file itself is unwritable. Why it degrades:
+            # the note is already written, materialized and indexed, so failing
+            # the whole write here would report a success as a failure. The
+            # headline is a convenience for the statusline (GAPS W9), and
+            # `cli/notices.py` states the same rule for the same reason.
+            headline_changed = False
+            headline_notices = (f"note: the headline file could not be updated. {error}",)
+
+        # A removed headline is staged too: git matches a deleted path against
+        # the index, and every headline this stack writes was committed by the
+        # write that created it.
+        extra_paths = [headline_path(project.external_id)] if headline_changed else []
+
+        try:
+            outcome = record_note_write(
+                project_path=project.path,
+                note_path=result.file_path,
+                operation=operation,
+                actor=actor,
+                extra_paths=extra_paths,
+            )
+        except HistoryError as error:
+            raise LocalNoteWriteError(str(error)) from error
+        return _with_history(result, outcome, headline_notices)
 
     async def _project_bundle(self, project_external_id: str) -> _ProjectWriteBundle:
         """Compose this project's write stack, or refuse an unknown project."""
@@ -341,6 +445,36 @@ class LocalNoteWriteStack:
             ),
             search_service=search_service,
         )
+
+
+def _refuse_unrecordable(project_path: str, target: str, operation: WriteOperation) -> None:
+    """Stop an overwrite the history cannot record, before it destroys anything.
+
+    W3-A's table: a create warns and keeps the note, an overwrite refuses. The
+    check runs here rather than after the write because a refusal issued after
+    the file has been replaced protects nothing.
+    """
+    try:
+        check_can_record(project_path, target, operation)
+    except HistoryError as error:
+        raise LocalNoteWriteError(str(error)) from error
+
+
+def _with_history(
+    result: LocalNoteWriteResult,
+    outcome: HistoryOutcome,
+    extra_notices: tuple[str, ...] = (),
+) -> LocalNoteWriteResult:
+    """Attach the history commit and every notice the write produced.
+
+    The headline's notice comes first: it explains a file the history notice may
+    then say is missing from the commit.
+    """
+    return replace(
+        result,
+        history_sha=outcome.sha,
+        notices=(*extra_notices, *outcome.notices),
+    )
 
 
 def local_note_write_result(

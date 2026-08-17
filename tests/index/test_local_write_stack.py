@@ -9,6 +9,7 @@ write path that reaches the service layer through fastapi (GAPS T18).
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 import sys
 from collections.abc import Sequence
@@ -16,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import pytest_asyncio
 import yaml
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -29,9 +31,13 @@ from basic_memory.index.local_write_stack import (
 )
 from basic_memory.models import Entity, Project, Violation
 from basic_memory.repository.entity_repository import EntityRepository
+from basic_memory.repository.project_repository import ProjectRepository
 from basic_memory.schemas.base import Entity as EntitySchema
 from basic_memory.schemas.request import EditEntityRequest
 from basic_memory.schemas.search import SearchQuery
+from basic_memory.services.headline import headline_path
+from basic_memory.store.history import store_path
+from basic_memory.store.write_hook import OFF_STORE_NOTICE
 from basic_memory.vocabulary.model import vocabulary_path
 
 # The common four the checker requires, with a permalink equal to the id
@@ -470,3 +476,258 @@ def test_the_write_stack_imports_no_banned_module():
         check=True,
     )
     assert completed.stdout.strip() == "[]"
+
+
+# --- The history hookup and the headline (verbs items C and D) ---
+
+
+def task_content(body: str, **fields: Any) -> str:
+    """A `task` note's markdown. The project is ungoverned, so nothing is required."""
+    return note_content(body, type="task", status="open", **fields)
+
+
+@pytest_asyncio.fixture
+async def store_project(
+    config_home: Path, session_maker: async_sessionmaker[AsyncSession]
+) -> Project:
+    """A project whose notes live in the store, which is what W3 can commit.
+
+    `test_project` deliberately does not: its path is the user-chosen kind that
+    decision D3 leaves working and un-recorded, so both halves get a caller.
+    """
+    external_id = "8c1d0f2a-3b4c-5d6e-7f80-91a2b3c4d5e6"
+    path = store_path() / external_id
+    path.mkdir(parents=True)
+    async with db.scoped_session(session_maker) as session:
+        return await ProjectRepository().create(
+            session,
+            {
+                "name": "store-project",
+                "external_id": external_id,
+                "path": str(path),
+                "is_active": True,
+            },
+        )
+
+
+def store_git(*args: str) -> str:
+    """Read the store repo with a plain git call, independent of the module."""
+    return subprocess.run(
+        ["git", "-C", str(store_path()), *args],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+
+
+@pytest.mark.asyncio
+async def test_a_store_write_commits_the_note_and_its_headline(write_stack, store_project):
+    """W3's hookup: the write path is the first caller of `commit_paths`."""
+    result = await write_stack.write_note(
+        project_external_id=store_project.external_id,
+        data=EntitySchema(
+            title="Ship The Verbs",
+            directory="tasks",
+            content=task_content("Body."),
+        ),
+    )
+
+    assert result.history_sha is not None
+    assert result.notices == ()
+    message = store_git("log", "-1", "--format=%B")
+    assert message.splitlines()[0] == f"create {store_project.external_id}/{result.file_path}"
+    assert "Actor: cli" in message
+    # splitlines, not split: a note title contains spaces, so whitespace
+    # splitting would shred one path into three.
+    committed = sorted(store_git("show", "--name-only", "--format=", "HEAD").splitlines())
+    assert committed == sorted(
+        [
+            f"{store_project.external_id}/{result.file_path}",
+            f"{store_project.external_id}/headline.md",
+        ]
+    )
+    # The store is clean afterwards: a headline left out of the commit would
+    # report as someone else's dirty file on every later write.
+    assert store_git("status", "--porcelain", "-uall").strip() == ""
+
+
+@pytest.mark.asyncio
+async def test_a_store_write_leaves_the_headline_a_consumer_can_parse(write_stack, store_project):
+    """W9's three-line shape, written by the same call that wrote the note."""
+    await write_stack.write_note(
+        project_external_id=store_project.external_id,
+        data=EntitySchema(
+            title="Ship The Verbs",
+            directory="tasks",
+            content=task_content("Body."),
+        ),
+    )
+
+    lines = headline_path(store_project.external_id).read_text(encoding="utf-8").splitlines()
+    assert lines == ["---", "headline: Ship The Verbs", "---"]
+
+
+@pytest.mark.asyncio
+async def test_an_off_store_project_writes_and_says_history_is_not_recorded(
+    write_stack, test_project
+):
+    """Decision D3: an off-store project keeps working and is told why, once."""
+    result = await write_stack.write_note(
+        project_external_id=test_project.external_id,
+        data=EntitySchema(
+            title="Unrecorded Note",
+            directory="notes",
+            content=note_content("Body."),
+        ),
+    )
+
+    assert Path(test_project.path, result.file_path).is_file()
+    assert result.history_sha is None
+    assert result.notices == (OFF_STORE_NOTICE,)
+
+
+@pytest.mark.asyncio
+async def test_another_dirty_store_file_surfaces_as_a_notice(write_stack, store_project):
+    """W3-B: report what else is dirty, never weld it into this commit."""
+    stray = Path(store_project.path, "hand-edited.md")
+    stray.write_text("someone else wrote this\n", encoding="utf-8")
+
+    result = await write_stack.write_note(
+        project_external_id=store_project.external_id,
+        data=EntitySchema(
+            title="Ship The Verbs",
+            directory="tasks",
+            content=task_content("Body."),
+        ),
+    )
+
+    assert len(result.notices) == 1
+    assert "1 other file has uncommitted changes" in result.notices[0]
+    assert "bm history dirty" in result.notices[0]
+    assert f"{store_project.external_id}/hand-edited.md" not in store_git(
+        "show", "--name-only", "--format=", "HEAD"
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_update_is_refused_when_the_history_cannot_record_it(
+    write_stack, store_project, session_maker
+):
+    """W3-A: an overwrite refuses, and refuses early enough to change nothing."""
+    created = await write_stack.write_note(
+        project_external_id=store_project.external_id,
+        data=EntitySchema(
+            title="Ship The Verbs",
+            directory="tasks",
+            content=task_content("Original body."),
+        ),
+    )
+    on_disk = Path(store_project.path, created.file_path)
+    before = on_disk.read_text(encoding="utf-8")
+    # A `.git` git cannot use is what a broken store looks like from here.
+    shutil.rmtree(store_path() / ".git")
+    (store_path() / ".git").write_text("not a git directory\n", encoding="utf-8")
+
+    with pytest.raises(LocalNoteWriteError) as excinfo:
+        await write_stack.update_note(
+            project_external_id=store_project.external_id,
+            entity_external_id=created.external_id,
+            data=EntitySchema(
+                title="Ship The Verbs",
+                directory="tasks",
+                content=task_content("Replacement body."),
+            ),
+        )
+
+    assert "Refused to overwrite" in str(excinfo.value)
+    assert str(store_path()) in str(excinfo.value)
+    assert on_disk.read_text(encoding="utf-8") == before
+
+
+@pytest.mark.asyncio
+async def test_a_create_is_written_even_when_the_history_is_broken(write_stack, store_project):
+    """W3-A's other half: nothing is lost, so the note lands and warns."""
+    store_path().mkdir(parents=True, exist_ok=True)
+    (store_path() / ".git").write_text("not a git directory\n", encoding="utf-8")
+
+    result = await write_stack.write_note(
+        project_external_id=store_project.external_id,
+        data=EntitySchema(
+            title="Ship The Verbs",
+            directory="tasks",
+            content=task_content("Body."),
+        ),
+    )
+
+    assert Path(store_project.path, result.file_path).is_file()
+    assert result.history_sha is None
+    assert "not recorded in the note history" in result.notices[0]
+
+
+@pytest.mark.asyncio
+async def test_an_update_that_creates_is_recorded_as_a_create(write_stack, store_project):
+    """`update_note` creates when the note is absent, and the label follows.
+
+    Labelling it an overwrite would put it under W3-A's destructive half, where a
+    broken history refuses the write — over content that does not exist.
+    """
+    result = await write_stack.update_note(
+        project_external_id=store_project.external_id,
+        entity_external_id="1f0e2d3c-4b5a-6978-8796-a5b4c3d2e1f0",
+        data=EntitySchema(
+            title="Made By Put",
+            directory="tasks",
+            content=task_content("Body."),
+        ),
+    )
+
+    subject = store_git("log", "-1", "--format=%s").strip()
+    assert subject == f"create {store_project.external_id}/{result.file_path}"
+
+
+@pytest.mark.asyncio
+async def test_an_update_that_creates_is_not_refused_by_a_broken_history(
+    write_stack, store_project
+):
+    """The preflight refuses overwrites, and a create is not one (W3-A)."""
+    store_path().mkdir(parents=True, exist_ok=True)
+    (store_path() / ".git").write_text("not a git directory\n", encoding="utf-8")
+
+    result = await write_stack.update_note(
+        project_external_id=store_project.external_id,
+        entity_external_id="1f0e2d3c-4b5a-6978-8796-a5b4c3d2e1f0",
+        data=EntitySchema(
+            title="Made By Put",
+            directory="tasks",
+            content=task_content("Body."),
+        ),
+    )
+
+    assert Path(store_project.path, result.file_path).is_file()
+    assert result.history_sha is None
+    assert "not recorded in the note history" in result.notices[0]
+
+
+@pytest.mark.asyncio
+async def test_a_headline_that_cannot_be_written_is_a_notice_not_a_failure(
+    write_stack, store_project
+):
+    """The note already succeeded, so a convenience file must not fail the write.
+
+    A directory where the headline file belongs is a real filesystem refusal, so
+    no mock is needed to produce one.
+    """
+    headline_path(store_project.external_id).mkdir(parents=True)
+
+    result = await write_stack.write_note(
+        project_external_id=store_project.external_id,
+        data=EntitySchema(
+            title="Ship The Verbs",
+            directory="tasks",
+            content=task_content("Body."),
+        ),
+    )
+
+    assert Path(store_project.path, result.file_path).is_file()
+    assert result.history_sha is not None
+    assert any("headline file could not be updated" in notice for notice in result.notices)
