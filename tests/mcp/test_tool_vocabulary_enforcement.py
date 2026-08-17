@@ -622,3 +622,49 @@ async def test_a_refused_write_persists_no_violation(
 
     assert rows == []
     assert written_notes(test_project) == []
+
+
+# --- GAPS T29: an accepted advisory reaches the table on the agent path ---
+
+
+@pytest.mark.asyncio
+async def test_an_accepted_advisory_persists_a_violation(
+    app, test_project, govern_project, session_maker
+):
+    """An undeclared key is kept, and `bm doctor` can read that it was.
+
+    The counterpart to the rejection above: an advisory does not stop the write,
+    so the row is the only trace it leaves. Two writers can produce it on this
+    path — the accepted-note runner (T29) and the index pass that follows the
+    write (W5 item 3) — and this test does not distinguish them on purpose: what
+    an agent needs is that the row exists after `write_note` returns. The control
+    that isolates T29 is
+    `tests/index/test_local_write_stack.py::test_the_accepted_write_alone_persists_the_advisory`.
+    """
+    govern_project()
+
+    result = await write_note(
+        project=test_project.name,
+        title="Advisory Guide",
+        directory="notes",
+        content=note_content(
+            "How to restore a backup.",
+            **BASE_FRONTMATTER,
+            type="guide",
+            **{"review-by": "2027-01-01", "topic": "runtime"},
+        ),
+        output_format="json",
+    )
+
+    assert isinstance(result, dict)
+    assert result["action"] == "created"
+
+    async with db.scoped_session(session_maker) as session:
+        rows = await ViolationRepository(project_id=test_project.id).list_for_project(
+            session, test_project.id
+        )
+
+    assert [(row.rule, row.field, row.severity) for row in rows] == [
+        ("unknown-key", "topic", "advisory")
+    ]
+    assert stored_frontmatter(test_project, "Advisory Guide")["topic"] == "runtime"

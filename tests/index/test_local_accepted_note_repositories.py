@@ -10,6 +10,7 @@ from basic_memory.repository import (
 )
 from basic_memory.repository.accepted_note_search_repository import AcceptedNoteSearchRepository
 from basic_memory.repository.entity_repository import EntityRepository
+from basic_memory.repository.violation_repository import ViolationRepository
 
 
 def test_local_accepted_note_repositories_wires_project_scoped_repositories() -> None:
@@ -33,3 +34,5 @@ def test_local_accepted_note_repositories_wires_project_scoped_repositories() ->
     assert repositories.observation_repository(11).project_id == 11
     assert isinstance(repositories.relation_repository(12), RelationRepository)
     assert repositories.relation_repository(12).project_id == 12
+    assert isinstance(repositories.violation_repository(13), ViolationRepository)
+    assert repositories.violation_repository(13).project_id == 13

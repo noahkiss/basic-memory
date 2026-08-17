@@ -56,6 +56,7 @@ from basic_memory.services.note_preparation import (
     PreparedEntityMove,
     PreparedEntityWrite,
 )
+from basic_memory.vocabulary.checker import Violation
 
 
 _NOW = datetime(2026, 6, 20, 14, 30, tzinfo=UTC)
@@ -460,6 +461,24 @@ class _RelationRepository:
         self.calls.append((entity_id, list(relations)))
 
 
+class _ViolationRepository:
+    """Records what the runner decided one write still breaks (GAPS T29)."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[int, int, Sequence[Violation]]] = []
+
+    async def replace_for_entity(
+        self,
+        session: AsyncSession,
+        entity_id: int,
+        project_id: int,
+        violations: Sequence[Violation],
+    ) -> int:
+        _ = session
+        self.calls.append((entity_id, project_id, list(violations)))
+        return len(violations)
+
+
 @dataclass(frozen=True, slots=True)
 class _MutationWriteRepositories:
     pending_entity_repository_result: _PendingEntityRepository
@@ -467,6 +486,11 @@ class _MutationWriteRepositories:
     search_repository_result: _SearchRepository
     observation_repository_result: _ObservationRepository
     relation_repository_result: _RelationRepository
+    violation_repository_result: _ViolationRepository
+
+    def violation_repository(self, project_id: int) -> _ViolationRepository:
+        _ = project_id
+        return self.violation_repository_result
 
     def pending_entity_repository(self, project_id: int) -> _PendingEntityRepository:
         _ = project_id
@@ -602,6 +626,7 @@ def _dependencies(
     search_repository: _SearchRepository,
     observation_repository: _ObservationRepository | None = None,
     relation_repository: _RelationRepository | None = None,
+    violation_repository: _ViolationRepository | None = None,
     move_policy: AcceptedNoteMutationMovePolicy | None = None,
     verify_storage_absent_on_create: bool = False,
 ) -> AcceptedNoteMutationDependencies:
@@ -618,6 +643,7 @@ def _dependencies(
             search_repository_result=search_repository,
             observation_repository_result=observation_repository or _ObservationRepository(),
             relation_repository_result=relation_repository or _RelationRepository(),
+            violation_repository_result=violation_repository or _ViolationRepository(),
         ),
         move_policy=move_policy
         or AcceptedNoteMutationMovePolicy(
@@ -694,6 +720,44 @@ async def test_run_accepted_note_create_persists_prepared_markdown(
     assert change.materialization.previous_file_path is None
     assert persistence_calls[0].await_count == 1
     assert persistence_calls[1].await_count == 0
+
+
+@pytest.mark.asyncio
+async def test_run_accepted_note_create_clears_violations_on_an_ungoverned_project() -> None:
+    """The accepted create states its whole answer, even when that answer is nothing.
+
+    This project has no `vocabulary.yml`, so no rule applies and the checker never
+    runs. The replace still happens: the rows are derived state, and one DELETE
+    per accepted write is cheaper than re-reading the vocabulary to learn there is
+    nothing to delete (GAPS T29).
+    """
+    session = cast(AsyncSession, object())
+    project = _project()
+    entity = _entity()
+    prepared = _prepared()
+    violation_repository = _ViolationRepository()
+
+    await run_accepted_note_create(
+        session,
+        request=AcceptedNoteCreateMutation(
+            project_external_id="project-123",
+            data=_schema(),
+            actor=AcceptedNoteMutationActor(user_profile_id=_ACTOR_ID),
+            source="api",
+        ),
+        dependencies=_dependencies(
+            project_repository=_ProjectRepository(project),
+            entity_lookup_repository=_EntityLookupRepository(),
+            note_content_lookup_repository=_NoteContentLookupRepository(),
+            preparer_factory=_PreparerFactory(_CreatePreparer(prepared)),
+            pending_entity_repository=_PendingEntityRepository(entity),
+            note_content_accept_repository=_NoteContentAcceptRepository(_note_content(entity)),
+            search_repository=_SearchRepository(),
+            violation_repository=violation_repository,
+        ),
+    )
+
+    assert violation_repository.calls == [(entity.id, project.id, [])]
 
 
 @pytest.mark.asyncio

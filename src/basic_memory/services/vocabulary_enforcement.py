@@ -110,9 +110,11 @@ def apply_vocabulary(
         raise VocabularyViolationError(file_path, violations)
 
     # Logged here, persisted by the caller. The funnel stays session-free (GAPS
-    # W4), so writing the `violation` rows belongs to the record-mode callers that
-    # already hold both a session and the entity id: `EntityService` and the move
-    # planner in `index/local_moves.py` (GAPS W5 item 3).
+    # W4), so writing the `violation` rows belongs to the callers that already
+    # hold both a session and the entity id: `EntityService` and the move planner
+    # in `index/local_moves.py` on the record side (GAPS W5 item 3), and the
+    # accepted-note runner for the advisories a *rejecting* caller still accepts
+    # (GAPS T29) — a rejection persists nothing, an advisory is not a rejection.
     for violation in violations:
         message = f"Vocabulary violation in {file_path}: {violation.message}"
         if violation.severity == "error":

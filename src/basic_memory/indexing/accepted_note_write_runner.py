@@ -46,6 +46,7 @@ from basic_memory.services.note_preparation import (
     PreparedEntityWrite,
     apply_prepared_entity_fields,
 )
+from basic_memory.vocabulary.checker import Violation
 from basic_memory.vocabulary.model import Vocabulary, default_review_by
 
 # The two types whose `review-by` a project's vocabulary fills in when the write
@@ -199,8 +200,30 @@ class AcceptedNoteRelationRepository(Protocol):
     ) -> None: ...
 
 
+class AcceptedNoteViolationRepository(Protocol):
+    """Repository capability for replacing one accepted note's violation rows.
+
+    Narrow on purpose: the accepted path only ever states the whole answer for
+    one record, and it always decides every rule, so it never needs the
+    ``preserve_rules`` arm the move planner uses (GAPS T29).
+    """
+
+    async def replace_for_entity(
+        self,
+        session: AsyncSession,
+        entity_id: RuntimeEntityId,
+        project_id: ProjectId,
+        violations: Sequence[Violation],
+    ) -> int: ...
+
+
 class AcceptedNoteWriteRepositories(Protocol):
     """Repository capability set needed by accepted-note DB-first writes."""
+
+    def violation_repository(
+        self,
+        project_id: ProjectId,
+    ) -> AcceptedNoteViolationRepository: ...
 
     def pending_entity_repository(
         self,

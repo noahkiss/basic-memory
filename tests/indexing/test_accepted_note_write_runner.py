@@ -51,6 +51,7 @@ from basic_memory.services.note_preparation import (
     PreparedEntityMove,
     PreparedEntityWrite,
 )
+from basic_memory.vocabulary.checker import Violation
 
 
 _PreparedFields = PreparedEntityFields
@@ -156,6 +157,22 @@ class _RelationRepository:
         self.calls.append((entity_id, relations))
 
 
+class _ViolationRepository:
+    def __init__(self) -> None:
+        self.calls: list[tuple[int, int, Sequence[Violation]]] = []
+
+    async def replace_for_entity(
+        self,
+        session: AsyncSession,
+        entity_id: int,
+        project_id: int,
+        violations: Sequence[Violation],
+    ) -> int:
+        _ = session
+        self.calls.append((entity_id, project_id, list(violations)))
+        return len(violations)
+
+
 class _SelfRelationResolver:
     def __init__(self, result: Entity | None = None) -> None:
         self.result = result
@@ -195,6 +212,10 @@ def test_accepted_note_write_repositories_name_persistence_behavior() -> None:
             assert project_id == 7
             return _RelationRepository()
 
+        def violation_repository(self, project_id: int) -> _ViolationRepository:
+            assert project_id == 7
+            return _ViolationRepository()
+
     repositories: AcceptedNoteWriteRepositories = _Repositories()
 
     assert isinstance(repositories.pending_entity_repository(7), _PendingEntityRepository)
@@ -202,6 +223,7 @@ def test_accepted_note_write_repositories_name_persistence_behavior() -> None:
     assert isinstance(repositories.search_repository(7), _SearchRepository)
     assert isinstance(repositories.observation_repository(7), _ObservationRepository)
     assert isinstance(repositories.relation_repository(7), _RelationRepository)
+    assert isinstance(repositories.violation_repository(7), _ViolationRepository)
 
 
 class _DeleteSession:
@@ -345,6 +367,10 @@ def _unexpected_relation_repository(_project_id: int) -> _RelationRepository:
     raise AssertionError("relation repository was not expected")
 
 
+def _unexpected_violation_repository(_project_id: int) -> _ViolationRepository:
+    raise AssertionError("violation repository was not expected")
+
+
 @dataclass(frozen=True, slots=True)
 class _RepositoryProvider:
     pending_entity_repository_result: _PendingEntityRepository | None = None
@@ -352,6 +378,7 @@ class _RepositoryProvider:
     search_repository_result: _SearchRepository | None = None
     observation_repository_result: _ObservationRepository | None = None
     relation_repository_result: _RelationRepository | None = None
+    violation_repository_result: _ViolationRepository | None = None
 
     def pending_entity_repository(self, project_id: int) -> _PendingEntityRepository:
         if self.pending_entity_repository_result is None:
@@ -377,6 +404,13 @@ class _RepositoryProvider:
         if self.relation_repository_result is None:
             return _unexpected_relation_repository(project_id)
         return self.relation_repository_result
+
+    def violation_repository(self, project_id: int) -> _ViolationRepository:
+        # The write runner never records violations: the mutation runner does,
+        # after the entity id exists (GAPS T29). A call here is a wiring mistake.
+        if self.violation_repository_result is None:
+            return _unexpected_violation_repository(project_id)
+        return self.violation_repository_result
 
 
 def _repository_provider(

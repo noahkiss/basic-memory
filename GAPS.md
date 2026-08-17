@@ -1930,14 +1930,42 @@ Judgment calls:
   per file across a whole corpus. Same shape as `index/local_moves.py`, for the same reason.
 - **An empty answer clears.** The rows are derived state: a record that now checks clean must stop
   being reported, which is the same rule W5 item 3 gave `EntityService`.
+- **The repository is injected, not constructed inline.** `AcceptedNoteWriteRepositories` gained
+  `violation_repository(project_id)`, alongside the five accessors it already had, and
+  `AcceptedNoteRepositories` implements it. The first attempt built a `ViolationRepository` inside
+  the runner, which broke 13 unit tests: that runner is driven by fakes passing a stub session, and
+  a repository built inside issued real SQL against it. Every other write here already arrived
+  through the bundle; this one was the exception, and the exception was the bug.
+
+**The local runtime has a second writer, and it hides this fix from an end-to-end test.** Every
+accepted write materializes and then indexes its own file: `materialize_write_change` awaits
+`file_indexer.index_file`, which reaches `EntityService.upsert_entity_from_markdown` and so
+`_persist_vocabulary_violations` — W5 item 3's record-mode persistence — for the same entity,
+milliseconds later. Both writers compute the same set from the same frontmatter and both *replace*,
+so nothing is duplicated or lost. But it means a test that writes through the whole stack and then
+reads the table passes with this fix reverted. T29 is still worth fixing: the accepted runner is
+DB-first and owes its own answer, and a runtime whose index pass is deferred (or absent) has no
+second writer at all.
 
 Tests: `tests/index/test_local_write_stack.py` covers the advisory landing as a row, the positive
 control that an error still rejects and stores nothing, a later clean write clearing the earlier
-rows, and an edit persisting what the edited note still carries. The pre-existing
-`test_a_refused_write_persists_no_violation` (`tests/mcp/`) is unchanged and still passes — a
-rejection was never the part that was wrong.
+rows, and an edit persisting what the edited note still carries. The control that isolates *this*
+fix from the index pass is `test_the_accepted_write_alone_persists_the_advisory`, which calls the
+mutation service and stops: no file, therefore no index pass, therefore only one writer.
+`tests/mcp/test_tool_vocabulary_enforcement.py::test_an_accepted_advisory_persists_a_violation`
+asserts the agent-visible half — after `write_note` returns, the row is there. The pre-existing
+`test_a_refused_write_persists_no_violation` is unchanged and still passes — a rejection was never
+the part that was wrong. At the unit level,
+`tests/indexing/test_accepted_note_mutation_runner.py::test_run_accepted_note_create_clears_violations_on_an_ungoverned_project`
+pins the injected repository and the unconditional clear.
 
-### T30 — every native command pays the MCP client graph through `run_with_cleanup`'s module
+One test changed shape rather than being fixed: a PUT **merges** the note's existing frontmatter
+(`services/note_preparation.py`, `prepare_update_entity_content`), so a key left out of a
+replacement stays on the note and its advisory is right to survive. The "a later clean write
+clears" case now fixes the record by declaring the field in `vocabulary.yml`, which is the way a
+record actually stops breaking that rule.
+
+### T30 — every native command pays the MCP client graph through `run_with_cleanup`'s module — **SHIPPED 2026-08-17**
 
 **Opened 2026-08-16** while moving `bm doctor` onto the fast path (W5 item 5). The plan's premise
 for that move was that `cli/commands/doctor.py` importing `basic_memory.mcp.async_client` and
@@ -2983,12 +3011,12 @@ Three things a verb author must not undo:
 `direct_note_writer()` lives in this module rather than `cli/direct.py` only because that file was
 being edited concurrently; moving it is mechanical and belongs to item J.
 
-Tests: `tests/index/test_local_write_stack.py`, 10 tests, no mocks — create/update/edit each land
+Tests: `tests/index/test_local_write_stack.py`, 12 tests, no mocks — create/update/edit each land
 on disk *and* answer a search; a forward reference resolves before the write returns; a vocabulary
-rejection leaves no file and no row; an unknown project is a failure, not an empty result. The
-import guard runs in a subprocess, not in-process: pytest imports every test module into one
-interpreter and several of them import fastapi, so an in-process `sys.modules` assertion would
-report imports this module never made.
+rejection leaves no file and no row; an unknown project is a failure, not an empty result; and five
+cover T29 below. The import guard runs in a subprocess, not in-process: pytest imports every test
+module into one interpreter and several of them import fastapi, so an in-process `sys.modules`
+assertion would report imports this module never made.
 
 Also closed here: **T29** (advisories from an accepted write now persist).
 

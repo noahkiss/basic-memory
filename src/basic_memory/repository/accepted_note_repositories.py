@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from basic_memory.repository import NoteContentRepository, ObservationRepository, RelationRepository
 from basic_memory.repository.accepted_note_search_repository import AcceptedNoteSearchRepository
 from basic_memory.repository.entity_repository import EntityRepository
+from basic_memory.repository.violation_repository import ViolationRepository
 from basic_memory.runtime.storage import ProjectId
 
 
@@ -29,3 +30,6 @@ class AcceptedNoteRepositories:
 
     def relation_repository(self, project_id: ProjectId) -> RelationRepository:
         return RelationRepository(project_id=project_id)
+
+    def violation_repository(self, project_id: ProjectId) -> ViolationRepository:
+        return ViolationRepository(project_id=project_id)

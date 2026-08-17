@@ -18,6 +18,7 @@ from basic_memory.indexing.accepted_note_write_runner import (
     AcceptedNoteEditPreparer,
     AcceptedNoteMovePreparer,
     AcceptedNoteSelfRelationResolver,
+    AcceptedNoteViolationRepository,
     AcceptedPreparedNoteWrite,
     AcceptedNoteReplacePreparer,
     AcceptedNoteWriteRepositories,
@@ -35,6 +36,7 @@ from basic_memory.repository import NoteContentVersionConflict
 from basic_memory.services.exceptions import EntityAlreadyExistsError, VocabularyViolationError
 from basic_memory.services.note_preparation import PreparedEntityWrite
 from basic_memory.services.vocabulary_enforcement import enforce_vocabulary
+from basic_memory.vocabulary.checker import Violation
 from basic_memory.vocabulary.model import Vocabulary, load_vocabulary
 from basic_memory.runtime.note_content import (
     RuntimeAcceptedNoteChange,
@@ -363,8 +365,14 @@ def enforce_accepted_note_vocabulary(
     file_path: RuntimeFilePath,
     previous: Mapping[str, Any] | None = None,
     relation_types: Sequence[str] | None = None,
-) -> None:
+) -> list[Violation]:
     """Refuse an accepted note write whose frontmatter is off vocabulary.
+
+    Returns what the write still breaks once it is accepted, which can only be
+    advisories: an error raises instead of returning. The caller persists them
+    once the entity id exists (GAPS T29) — before this returned them, this path
+    recorded nothing, and the accept path owes its own answer rather than relying
+    on the index pass that happens to follow it on the local runtime.
 
     Called after prepare and before persist. Prepare derives the markdown the
     note will carry, which is the only thing worth judging.
@@ -381,7 +389,7 @@ def enforce_accepted_note_vocabulary(
     every flush, and file materialization runs only after the mutation returns.
     """
     try:
-        enforce_vocabulary(
+        return enforce_vocabulary(
             metadata,
             project_external_id=project.external_id,
             mode="reject",
@@ -396,6 +404,36 @@ def enforce_accepted_note_vocabulary(
             AcceptedNoteMutationRejectKind.bad_request,
             str(error),
         )
+
+
+async def persist_accepted_note_violations(
+    session: AsyncSession,
+    *,
+    repository: AcceptedNoteViolationRepository,
+    project_id: ProjectId,
+    entity_id: int,
+    violations: Sequence[Violation],
+) -> None:
+    """Store what an accepted write still breaks, so ``bm doctor`` can read it back.
+
+    Called after the entity row exists, because the rows are keyed by its id, and
+    on the mutation's own session — a second one deadlocks the one-connection
+    pool (GAPS W4).
+
+    The repository arrives through ``dependencies.write_repositories`` like every
+    other write here, rather than being constructed inline: this runner is driven
+    by fakes that pass a stub session, and a repository built inside would issue
+    real SQL against it.
+
+    An empty sequence clears rather than no-ops: the checker's answer for this
+    record is now "nothing", and a violation an earlier version of the note broke
+    must stop being reported. The clear runs even on an ungoverned project, where
+    no rule applies and there is nothing left to report either way; one DELETE per
+    accepted write is cheap, and re-reading ``vocabulary.yml`` to learn that would
+    not be (contrast the sync path, which pays that read per file in a whole-corpus
+    pass and so skips instead).
+    """
+    await repository.replace_for_entity(session, entity_id, project_id, violations)
 
 
 def accepted_note_relation_types(prepared: PreparedEntityWrite) -> list[str]:
@@ -548,7 +586,7 @@ async def _run_accepted_note_create(
     prepared = prepared_write.prepared
     # `previous` is None: a create has no prior frontmatter, so no set-once field
     # can have changed.
-    enforce_accepted_note_vocabulary(
+    violations = enforce_accepted_note_vocabulary(
         project=project,
         metadata=prepared.entity_markdown.frontmatter.metadata,
         file_path=prepared.file_path.as_posix(),
@@ -560,6 +598,15 @@ async def _run_accepted_note_create(
         project_id=project.id,
         user_profile_value=user_profile_value,
         repositories=dependencies.write_repositories,
+    )
+    # Persisted only now: the rows are keyed by the entity id, which the create
+    # above is what produces (GAPS T29).
+    await persist_accepted_note_violations(
+        session,
+        repository=dependencies.write_repositories.violation_repository(project.id),
+        project_id=project.id,
+        entity_id=entity.id,
+        violations=violations,
     )
     persisted = await persist_accepted_note_snapshot(
         session,
@@ -725,12 +772,19 @@ async def _run_accepted_note_update(
             reject_accepted_note_mutation(AcceptedNoteMutationRejectKind.bad_request, str(error))
 
     prepared = prepared_write.prepared
-    enforce_accepted_note_vocabulary(
+    violations = enforce_accepted_note_vocabulary(
         project=project,
         metadata=prepared.entity_markdown.frontmatter.metadata,
         file_path=prepared.file_path.as_posix(),
         previous=previous_metadata,
         relation_types=accepted_note_relation_types(prepared),
+    )
+    await persist_accepted_note_violations(
+        session,
+        repository=dependencies.write_repositories.violation_repository(project.id),
+        project_id=project.id,
+        entity_id=entity.id,
+        violations=violations,
     )
     persisted = await persist_accepted_note_snapshot(
         session,
@@ -799,12 +853,19 @@ async def _run_accepted_note_edit(
     # originate here — but the note's existing frontmatter may already be off
     # vocabulary from a hand edit, and refusing to build on it is the intended
     # outcome. MCP `edit_note` lands here.
-    enforce_accepted_note_vocabulary(
+    violations = enforce_accepted_note_vocabulary(
         project=project,
         metadata=prepared.entity_markdown.frontmatter.metadata,
         file_path=prepared.file_path.as_posix(),
         previous=previous_metadata,
         relation_types=accepted_note_relation_types(prepared),
+    )
+    await persist_accepted_note_violations(
+        session,
+        repository=dependencies.write_repositories.violation_repository(project.id),
+        project_id=project.id,
+        entity_id=entity.id,
+        violations=violations,
     )
     persisted = await persist_accepted_note_snapshot(
         session,
@@ -904,6 +965,12 @@ async def _run_accepted_note_move(
     prospective_metadata = dict(previous_metadata or {})
     if prepared_move.permalink is not None:
         prospective_metadata["permalink"] = prepared_move.permalink
+    # The returned advisories are deliberately not persisted here (GAPS T29 fixes
+    # create/update/edit only). A move parses no relations, so its answer is
+    # partial: storing it would erase the relation-derived rows a real write
+    # recorded. The move planner in `index/local_moves.py` already handles that
+    # case with `preserve_rules`, and a DB-first move rewrites at most the
+    # permalink, which is an error rather than an advisory anyway.
     enforce_accepted_note_vocabulary(
         project=project,
         metadata=prospective_metadata,
