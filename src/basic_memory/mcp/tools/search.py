@@ -23,6 +23,7 @@ from basic_memory.mcp.project_context import (
     resolve_project_and_path,
 )
 from basic_memory.mcp.server import mcp
+from basic_memory.repository.metadata_filters import validate_metadata_filter_keys
 from basic_memory.schemas.search import (
     SearchItemType,
     SearchQuery,
@@ -30,6 +31,11 @@ from basic_memory.schemas.search import (
     SearchResult,
     SearchRetrievalMode,
 )
+
+
+# Frontmatter spellings for names callers reach for from the entity model. "note_type" is the
+# column; the frontmatter field it indexes is "type" (#642).
+_METADATA_KEY_ALIASES = {"note_type": "type"}
 
 
 def _default_search_type() -> str:
@@ -779,7 +785,10 @@ async def search_notes(
                    ["requirement"]). Pair with entity_types=["observation"] to return only
                    observations whose category matches exactly.
         after_date: Optional date filter for recent content (e.g., "1 week", "2d", "2024-01-01")
-        metadata_filters: Optional structured frontmatter filters (e.g., {"status": "in-progress"})
+        metadata_filters: Optional structured frontmatter filters (e.g., {"status": "in-progress"}).
+                          Frontmatter only — a database column name (`updated_at`, `created_at`,
+                          `file_path`, ...) raises instead of matching nothing. Filter by time
+                          with after_date.
         tags: Optional tag filter (frontmatter tags); shorthand for metadata_filters["tags"].
               Accepts a list (["a", "b"]) or a comma-separated string ("a,b"), matching the
               write_note tags convention and the tag: query shorthand.
@@ -870,6 +879,19 @@ async def search_notes(
         raise ValueError(f"page must be >= 1, got {page}")
     if page_size < 1:
         raise ValueError(f"page_size must be >= 1, got {page_size}")
+
+    # Normalize and validate metadata filter keys before any project routing.
+    # Trigger: a caller passes a key that names an entity database column.
+    # Why: metadata filters compile to json_extract over frontmatter, so `note_type` has a
+    #      frontmatter spelling worth aliasing, while `updated_at` has none and would return
+    #      zero rows at exit 0 — a wrong answer shaped like an empty one (GAPS T21).
+    # Outcome: the alias lands once for every path (including the all-projects fan-out), and a
+    #          column name raises here instead of being answered wrong.
+    if metadata_filters:
+        metadata_filters = {
+            _METADATA_KEY_ALIASES.get(key, key): value for key, value in metadata_filters.items()
+        }
+        validate_metadata_filter_keys(metadata_filters)
 
     # Trigger: list params arrived via a direct function call instead of the MCP layer.
     # Why: the BeforeValidator annotations only run through MCP/Pydantic validation; direct
@@ -1013,13 +1035,6 @@ async def search_notes(
             if after_date:
                 search_query.after_date = after_date
             if metadata_filters:
-                # Alias common column/model names to their frontmatter key equivalents.
-                # Users often pass "note_type" (the entity model column) when the
-                # frontmatter field is actually "type".
-                _METADATA_KEY_ALIASES = {"note_type": "type"}
-                metadata_filters = {
-                    _METADATA_KEY_ALIASES.get(k, k): v for k, v in metadata_filters.items()
-                }
                 search_query.metadata_filters = metadata_filters
             if tags:
                 search_query.tags = tags

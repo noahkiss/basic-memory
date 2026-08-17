@@ -738,7 +738,13 @@ def search_notes(
     ] = None,
     filter_json: Annotated[
         Optional[str],
-        typer.Option("--filter", help="JSON metadata filter (advanced)"),
+        typer.Option(
+            "--filter",
+            help=(
+                "JSON frontmatter filter (advanced). Database column names such as "
+                "updated_at are refused — use --after_date for time"
+            ),
+        ),
     ] = None,
     page: int = typer.Option(1, "--page", help="Page number for pagination"),
     page_size: int = typer.Option(10, "--page-size", help="Number of results per page"),

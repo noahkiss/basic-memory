@@ -614,6 +614,46 @@ def test_search_notes_permalink_mode(mock_mcp_search):
     assert mock_mcp_search.call_args.kwargs["search_type"] == "permalink"
 
 
+def test_search_notes_rejects_entity_column_filter():
+    """GAPS T21: --filter on a DB column fails instead of reporting "0 results".
+
+    Deliberately unmocked — the guard lives in the MCP tool, so a mocked tool
+    would prove nothing about the path a user runs.
+    """
+    result = runner.invoke(
+        cli_app,
+        [
+            "tool",
+            "search-notes",
+            "--filter",
+            '{"updated_at": {"$lt": "2026-08-15"}}',
+            "--project",
+            "test-project",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert "names a database column" in result.stderr
+    assert "after_date" in result.stderr
+
+
+@patch(
+    "basic_memory.mcp.tools.search_notes",
+    new_callable=AsyncMock,
+    return_value=SEARCH_RESULT,
+)
+def test_search_notes_frontmatter_filter_is_passed_through(mock_mcp_search):
+    """Positive control for the rejection above: a frontmatter key still reaches the tool."""
+    result = runner.invoke(
+        cli_app,
+        ["tool", "search-notes", "--filter", '{"status": "draft"}', "--project", "test-project"],
+    )
+
+    assert result.exit_code == 0, f"CLI failed: {result.output}"
+    assert mock_mcp_search.call_args.kwargs["metadata_filters"] == {"status": "draft"}
+
+
 @patch(
     "basic_memory.mcp.tools.search_notes",
     new_callable=AsyncMock,

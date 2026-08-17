@@ -664,3 +664,45 @@ async def test_search_result_omits_matched_chunk_when_none(
     assert len(data["results"]) == 1
     result = data["results"][0]
     assert result["matched_chunk"] is None
+
+
+@pytest.mark.asyncio
+async def test_search_rejects_entity_column_metadata_filter(
+    client: AsyncClient,
+    test_project: Project,
+    v2_project_url: str,
+    entity_repository,
+    search_service,
+    file_service,
+):
+    """GAPS T21: a column name in metadata_filters is a 4xx, not an empty 200."""
+    entity_data = {
+        "title": "Column Filter Entity",
+        "note_type": "note",
+        "content_type": "text/markdown",
+        "file_path": "column_filter.md",
+        "checksum": "columnfilter1",
+        "entity_metadata": {"status": "draft"},
+    }
+    await create_test_entity(
+        test_project, entity_data, entity_repository, search_service, file_service
+    )
+
+    response = await client.post(
+        f"{v2_project_url}/search/",
+        json={"metadata_filters": {"updated_at": {"$lt": "2026-08-15"}}},
+    )
+
+    assert response.status_code == 400
+    detail = response.json()["detail"]
+    assert "names a database column" in detail
+    assert "after_date" in detail
+
+    # Positive control: the same corpus answers a real frontmatter key.
+    control = await client.post(
+        f"{v2_project_url}/search/",
+        json={"metadata_filters": {"status": "draft"}},
+    )
+    assert control.status_code == 200
+    titles = [result["title"] for result in control.json()["results"]]
+    assert "Column Filter Entity" in titles

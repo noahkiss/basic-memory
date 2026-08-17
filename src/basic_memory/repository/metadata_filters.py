@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime
 import re
-from typing import Any, Iterable, List, cast
+from typing import Any, Iterable, List, Mapping, cast
 
 
 _KEY_RE = re.compile(r"^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)*$")
@@ -27,6 +27,64 @@ _BOOLEAN_LITERALS = {
     "on": True,
     "off": False,
 }
+
+
+# --- Entity-column keys this grammar refuses ---
+
+# This grammar compiles a key into json_extract over `entity.entity_metadata`, which holds
+# frontmatter and nothing else. An `Entity` column name therefore addresses a frontmatter key
+# no note carries: zero rows at exit 0, indistinguishable from a true empty result (GAPS T21).
+# Rejecting is the decided fix — routing a column name to its column would need the grammar to
+# know which names are columns, and it would get that wrong the day a note carries the key.
+#
+# `title`, `type` and `permalink` are deliberately absent. Every raw frontmatter key is stored
+# in `entity_metadata` (markdown/utils.py), basic-memory writes all three into frontmatter, and
+# filtering on them works today. Rejecting them would be a regression, not a fix.
+_DATE_COLUMN_GUIDANCE = (
+    "Filter by time with the `after_date` search parameter (`--after_date`); "
+    "`before_date` and `order_by` cover staleness sweeps at the repository layer."
+)
+_UNSEARCHABLE_COLUMN_GUIDANCE = "This column is not reachable through a frontmatter filter."
+
+_ENTITY_COLUMN_GUIDANCE: dict[str, str] = {
+    "created_at": _DATE_COLUMN_GUIDANCE,
+    "updated_at": _DATE_COLUMN_GUIDANCE,
+    "note_type": "Frontmatter spells the note type `type`; the search parameter is `note_types`.",
+    "entity_type": (
+        "Use `note_types` (`--type`) for the frontmatter type, or `entity_types` "
+        "(`--entity-type`) for entity/observation/relation."
+    ),
+    "id": "Address a note by `permalink`, or by `external_id` on the search result.",
+    "external_id": "Address a note by `permalink`, or search within one project.",
+    "project_id": "Scope a search with the `project` parameter (`--project`/`--project-id`).",
+    "file_path": "Match paths with `permalink_match` (`--permalink 'specs/*'`).",
+    "checksum": _UNSEARCHABLE_COLUMN_GUIDANCE,
+    "content_type": _UNSEARCHABLE_COLUMN_GUIDANCE,
+    "entity_metadata": 'Filter on a frontmatter key directly, e.g. {"status": "draft"}.',
+    "mtime": _DATE_COLUMN_GUIDANCE,
+    "size": _UNSEARCHABLE_COLUMN_GUIDANCE,
+    "created_by": _UNSEARCHABLE_COLUMN_GUIDANCE,
+    "last_updated_by": _UNSEARCHABLE_COLUMN_GUIDANCE,
+}
+
+
+def validate_metadata_filter_keys(filters: Mapping[str, Any] | None) -> None:
+    """Raise when a filter key names an `Entity` column instead of a frontmatter field.
+
+    A dotted key (`schema.updated_at`) is genuine frontmatter nesting, so only a bare
+    single-segment key can collide with a column name.
+    """
+    for raw_key in filters or {}:
+        if not isinstance(raw_key, str):
+            continue
+        key = raw_key.strip()
+        guidance = _ENTITY_COLUMN_GUIDANCE.get(key.lower())
+        if guidance is None:
+            continue
+        raise ValueError(
+            f"Metadata filter key '{key}' names a database column, not a frontmatter field. "
+            f"Metadata filters read frontmatter only, so this would match nothing. {guidance}"
+        )
 
 
 @dataclass(frozen=True)
@@ -101,7 +159,12 @@ def parse_metadata_filters(filters: dict[str, Any]) -> List[ParsedMetadataFilter
     - {"priority": {"$in": ["high", "critical"]}}  # any of, element-wise on lists
     - {"schema.confidence": {"$gt": 0.7}}
     - {"schema.confidence": {"$between": [0.3, 0.6]}}
+
+    Raises ValueError when a key names an `Entity` column (see
+    `validate_metadata_filter_keys`).
     """
+    validate_metadata_filter_keys(filters)
+
     parsed: List[ParsedMetadataFilter] = []
 
     for raw_key, raw_value in (filters or {}).items():

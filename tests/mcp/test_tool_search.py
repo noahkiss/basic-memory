@@ -2220,3 +2220,50 @@ async def test_queryless_metadata_search_end_to_end(client, test_project):
         output_format="json",
     )
     assert isinstance(control, dict) and len(control["results"]) >= 2
+
+
+# --- Entity-column filter names are refused (GAPS T21) -------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("column", ["updated_at", "created_at", "file_path", "checksum"])
+async def test_search_notes_rejects_entity_column_filter(client, test_project, column):
+    """A DB-column filter name raises instead of answering zero results at exit 0."""
+    with pytest.raises(ValueError, match="names a database column"):
+        await search_notes(
+            project=test_project.name,
+            metadata_filters={column: {"$lt": "2026-08-15"}},
+            output_format="json",
+        )
+
+
+@pytest.mark.asyncio
+async def test_search_notes_updated_at_rejection_names_after_date(client, test_project):
+    """The message points at the supported date path, not just at the refusal."""
+    with pytest.raises(ValueError, match="after_date"):
+        await search_notes(
+            project=test_project.name,
+            metadata_filters={"updated_at": {"$lt": "2026-08-15"}},
+            output_format="json",
+        )
+
+
+@pytest.mark.asyncio
+async def test_search_notes_frontmatter_filter_still_matches(client, test_project):
+    """Positive control: the same corpus a rejected column filter would sweep is reachable."""
+    await write_note(
+        project=test_project.name,
+        title="Column Filter Target",
+        directory="t21",
+        content="---\nstatus: draft\n---\n# Column Filter Target\n\nt21 corpus",
+    )
+
+    response = await search_notes(
+        project=test_project.name,
+        metadata_filters={"status": "draft"},
+        output_format="json",
+    )
+
+    assert isinstance(response, dict), f"frontmatter filter failed: {response}"
+    permalinks = [r["permalink"] for r in response["results"]]
+    assert any(p.endswith("t21/column-filter-target") for p in permalinks)
