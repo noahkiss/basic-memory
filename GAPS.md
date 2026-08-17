@@ -1455,7 +1455,66 @@ callers use, not of the funnel itself.
 records `unknown-type` and loses the `set-once-changed` violation that W5's table would want. It is
 harmless on a reject path, where the write stops either way.
 
-### T23 — a move on disk rewrites the set-once `permalink` and the checker never sees it
+### T23 — a move on disk rewrites the set-once `permalink` and the checker never sees it — **CLOSED 2026-08-16: the move planner records the violation, and then does not do the rewrite**
+
+**Close block, 2026-08-16.**
+
+- **The check runs at move time, in the planner.** `LocalProjectIndexMoveContentUpdater.plan_moved_file_content`
+  (`src/basic_memory/index/local_moves.py`) calls `enforce_vocabulary(..., mode="record")` after it
+  resolves the new permalink and before it plans any bytes. That placement is the entry's whole
+  point: the batch stamps the rows with the planned content's checksum, so a rewritten file never
+  presents as modified and no later index pass could see it. Nothing here relies on re-indexing.
+- **One implementation, a third entry point.** The funnel is unchanged. It has taken no session
+  since T22, so the move batch's open transaction is not a hazard and the one-connection deadlock
+  W4 recorded cannot arise. Record mode already logs the WARNING itself, with the sync path's
+  message text, so this path adds no second message.
+- **The project's `external_id` now rides in `LocalIndexProjectDependencies`.** The vocabulary file
+  is keyed by it and the updater held only the integer PK. Both runtime factories — scan
+  (`local_project.py`) and watcher (`local_runtime.py`) — pass it to the updater. Carrying the id
+  beats a lookup: reading a project row inside the move batch's own transaction is exactly the
+  shape W4 got bitten by.
+
+**Judgment call — record *and* skip, not record only.** The brief left this open. The design docs
+settle it: the permalink is this fork's identity, `id == permalink` is set-once (**T9**), edges bind
+to it, and rewriting it orphans every relation pointing at the record. **T22** already refuses this
+exact rewrite on the accepted path, so recording it here while still performing it would leave the
+watcher as the one door through which identity silently changes. A `set-once-changed` violation on
+`permalink` therefore returns `None` from the planner — the pre-existing signal for "no content
+update" — which leaves both the file and the entity's permalink as the human left them.
+
+**The skip is narrow on purpose.** Only a `set-once-changed` violation on `permalink` stops the
+rewrite (`_changes_set_once_permalink`). An off-vocabulary note — a bad `type`, a missing required
+field — is recorded like any other hand-edit and still gets its permalink kept current. Bundling
+those would make an unrelated frontmatter mistake silently change move behaviour.
+
+**In practice, on a governed project, a watcher move no longer rewrites permalinks at all.** The
+indexer stamps the resolved permalink into frontmatter at first index, so every indexed markdown
+file has one, and every later move is a change rather than a first set. That is the intended
+outcome, not a side effect; the narrow rule is what keeps it true for the right reason and testable
+either way.
+
+**A malformed `vocabulary.yml` now aborts a move batch** with `VocabularyError`, as it already
+aborts a write on the sync path. Deliberate and unchanged in spirit: "ungoverned" and "governed by
+a file with a typo in it" must not become the same state.
+
+**Tests.** Two drive the real move path with a real database
+(`tests/index/test_local_project_index.py`): a governed project with `update_permalinks_on_move`
+on logs `'permalink' is set once and cannot change` and keeps both the file's and the row's
+permalink; the same project with the flag off logs nothing and changes nothing. The pre-existing
+ungoverned move test is the third control — it still rewrites the permalink and now asserts that it
+records nothing. Two more sit at the planner
+(`tests/index/test_local_move_content_updates.py`) and prove the narrowing: a note with a previous
+permalink is skipped, while a note with none takes a first permalink normally even though it is
+off-vocabulary in `type`. The `logged_warnings` sink moved to `tests/conftest.py`; loguru does not
+feed `caplog`, and two files now need it.
+
+**Owed to W5, and stated here so it is not rediscovered:** this violation must reach W5's table
+too. Two paths now feed record mode — `EntityService` (sync) and this planner (moves) — and W5's
+mechanism A has to persist from both. The move path is the one that cannot be recovered by a
+reindex, so a table fed only from the sync path would silently lose exactly these rows.
+
+---
+
 **Opened 2026-08-10**, found by the same cross-model review that confirmed T22 and verified here by
 reading `src/basic_memory/index/local_moves.py:110-152`. **Filed separately from T22 on purpose:**
 fixing T22 at the accepted-state write path does not touch this path, and folding it in would let a
@@ -1683,6 +1742,46 @@ are all the note has — the entity row and nothing else. That window is uncover
 path, move included, because the runner-side rebuild that briefly covered it on moves was reverted
 with T25. It is a question about that failure window, not about the missing rows this entry
 claimed, and it wants a reproduction before anyone builds for it.
+
+### T28 — a permalink rewrite on move leaves `entity_metadata` stale, so `bm doctor` reports drift
+**Opened 2026-08-16**, found reviewing T23's diff. Not introduced by T23 — T23's skip is what keeps
+a *governed* project clear of it. Every move path that rewrites the permalink is affected.
+
+`find_permalink_integrity_issues` (`src/basic_memory/repository/entity_repository.py:65-113`) calls
+it **drift** when `Entity.permalink` disagrees with `json_extract(entity_metadata, '$.permalink')`.
+That is the T9 identity check `bm doctor --project` prints. Both move paths update the column and
+leave the JSON alone:
+
+- **Scan/watcher.** `_build_move_batch_update_values`
+  (`src/basic_memory/indexing/project_index_maintenance.py:466-536`) assembles `entity_values` as
+  `file_path`, `checksum`, `permalink`. No `entity_metadata`.
+- **Accepted (`move_note`).** `prepare_accepted_note_move`
+  (`src/basic_memory/indexing/accepted_note_write_runner.py:381`) sets `entity.permalink =
+  result.permalink` and nothing writes `entity.entity_metadata`.
+
+`entity_metadata` is the file's whole frontmatter, permalink included
+(`src/basic_memory/markdown/utils.py:62-64`), so an indexed markdown note always has the key. And
+nothing repairs it later: the move batch stamps the row with the *planned* content's checksum, so
+the rewritten file never presents as modified to a later scan.
+
+**Reproduction, by reading, over the existing test.**
+`tests/index/test_local_project_index.py::test_local_project_index_move_updates_permalink_when_configured`
+ends with `Entity.permalink == "<project>/archive/renamed-note"` while the row's
+`entity_metadata["permalink"]` is still `"<project>/notes/rename-me"` — the drift predicate,
+satisfied. **Positive control** for the predicate itself: the governed T23 test moves the same way
+and leaves both equal, which is why it produces no issue. A runnable check is one assertion added
+to each of those two tests; it was not added here because a reviewer does not run the suite.
+
+**Why it matters:** the check exists to catch a hand-edited `permalink:` after first index. If a
+routine move manufactures the same signal, the report is noise on every corpus that has ever been
+tidied, and the real hand-edit hides in it. This is the O8 class inverted: a true-looking finding
+that is an artifact.
+
+**Fix:** carry `permalink` into the row's `entity_metadata` wherever the move writes the column —
+one JSON key in `_build_move_batch_update_values` and one assignment beside line 381 — or teach the
+predicate that the frontmatter copy is not authoritative. **Writing the key is the smaller change
+and the right one:** `entity_metadata` claims to mirror the file, the file *was* rewritten, so a
+stale copy is simply wrong regardless of what reads it.
 
 ---
 
@@ -2328,13 +2427,13 @@ the file↔DB loop. Live scratch smoke: `history dirty` empty case, per-file lis
 ### W4 — closed record vocabulary enforced in the write path — **SHIPPED 2026-08-10; reject mode relocated 2026-08-16 (T22)**
 
 > **Where enforcement lives, as of 2026-08-16.** One implementation in
-> `services/vocabulary_enforcement.py`, two entry points. **Reject** is in
+> `services/vocabulary_enforcement.py`, three entry points. **Reject** is in
 > `indexing/accepted_note_mutation_runner.py`, which is where every agent-facing write lands;
-> **record** is in `EntityService`, which is the sync path and nothing else. The text below still
-> says `entity_service.py` is the agent write path — **it is not, and was not by the time W4
-> shipped**; that is the whole of **T22**, whose close block states what moved. **T23 is still
-> open**: a watcher move rewrites the set-once `permalink` with no funnel contact in any mode.
-> Read T22's close block before building on this.
+> **record** is in `EntityService` (the sync path) and in `index/local_moves.py` (the move
+> planner, which judges a permalink rewrite a watcher move would otherwise make invisible). The
+> text below still says `entity_service.py` is the agent write path — **it is not, and was not by
+> the time W4 shipped**; that is the whole of **T22**, whose close block states what moved. The
+> move planner is **T23**. Read both close blocks before building on this.
 
 **Close block, 2026-08-10.** Shipped in four commits: `2e62e726` (`vocabulary.yml` + the bespoke
 checker), `ee5bc1a4` (the shared glossary), `2310dc87` (the funnel), `63ad4fba` (`bm types`).
@@ -2585,8 +2684,10 @@ are about frontmatter **values**, which are not columns.
 
 **A — sync persists violations; `doctor` queries them. Not a re-parse.**
 `upsert_entity_from_markdown` already parses the file, so it runs the checker and writes rows to a
-violation table keyed by entity. Rejected alternative: `doctor` walks the store and re-parses. The
-deciding reason is **B** below — a warning on every command has to be nearly free, and the cheapest
+violation table keyed by entity. **Two paths record, not one** (added 2026-08-16, T23): the move
+planner in `index/local_moves.py` also runs the checker, and its violations are the ones a reindex
+cannot recover — a table fed only from the sync path silently loses exactly those rows. Rejected
+alternative: `doctor` walks the store and re-parses. The deciding reason is **B** below — a warning on every command has to be nearly free, and the cheapest
 possible re-parse is O(corpus) file I/O, which is the entire latency budget of a fast verb spent on
 a banner that usually says nothing. Persisted violations make it one indexed count query.
 

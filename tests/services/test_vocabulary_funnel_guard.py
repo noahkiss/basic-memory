@@ -14,6 +14,12 @@ layer**, so the guard now sits on the layer callers actually use, and
 ``tests/mcp/test_tool_vocabulary_enforcement.py`` drives the real MCP path to prove they do.
 The two together are the check; neither alone is.
 
+**What this file does not cover.** A third caller records: the move planner in
+``index/local_moves.py`` (GAPS T23). It is guarded behaviourally instead — the
+governed-move tests in ``tests/index/`` assert the violation is logged and the
+rewrite is skipped — because it is one call site on one method, not a class of
+write paths a new method could quietly join.
+
 These walk the source as an AST rather than importing it: the question is about
 the source's shape, and an import would only tell us the functions exist.
 """

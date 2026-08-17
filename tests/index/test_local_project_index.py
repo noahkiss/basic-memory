@@ -10,6 +10,7 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
+import yaml
 from sqlalchemy import Select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -74,6 +75,7 @@ from basic_memory.runtime.projects import ProjectRuntimeReference
 from basic_memory.schemas.search import SearchItemType, SearchQuery
 from basic_memory.services import FileService
 from basic_memory.services.exceptions import FileOperationError
+from basic_memory.vocabulary.model import vocabulary_path
 
 
 def test_local_project_index_file_paths_filter_and_sort(tmp_path: Path) -> None:
@@ -1307,11 +1309,17 @@ async def test_local_project_index_move_updates_permalink_when_configured(
     search_service,
     app_config,
     config_manager,
+    logged_warnings,
     monkeypatch,
 ) -> None:
-    """Move maintenance mirrors sync permalink policy without using SyncService."""
+    """Move maintenance mirrors sync permalink policy without using SyncService.
+
+    Also the ungoverned control for the T23 tests below: with no vocabulary.yml
+    the same move rewrites the permalink and records nothing.
+    """
     app_config.update_permalinks_on_move = True
     config_manager.save_config(app_config)
+    assert not vocabulary_path(test_project.external_id).exists()
 
     original_path = project_config.home / "notes" / "rename-me.md"
     moved_path = project_config.home / "archive" / "renamed-note.md"
@@ -1334,6 +1342,8 @@ async def test_local_project_index_move_updates_permalink_when_configured(
     assert original_permalink == f"{test_project.permalink}/notes/rename-me"
     assert f"permalink: {original_permalink}" in original_path.read_text(encoding="utf-8")
 
+    # Only the move's own record matters here; the first index has already run.
+    logged_warnings.clear()
     original_path.rename(moved_path)
 
     second = await run_local_project_index_for_project(
@@ -1362,6 +1372,151 @@ async def test_local_project_index_move_updates_permalink_when_configured(
     assert len(results) == 1
     assert results[0].permalink == expected_permalink
     assert results[0].file_path == "archive/renamed-note.md"
+
+    assert not [line for line in logged_warnings if "Vocabulary violation" in line]
+
+
+# --- GAPS T23: a hand-move on a governed project ---
+#
+# A move on disk is a human act, so this path records and never refuses. The
+# check has to run at move time: the batch stamps the rows with the planned
+# content's checksum, so a rewritten file never presents as modified and no
+# later index pass would see it.
+
+GOVERNED_NOTE_ID = "tnd-t23-0001"
+
+GOVERNED_NOTE = f"""---
+type: guide
+id: {GOVERNED_NOTE_ID}
+permalink: {GOVERNED_NOTE_ID}
+title: Governed Note
+source: human
+review-by: 2027-01-01
+---
+
+# Governed Note
+
+A note whose permalink is its identity.
+"""
+
+
+def govern_project(project: Project) -> Path:
+    """Give ``project`` a vocabulary file, which is what makes it governed."""
+    path = vocabulary_path(project.external_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # An empty mapping is a present, deliberate opt-in: it governs with the
+    # default six types and five statuses.
+    path.write_text(yaml.safe_dump({}), encoding="utf-8")
+    return path
+
+
+async def index_governed_note(
+    test_project: Project,
+    project_config,
+    entity_repository,
+    session_maker: async_sessionmaker[AsyncSession],
+) -> Path:
+    """Write and index the governed note, then return its path on disk."""
+    original_path = project_config.home / "notes" / "governed-note.md"
+    original_path.parent.mkdir(parents=True, exist_ok=True)
+    original_path.write_text(GOVERNED_NOTE, encoding="utf-8")
+
+    first = await run_local_project_index_for_project(
+        test_project,
+        runtime_factory=LocalProjectIndexRuntimeFactory(batch_size=10),
+        force_full=True,
+    )
+    assert first.batch_results[0].file_results[0].status == IndexFileJobStatus.processed
+
+    async with db.scoped_session(session_maker) as session:
+        indexed = await entity_repository.get_by_file_path(session, "notes/governed-note.md")
+    assert indexed is not None
+    # The explicit permalink is honoured verbatim, so the move below is a change
+    # to a set-once field rather than a first set.
+    assert indexed.permalink == GOVERNED_NOTE_ID
+    return original_path
+
+
+async def test_local_project_index_move_records_permalink_violation_on_governed_project(
+    test_project: Project,
+    project_config,
+    entity_repository,
+    session_maker: async_sessionmaker[AsyncSession],
+    app_config,
+    config_manager,
+    logged_warnings,
+) -> None:
+    """A hand-move records the set-once permalink violation and keeps the permalink.
+
+    Recording alone would be a half fix: the permalink is this fork's identity
+    and every edge binds to it (GAPS T9), so the rewrite is skipped too.
+    """
+    govern_project(test_project)
+    app_config.update_permalinks_on_move = True
+    config_manager.save_config(app_config)
+
+    original_path = await index_governed_note(
+        test_project, project_config, entity_repository, session_maker
+    )
+    moved_path = project_config.home / "archive" / "moved-note.md"
+    moved_path.parent.mkdir(parents=True, exist_ok=True)
+    # Only the move's own record matters here; the first index has already run.
+    logged_warnings.clear()
+    original_path.rename(moved_path)
+
+    second = await run_local_project_index_for_project(
+        test_project,
+        runtime_factory=LocalProjectIndexRuntimeFactory(batch_size=10),
+    )
+
+    assert second.moved_files == 1
+    violations = [line for line in logged_warnings if "Vocabulary violation" in line]
+    assert [line for line in violations if "'permalink' is set once and cannot change" in line]
+    assert [line for line in violations if "archive/moved-note.md" in line]
+
+    # Recorded, and then not done.
+    assert f"permalink: {GOVERNED_NOTE_ID}" in moved_path.read_text(encoding="utf-8")
+    async with db.scoped_session(session_maker) as session:
+        moved_entity = await entity_repository.get_by_file_path(session, "archive/moved-note.md")
+    assert moved_entity is not None
+    assert moved_entity.permalink == GOVERNED_NOTE_ID
+
+
+async def test_local_project_index_move_records_nothing_when_permalink_updates_are_off(
+    test_project: Project,
+    project_config,
+    entity_repository,
+    session_maker: async_sessionmaker[AsyncSession],
+    app_config,
+    config_manager,
+    logged_warnings,
+) -> None:
+    """With the policy off no permalink is proposed, so there is nothing to record.
+
+    The negative half of the test above, on the same governed project: the flag
+    is the only difference between the two.
+    """
+    govern_project(test_project)
+    app_config.update_permalinks_on_move = False
+    config_manager.save_config(app_config)
+
+    original_path = await index_governed_note(
+        test_project, project_config, entity_repository, session_maker
+    )
+    moved_path = project_config.home / "archive" / "moved-note.md"
+    moved_path.parent.mkdir(parents=True, exist_ok=True)
+    # Only the move's own record matters here; the first index has already run.
+    logged_warnings.clear()
+    original_path.rename(moved_path)
+
+    second = await run_local_project_index_for_project(
+        test_project,
+        runtime_factory=LocalProjectIndexRuntimeFactory(batch_size=10),
+    )
+
+    assert second.moved_files == 1
+    assert not [line for line in logged_warnings if "Vocabulary violation" in line]
+    assert f"permalink: {GOVERNED_NOTE_ID}" in moved_path.read_text(encoding="utf-8")
 
 
 async def test_local_project_index_treats_rename_over_existing_path_as_modify_and_delete(
@@ -2542,6 +2697,7 @@ async def test_local_project_index_runtime_factory_composes_inline_runtime(
         file_batch_indexer=RecordingBatchIndexer(),
         session_maker=async_sessionmaker(),
         project_id=12,
+        project_external_id="project-12",
         entity_repository=RuntimeFactoryEntityRepository(),
         relation_repository=RuntimeFactoryRelationRepository(),
         link_resolver=RuntimeFactoryLinkResolver(),

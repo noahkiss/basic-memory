@@ -5,10 +5,11 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from textwrap import dedent
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Generator
 
 import pytest
 import pytest_asyncio
+from loguru import logger
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -98,6 +99,23 @@ async def cleanup_global_db_after_test() -> AsyncGenerator[None, None]:
     # a later fixture can overwrite the reference before it is disposed.
     # Outcome: close straggler aiosqlite worker threads before the loop closes.
     await db.shutdown_db()
+
+
+@pytest.fixture
+def logged_warnings() -> Generator[list[str], None, None]:
+    """Collect loguru warnings for the duration of one test.
+
+    The vocabulary funnel reports in record mode by logging, and loguru does not
+    feed pytest's ``caplog``. A sink is the only way to read what it said. Shared
+    because two paths record: the sync path and the watcher's move path (GAPS
+    T22, GAPS T23).
+    """
+    collected: list[str] = []
+    sink_id = logger.add(collected.append, level="WARNING")
+    try:
+        yield collected
+    finally:
+        logger.remove(sink_id)
 
 
 @pytest.fixture

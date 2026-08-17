@@ -203,6 +203,11 @@ class LocalIndexProjectDependencies:
     file_batch_indexer: IndexFileBatchIndexer[IndexInputFile]
     session_maker: async_sessionmaker[AsyncSession]
     project_id: ProjectId
+    # The store directory key, carried alongside the integer PK because the
+    # vocabulary file is keyed by it (``store/<external_id>/vocabulary.yml``).
+    # Move maintenance checks that file, and reading it must not cost a project
+    # row lookup inside a move batch's own transaction (GAPS T23).
+    project_external_id: str
     entity_repository: LocalIndexEntityRepository
     relation_repository: RelationResolutionRelationRepository
     link_resolver: RelationResolutionLinkResolver
@@ -681,6 +686,7 @@ async def build_local_index_project_dependencies(
         file_batch_indexer=LocalIndexFileBatchIndexer(batch_runtime),
         session_maker=session_maker,
         project_id=project.id,
+        project_external_id=project.external_id,
         entity_repository=entity_repository,
         relation_repository=relation_repository,
         link_resolver=link_resolver,

@@ -14,14 +14,13 @@ A project is governed only when ``store/<external_id>/vocabulary.yml`` exists.
 governs the project *before* the first write.
 """
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import pytest
 import yaml
-from loguru import logger
 
 from basic_memory.markdown.schemas import EntityFrontmatter, EntityMarkdown
 from basic_memory.schemas import Entity as EntitySchema
@@ -79,21 +78,6 @@ def govern_project(test_project):
         return path
 
     return _govern
-
-
-@pytest.fixture
-def logged_warnings() -> Iterator[list[str]]:
-    """Collect loguru warnings for the duration of one test.
-
-    The funnel reports in record mode by logging, and loguru does not feed
-    pytest's ``caplog``. A sink is the only way to read what it said.
-    """
-    collected: list[str] = []
-    sink_id = logger.add(collected.append, level="WARNING")
-    try:
-        yield collected
-    finally:
-        logger.remove(sink_id)
 
 
 @pytest.mark.asyncio

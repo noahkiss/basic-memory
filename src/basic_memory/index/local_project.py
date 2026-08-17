@@ -595,6 +595,7 @@ class LocalProjectIndexRuntimeFactory:
             move_content_updater=LocalProjectIndexMoveContentUpdater(
                 entity_service=dependencies.entity_service,
                 file_service=dependencies.file_service,
+                project_external_id=dependencies.project_external_id,
             ),
             delete_path_verifier=LocalProjectIndexDeletePathVerifier(
                 file_service=dependencies.file_service,

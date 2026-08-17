@@ -36,6 +36,8 @@ from basic_memory.runtime.storage import (
     STORAGE_OBJECT_DELETED_EVENT,
 )
 from basic_memory.services import FileService
+from basic_memory.services.vocabulary_enforcement import enforce_vocabulary
+from basic_memory.vocabulary.checker import Violation
 
 
 class LocalMoveEntitySource(Protocol):
@@ -72,31 +74,49 @@ class LocalMoveEntityService(Protocol):
     ) -> str: ...
 
 
+def split_frontmatter(content: str) -> tuple[dict[str, object], str]:
+    """Return ``(frontmatter, body)`` for markdown, tolerating malformed YAML.
+
+    Mirrors FileService.update_frontmatter_with_result's read — including its
+    tolerance, which treats an unparseable block as body text — so both the
+    planned bytes and the vocabulary check below see the same pre-move metadata
+    a direct frontmatter rewrite would have merged into.
+    """
+    if not has_frontmatter(content):
+        return {}, content
+    try:
+        return dict(parse_frontmatter(content)), remove_frontmatter(content)
+    except ParseError as error:
+        logger.warning(
+            "Treating file with malformed frontmatter as plain markdown",
+            error=str(error),
+        )
+        return {}, content
+
+
 def merged_frontmatter_markdown(content: str, updates: Mapping[str, object]) -> str:
     """Return markdown with frontmatter updates applied, without touching storage.
 
-    Mirrors FileService.update_frontmatter_with_result's merge — including its
-    tolerance for malformed YAML, which keeps the full content and prepends a
-    fresh frontmatter block — so planned bytes match what a direct frontmatter
-    rewrite would have produced.
+    Mirrors FileService.update_frontmatter_with_result's merge, so planned bytes
+    match what a direct frontmatter rewrite would have produced.
     """
-    current_frontmatter: dict[str, object] = {}
-    body = content
-    if has_frontmatter(content):
-        try:
-            current_frontmatter = dict(parse_frontmatter(content))
-            body = remove_frontmatter(content)
-        except ParseError as error:
-            logger.warning(
-                "Treating file with malformed frontmatter as plain markdown",
-                error=str(error),
-            )
-            current_frontmatter = {}
-            body = content
-
+    current_frontmatter, body = split_frontmatter(content)
     merged_frontmatter = {**current_frontmatter, **updates}
     yaml_block = yaml.dump(merged_frontmatter, sort_keys=False, allow_unicode=True)
     return f"---\n{yaml_block}---\n\n{body.strip()}"
+
+
+def _changes_set_once_permalink(violations: Sequence[Violation]) -> bool:
+    """True when the checker says this move would rewrite a set-once permalink.
+
+    Narrow on purpose: an already off-vocabulary note (a bad ``type``, a missing
+    required field) is recorded like any other hand-edit and still gets its
+    permalink kept current. Only the identity rule stops the rewrite.
+    """
+    return any(
+        violation.rule == "set-once-changed" and violation.field == "permalink"
+        for violation in violations
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,6 +125,7 @@ class LocalProjectIndexMoveContentUpdater(ProjectIndexMoveContentUpdater):
 
     entity_service: LocalMoveEntityService
     file_service: FileService
+    project_external_id: str
 
     async def plan_moved_file_content(
         self,
@@ -128,10 +149,27 @@ class LocalProjectIndexMoveContentUpdater(ProjectIndexMoveContentUpdater):
             return None
 
         current_bytes = await self.file_service.read_file_bytes(moved_file.new_path)
-        planned_content = merged_frontmatter_markdown(
-            current_bytes.decode("utf-8"),
-            {"permalink": permalink},
+        content = current_bytes.decode("utf-8")
+        previous_metadata, _ = split_frontmatter(content)
+        # A hand-move is a human act, so this path records and never refuses
+        # (GAPS T23). It has to run *here*, at move time: the batch stamps the
+        # rows with the planned content's checksum, so the rewritten file never
+        # presents as modified and no later index pass would see it.
+        violations = enforce_vocabulary(
+            {**previous_metadata, "permalink": permalink},
+            project_external_id=self.project_external_id,
+            mode="record",
+            file_path=moved_file.new_path,
+            previous=previous_metadata,
         )
+        if _changes_set_once_permalink(violations):
+            # Recorded, and then not done. The permalink is this fork's identity
+            # and every edge binds to it (GAPS T9), so rewriting it on a governed
+            # project orphans every relation pointing at the record. Skipping the
+            # rewrite leaves the file exactly as the human moved it.
+            return None
+
+        planned_content = merged_frontmatter_markdown(content, {"permalink": permalink})
         # Invariant: the move batch stamps entity/note_content rows from this
         # planned content while write_moved_file_content persists exactly these
         # bytes after commit, so database and file checksums agree. Divergence

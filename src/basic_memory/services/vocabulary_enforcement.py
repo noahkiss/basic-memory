@@ -10,8 +10,13 @@ rejecting a type in its CLI while its API wrote the same type to disk
 which was the agent write path when the sentence was written. It is not now:
 every agent-facing write reaches the database through the accepted-note mutation
 runner, so reject mode never fired (GAPS T22). Enforcement moved here — a
-runtime-neutral function both layers call — rather than being duplicated into
-both, because two funnels are two things to keep in step.
+runtime-neutral function every layer calls — rather than being duplicated into
+each, because two funnels are two things to keep in step.
+
+Three callers now. Reject: ``indexing/accepted_note_mutation_runner.py``.
+Record: ``EntityService``, the sync path, and ``index/local_moves.py``, the move
+planner — a hand-move is a human act, and its permalink rewrite is invisible to
+any later index pass, so it is judged where it is planned (GAPS T23).
 
 The function is synchronous and takes no session. A project's vocabulary is a
 file keyed by ``external_id``, so the check needs no database work at all once

@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import cast
 
 import pytest
+import yaml
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from basic_memory.file_utils import compute_checksum
@@ -16,6 +17,7 @@ from basic_memory.index.local_moves import (
 from basic_memory.indexing.project_index_maintenance import ProjectIndexMovedFile
 from basic_memory.markdown import EntityMarkdown
 from basic_memory.services import FileService
+from basic_memory.vocabulary.model import vocabulary_path
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,10 +48,12 @@ class StaticMoveEntityService:
 def _updater(
     tmp_path: Path,
     entity_service: StaticMoveEntityService,
+    project_external_id: str = "ungoverned-project",
 ) -> LocalProjectIndexMoveContentUpdater:
     return LocalProjectIndexMoveContentUpdater(
         entity_service=cast(LocalMoveEntityService, entity_service),
         file_service=FileService(tmp_path),
+        project_external_id=project_external_id,
     )
 
 
@@ -139,6 +143,7 @@ async def test_plan_moved_file_content_skips_non_markdown_and_unchanged_permalin
 
 @pytest.mark.asyncio
 async def test_plan_moved_file_content_plans_without_writing_then_write_persists(
+    config_home: Path,
     tmp_path: Path,
 ) -> None:
     """Planning must not mutate the file; the write persists exactly the planned bytes."""
@@ -161,3 +166,83 @@ async def test_plan_moved_file_content_plans_without_writing_then_write_persists
     await updater.write_moved_file_content(moved_file, content_update)
 
     assert file_path.read_text(encoding="utf-8") == content_update.markdown_content
+
+
+# --- GAPS T23: the governed-project arm ---
+
+
+def _govern(external_id: str) -> None:
+    """Give a project a vocabulary file, which is what makes it governed."""
+    path = vocabulary_path(external_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # An empty mapping is a present, deliberate opt-in: it governs with defaults.
+    path.write_text(yaml.safe_dump({}), encoding="utf-8")
+
+
+def _write_moved_note(tmp_path: Path, moved_file: ProjectIndexMovedFile, content: str) -> Path:
+    file_path = tmp_path / moved_file.new_path
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    file_path.write_text(content, encoding="utf-8")
+    return file_path
+
+
+@pytest.mark.asyncio
+async def test_plan_moved_file_content_records_and_skips_a_set_once_permalink_rewrite(
+    config_home: Path,
+    tmp_path: Path,
+    logged_warnings: list[str],
+) -> None:
+    """A governed project records the violation and then does not do the rewrite."""
+    _govern("governed-project")
+    moved_file = _moved_file()
+    file_path = _write_moved_note(
+        tmp_path,
+        moved_file,
+        "---\ntype: state\nid: tnd-0001\npermalink: tnd-0001\n"
+        "title: Kept\nsource: human\n---\n\n# Kept\n",
+    )
+    updater = _updater(
+        tmp_path,
+        StaticMoveEntityService(app_config=MovePermalinkConfig()),
+        project_external_id="governed-project",
+    )
+
+    assert await updater.plan_moved_file_content(_session(), moved_file) is None
+
+    assert [line for line in logged_warnings if "'permalink' is set once and cannot change" in line]
+    # No plan means no rewrite: the file is exactly as the human left it.
+    assert "permalink: tnd-0001" in file_path.read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_plan_moved_file_content_still_sets_a_first_permalink_on_a_governed_project(
+    config_home: Path,
+    tmp_path: Path,
+    logged_warnings: list[str],
+) -> None:
+    """Governance stops a permalink *change*, not permalink maintenance as such.
+
+    The positive control for the skip above: same project, same policy, and the
+    only difference is that this note carries no permalink to change. An
+    unrelated violation — ``type: note`` is off-vocabulary — is recorded and
+    changes nothing, which is what makes the skip narrow rather than blanket.
+    """
+    _govern("governed-project")
+    moved_file = _moved_file()
+    _write_moved_note(
+        tmp_path,
+        moved_file,
+        "---\ntype: note\ntitle: Fresh\n---\n\n# Fresh\n",
+    )
+    updater = _updater(
+        tmp_path,
+        StaticMoveEntityService(app_config=MovePermalinkConfig()),
+        project_external_id="governed-project",
+    )
+
+    content_update = await updater.plan_moved_file_content(_session(), moved_file)
+
+    assert content_update is not None
+    assert content_update.permalink == "main/archive/renamed"
+    assert [line for line in logged_warnings if "is not in this project's vocabulary" in line]
+    assert not [line for line in logged_warnings if "'permalink' is set once" in line]
