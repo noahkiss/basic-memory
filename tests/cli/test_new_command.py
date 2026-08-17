@@ -13,6 +13,7 @@ than the off-store one.
 
 import asyncio
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -233,7 +234,11 @@ def test_new_writes_a_permalink_equal_to_the_id() -> None:
 
 
 def test_new_writes_the_type_date_with_its_provenance() -> None:
-    """A date and its provenance travel together; nothing else gets a date."""
+    """A date and its provenance travel together; nothing else gets a date.
+
+    The stamped rung is `inferred`, not `inline` (GAPS U1): bm read this date off
+    a clock, and `inline` claims the source text carried it.
+    """
     project = seed_project(GOVERNED)
 
     result = runner.invoke(
@@ -242,13 +247,276 @@ def test_new_writes_the_type_date_with_its_provenance() -> None:
 
     assert result.exit_code == 0, result.output
     metadata = written_frontmatter(written_file(project, result.stdout))
-    assert metadata["opened"]
-    assert metadata["date-source"] == "inline"
+    assert metadata["opened"] == date.today().isoformat()
+    assert metadata["date-source"] == "inferred"
     assert metadata["date-confidence"] == "day"
     # `date-ref` is legal on the transcript and git rungs only; the checker
-    # rejects it on `inline`, so the verb must never volunteer one.
+    # rejects it on `inferred`, so the verb must never volunteer one.
     assert "date-ref" not in metadata
     assert metadata["status"] == "open"
+
+
+# --- Dates the writer states (GAPS U1) ---
+
+
+def test_new_writes_a_stated_event_date_and_its_source() -> None:
+    """A finding can carry the day its subject happened, not the day it was filed.
+
+    This is U1's whole point: before it, a decision taken twelve days earlier was
+    written with today's date and `date-source: inline` to assert it came from the
+    source text.
+    """
+    project = seed_project(GOVERNED)
+
+    result = runner.invoke(
+        app,
+        [
+            "new",
+            "finding",
+            "Backups Failed",
+            "-b",
+            "Under a memory limit.",
+            "--event-date",
+            "2026-08-05",
+            "--date-source",
+            "inline",
+            "--date-confidence",
+            "exact",
+            "-p",
+            GOVERNED,
+            "--quiet",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    metadata = written_frontmatter(written_file(project, result.stdout))
+    assert metadata["event-date"] == "2026-08-05"
+    assert metadata["date-source"] == "inline"
+    assert metadata["date-confidence"] == "exact"
+
+
+def test_new_writes_a_stated_opened_date_on_a_task() -> None:
+    """`--opened` is the task's own date field, and it takes the same provenance."""
+    project = seed_project(GOVERNED)
+
+    result = runner.invoke(
+        app,
+        [
+            "new",
+            "task",
+            "Move The Backups",
+            "-b",
+            "x",
+            "--opened",
+            "2026-07-26",
+            "--date-source",
+            "mtime",
+            "-p",
+            GOVERNED,
+            "--quiet",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    metadata = written_frontmatter(written_file(project, result.stdout))
+    assert metadata["opened"] == "2026-07-26"
+    assert metadata["date-source"] == "mtime"
+    # Unstated confidence still defaults, because a date without one is refused.
+    assert metadata["date-confidence"] == "day"
+
+
+def test_new_writes_a_stated_review_by_instead_of_the_default() -> None:
+    """`--review-by` beats the `review_months` stamp, and is written exactly once."""
+    project = seed_project(GOVERNED)
+
+    result = runner.invoke(
+        app,
+        ["new", "guide", "How To Restore", "-b", "x", "--review-by", "2026-09-01"]
+        + ["-p", GOVERNED, "--quiet"],
+    )
+
+    assert result.exit_code == 0, result.output
+    path = written_file(project, result.stdout)
+    assert path.read_text(encoding="utf-8").count("review-by:") == 1
+    assert written_frontmatter(path)["review-by"] == "2026-09-01"
+
+
+def test_new_writes_a_date_ref_on_a_ref_bearing_rung() -> None:
+    """`git` and `transcript` point at evidence, so `--date-ref` records which."""
+    project = seed_project(GOVERNED)
+
+    result = runner.invoke(
+        app,
+        [
+            "new",
+            "finding",
+            "Reversed In Review",
+            "-b",
+            "x",
+            "--event-date",
+            "2026-08-05",
+            "--date-source",
+            "git",
+            "--date-ref",
+            "9e4f3c8c",
+            "-p",
+            GOVERNED,
+            "--quiet",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    metadata = written_frontmatter(written_file(project, result.stdout))
+    assert metadata["date-source"] == "git"
+    assert metadata["date-ref"] == "9e4f3c8c"
+
+
+def test_new_refuses_a_stated_date_with_no_date_source() -> None:
+    """A stated date without its rung would get the default one, which is a lie.
+
+    Positive control in the same test: the identical command with
+    `--date-source` writes the record, so the refusal is about the missing rung.
+    """
+    project = seed_project(GOVERNED)
+    stated = ["new", "finding", "Dated", "-b", "x", "--event-date", "2026-08-05"]
+
+    result = runner.invoke(app, [*stated, "-p", GOVERNED])
+
+    assert result.exit_code == 1
+    assert "--date-source is required with a stated date" in result.stderr
+    assert "event-date" in result.stderr
+    assert result.stdout.strip() == ""
+    assert list((project.path / "findings").glob("*.md")) == []
+
+    allowed = runner.invoke(app, [*stated, "--date-source", "inline", "-p", GOVERNED, "--quiet"])
+    assert allowed.exit_code == 0, allowed.output
+    assert written_frontmatter(written_file(project, allowed.stdout))["event-date"] == "2026-08-05"
+
+
+def test_new_refuses_a_date_flag_the_type_does_not_carry() -> None:
+    """`--opened` is a task's date field; a finding uses `event-date` (§2)."""
+    project = seed_project(GOVERNED)
+
+    result = runner.invoke(
+        app,
+        ["new", "finding", "Wrong Field", "-b", "x", "--opened", "2026-08-05"]
+        + ["--date-source", "inline", "-p", GOVERNED],
+    )
+
+    assert result.exit_code == 1
+    assert "--opened writes 'opened', which only a task carries" in result.stderr
+    assert "this record is a finding" in result.stderr
+    assert result.stdout.strip() == ""
+    assert list((project.path / "findings").glob("*.md")) == []
+
+
+def test_new_refuses_a_review_by_on_a_type_that_has_none() -> None:
+    """`review-by` belongs to a finding and a guide; a state is kept current instead."""
+    seed_project(GOVERNED)
+
+    result = runner.invoke(
+        app, ["new", "state", "Now", "-b", "x", "--review-by", "2026-09-01", "-p", GOVERNED]
+    )
+
+    assert result.exit_code == 1
+    assert "--review-by writes 'review-by', which only a finding or guide carries" in result.stderr
+    assert "this record is a state" in result.stderr
+    assert result.stdout.strip() == ""
+
+
+def test_new_refuses_provenance_on_a_type_with_no_date_field() -> None:
+    """There is nowhere to put a date on a guide, so there is nothing to source."""
+    seed_project(GOVERNED)
+
+    result = runner.invoke(
+        app, ["new", "guide", "How To", "-b", "x", "--date-source", "inline", "-p", GOVERNED]
+    )
+
+    assert result.exit_code == 1
+    assert "--date-source records where a date came from" in result.stderr
+    assert "a guide carries no date field" in result.stderr
+    assert result.stdout.strip() == ""
+
+
+def test_new_refuses_a_malformed_date() -> None:
+    """A date is `YYYY-MM-DD`, and a day the calendar does not have is not one."""
+    seed_project(GOVERNED)
+
+    for value in ("05-08-2026", "2026-8-5", "20260805", "2026-02-30", "yesterday"):
+        result = runner.invoke(
+            app,
+            ["new", "finding", "Bad Date", "-b", "x", "--event-date", value]
+            + ["--date-source", "inline", "-p", GOVERNED],
+        )
+        assert result.exit_code == 1, value
+        assert f"--event-date takes a date as YYYY-MM-DD, got '{value}'" in result.stderr
+        assert result.stdout.strip() == ""
+
+
+def test_new_refuses_a_date_source_off_the_ladder() -> None:
+    """The five rungs are fixed by the schema; `--date-confidence` is the same shape."""
+    seed_project(GOVERNED)
+
+    source = runner.invoke(
+        app,
+        ["new", "finding", "Off Ladder", "-b", "x", "--event-date", "2026-08-05"]
+        + ["--date-source", "vibes", "-p", GOVERNED],
+    )
+    assert source.exit_code == 1
+    assert "--date-source takes one of inline, transcript, git, mtime, inferred" in source.stderr
+
+    confidence = runner.invoke(
+        app,
+        ["new", "task", "Off Ladder", "-b", "x", "--date-confidence", "roughly", "-p", GOVERNED],
+    )
+    assert confidence.exit_code == 1
+    assert "--date-confidence takes one of exact, day, month, unknown" in confidence.stderr
+
+
+def test_new_refuses_a_ref_bearing_rung_with_no_ref_and_a_ref_without_one() -> None:
+    """`--date-ref` and the two rungs that need it are required together, both ways."""
+    seed_project(GOVERNED)
+    stated = ["new", "finding", "Evidence", "-b", "x", "--event-date", "2026-08-05"]
+
+    missing = runner.invoke(app, [*stated, "--date-source", "transcript", "-p", GOVERNED])
+    assert missing.exit_code == 1
+    assert "--date-ref is required" in missing.stderr
+
+    forbidden = runner.invoke(
+        app, [*stated, "--date-source", "inline", "--date-ref", "9e4f3c8c", "-p", GOVERNED]
+    )
+    assert forbidden.exit_code == 1
+    assert "--date-ref points at evidence to re-open" in forbidden.stderr
+
+
+def test_new_writes_a_file_that_ends_with_exactly_one_newline() -> None:
+    """GAPS U2: a record file is line-oriented, whatever the body's own shape is.
+
+    Three bodies that each broke it differently: none, a body with no newline of
+    its own, and a body with several. The relations block is the interesting case
+    — it is the last section a record can have, so it is the one that used to
+    leave the file unterminated.
+    """
+    project = seed_project(GOVERNED)
+
+    for title, body in (("No Body", ""), ("Bare", "one line"), ("Padded", "one line\n\n\n")):
+        result = runner.invoke(app, ["new", "state", title, "-b", body, "-p", GOVERNED, "--quiet"])
+        assert result.exit_code == 0, result.output
+        written = written_file(project, result.stdout).read_bytes()
+        assert written.endswith(b"\n"), (title, written[-40:])
+        assert not written.endswith(b"\n\n"), (title, written[-40:])
+
+    # A record whose last section is `## Relations` — the shape U2 reproduced on.
+    first = runner.invoke(app, ["new", "finding", "Old", "-b", "a", "-p", GOVERNED, "--quiet"])
+    assert first.exit_code == 0, first.output
+    second = runner.invoke(
+        app,
+        ["new", "finding", "New", "-b", "b", "--supersedes", first.stdout.split()[0]]
+        + ["-p", GOVERNED, "--quiet"],
+    )
+    assert second.exit_code == 0, second.output
+    successor = written_file(project, second.stdout).read_bytes()
+    assert successor.endswith(b"]]\n"), successor[-40:]
 
 
 def test_new_defaults_source_to_cli() -> None:

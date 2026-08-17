@@ -6,9 +6,13 @@ are load-bearing and none of them may be relaxed later:
 - **`permalink` equals `id`, byte-for-byte** (`.forked/schema.md` §2). Edges bind
   to the permalink, so an id that is not also the permalink makes `[[tnd-…]]`
   land as a dangling relation and the record unreachable by its own name.
-- **`review-by` is not written here.** `prepare_accepted_note_create` stamps it
-  from the project's `review_months` (GAPS W5 item 1). Stamping it twice would
-  validate one value and store another.
+- **`review-by` is not invented here.** Absent `--review-by`,
+  `prepare_accepted_note_create` stamps it from the project's `review_months`
+  (GAPS W5 item 1). Stamping it twice would validate one value and store another.
+- **A date the writer states beats a date bm stamps, and bm says which it is.**
+  `--opened` / `--event-date` require `--date-source`; with no date flag the verb
+  stamps today and declares it `inferred`, because the fidelity ladder has no rung
+  for a clock reading and the highest rung is a lie (GAPS U1).
 - **An unknown `--type` files an `inbox` record**, carrying `proposed-type`
   (GAPS W4). Agents propose a type; only a human enables one. Rejecting the
   write instead would send the content nowhere, which is the drop the escape
@@ -27,7 +31,9 @@ D11).
 
 from __future__ import annotations
 
+import re
 import sys
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date
 from typing import Annotated, Optional
@@ -38,7 +44,12 @@ from basic_memory.cli.app import app
 from basic_memory.cli.notices import emit_notices
 from basic_memory.cli.runner import run_with_cleanup
 from basic_memory.cli.scope import ReadScope
-from basic_memory.vocabulary.glossary import PICKING_QUESTIONS
+from basic_memory.vocabulary.glossary import (
+    DATE_CONFIDENCES,
+    DATE_SOURCES,
+    PICKING_QUESTIONS,
+    REF_BEARING_SOURCES,
+)
 
 # Static affordance (GAPS W19 item 5). Static is the requirement, not a
 # shortcut: a hint that appears only sometimes teaches the surface unreliably.
@@ -51,20 +62,44 @@ STDIN_BODY = "-"
 # (`.forked/schema.md` §4 — status is one of the four mutable things).
 INITIAL_TASK_STATUS = "open"
 
-# Where a `bm new` date came from, and how precisely it is known. `inline`
-# because the writer stated it at the prompt rather than a tool deriving it, and
-# `day` because that is the granularity a calendar date carries. Not `inferred`:
-# that rung means nobody stated the date, and `bm doctor` reports every inferred
-# date for human review — stamping it here would put the whole corpus in that
-# pile on day one.
-DATE_SOURCE = "inline"
-DATE_CONFIDENCE = "day"
+# Where a date bm invented came from, when the writer stated none. `inferred` is
+# the ladder's lowest rung and the only truthful one here: the ladder has no rung
+# for "read off the clock", and `inline` — what this verb used to write
+# unconditionally — claims the source text carried the date, which is precisely
+# the laundering the ladder exists to prevent (GAPS U1).
+#
+# The cost is deliberate. `bm doctor`'s hygiene group reports every inferred date
+# for human review, so a record written with no date flags lands in that pile.
+# That is the correct signal now that `--opened` / `--event-date` with
+# `--date-source` can state a real date instead; before them the flags did not
+# exist and the pile would have been the whole corpus.
+DEFAULT_DATE_SOURCE = "inferred"
+
+# `day` whichever rung the date came from: confidence is how *precise* the date
+# is, not how it was learned, and a calendar date is precise to the day.
+DEFAULT_DATE_CONFIDENCE = "day"
 
 # The one date field each type carries, keyed by type (`.forked/schema.md` §2).
 # `profile.since` is deliberately absent: it is optional, and a `since` this verb
 # invented would claim a start date the writer never gave. `guide`, `state` and
 # `inbox` have no date field at all — there is physically nowhere to put one.
 _TYPE_DATE_FIELD = {"task": "opened", "finding": "event-date"}
+
+# Which flag writes which frontmatter key, and the types that carry it (§2/§3).
+#
+# `--review-by` sits here with the other two but takes no provenance: it is an
+# appointment the writer sets for the future, not a claim about when something
+# happened, so there is nothing to say about where it came from.
+_DATE_FLAGS: Mapping[str, tuple[str, frozenset[str]]] = {
+    "--opened": ("opened", frozenset({"task"})),
+    "--event-date": ("event-date", frozenset({"finding"})),
+    "--review-by": ("review-by", frozenset({"finding", "guide"})),
+}
+
+# The shape the schema's date fields take. The regex alone is not enough —
+# `2026-02-30` matches it and is not a day — and `date.fromisoformat` alone is not
+# either, because it also accepts `20260817` and `2026-W33-1`.
+_ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 
 def fail(message: str) -> typer.Exit:
@@ -85,6 +120,138 @@ def type_help() -> str:
     """
     choices = ", ".join(f"{name} ({question})" for name, question in PICKING_QUESTIONS.items())
     return f"What kind of record this is: {choices}."
+
+
+# --- Dates the writer states, rather than dates bm invents (GAPS U1) ---
+
+
+@dataclass(frozen=True, slots=True)
+class DateOptions:
+    """The date flags one `bm new` invocation carried, unvalidated."""
+
+    opened: Optional[str] = None
+    event_date: Optional[str] = None
+    review_by: Optional[str] = None
+    date_source: Optional[str] = None
+    date_confidence: Optional[str] = None
+    date_ref: Optional[str] = None
+
+
+def is_iso_date(value: str) -> bool:
+    """True for a real ``YYYY-MM-DD`` calendar date, and nothing else."""
+    if not _ISO_DATE.fullmatch(value):
+        return False
+    try:
+        date.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
+
+
+def validate_date_flags(options: DateOptions) -> None:
+    """Refuse a malformed date or an undeclared ladder value before anything is written.
+
+    Checked at the flag level rather than in the checker so the message names the
+    *flag* the writer typed. Both ladders are read from `vocabulary/glossary.py`,
+    which is the schema's one copy of them — a second list here is what U1's
+    prose duplication already proved goes stale.
+    """
+    for flag, value in (
+        ("--opened", options.opened),
+        ("--event-date", options.event_date),
+        ("--review-by", options.review_by),
+    ):
+        if value is not None and not is_iso_date(value):
+            raise ValueError(f"{flag} takes a date as YYYY-MM-DD, got '{value}'")
+
+    for flag, value, allowed in (
+        ("--date-source", options.date_source, DATE_SOURCES),
+        ("--date-confidence", options.date_confidence, DATE_CONFIDENCES),
+    ):
+        if value is not None and value not in allowed:
+            raise ValueError(f"{flag} takes one of {', '.join(allowed)}, got '{value}'")
+
+
+def date_fields(note_type: str, options: DateOptions, *, today: date) -> dict[str, str]:
+    """The date and provenance keys a record of ``note_type`` carries, in key order.
+
+    Raises ValueError for a flag the type does not carry — a date has exactly one
+    legal name per type, and there is physically nowhere to put one on a guide, a
+    state, or an inbox record (§2) — and for a stated date with no
+    `--date-source`, which is the whole point of being allowed to state a date.
+    """
+    for flag, value in (
+        ("--opened", options.opened),
+        ("--event-date", options.event_date),
+        ("--review-by", options.review_by),
+    ):
+        if value is None:
+            continue
+        key, owners = _DATE_FLAGS[flag]
+        if note_type not in owners:
+            carriers = " or ".join(sorted(owners))
+            raise ValueError(
+                f"{flag} writes '{key}', which only a {carriers} carries; "
+                f"this record is a {note_type}"
+            )
+
+    date_field = _TYPE_DATE_FIELD.get(note_type)
+    fields: dict[str, str] = {}
+
+    if date_field is None:
+        for flag, value in (
+            ("--date-source", options.date_source),
+            ("--date-confidence", options.date_confidence),
+            ("--date-ref", options.date_ref),
+        ):
+            if value is not None:
+                raise ValueError(
+                    f"{flag} records where a date came from, and a {note_type} "
+                    f"carries no date field"
+                )
+    else:
+        stated = options.opened if date_field == "opened" else options.event_date
+
+        # Trigger: a stated date with no --date-source.
+        # Why: the flag exists so a migrated record can say the date came from the
+        #     source text rather than from bm's clock. Accepting a stated date
+        #     without it would stamp the default rung on a date the writer *did*
+        #     know the origin of, which reopens U1 through the other door.
+        # Outcome: refuse, naming the field and the ladder.
+        if stated is not None and options.date_source is None:
+            raise ValueError(
+                f"--date-source is required with a stated date: it is what says where "
+                f"'{date_field}' came from. Allowed values: {', '.join(DATE_SOURCES)}"
+            )
+
+        source = options.date_source or DEFAULT_DATE_SOURCE
+        if source in REF_BEARING_SOURCES and options.date_ref is None:
+            raise ValueError(
+                f"--date-source '{source}' names re-openable evidence, so --date-ref is "
+                "required: a session id with a line for a transcript, a commit sha for git"
+            )
+        if options.date_ref is not None and source not in REF_BEARING_SOURCES:
+            allowed = " or ".join(sorted(REF_BEARING_SOURCES))
+            raise ValueError(
+                f"--date-ref points at evidence to re-open, and '{source}' points at none; "
+                f"it is allowed only with --date-source {allowed}"
+            )
+
+        # The provenance triple travels with the date and never without it: a date
+        # whose origin is unrecorded cannot be re-opened (§2), and the checker
+        # rejects either half alone.
+        fields[date_field] = stated if stated is not None else today.isoformat()
+        fields["date-source"] = source
+        fields["date-confidence"] = options.date_confidence or DEFAULT_DATE_CONFIDENCE
+        if options.date_ref is not None:
+            fields["date-ref"] = options.date_ref
+
+    # After the triple, which is the order `.forked/schema.md` §3 writes it in.
+    # Absent, the write path stamps it from the project's `review_months`
+    # (GAPS W5 item 1); stated here, that stamp stands down.
+    if options.review_by is not None:
+        fields["review-by"] = options.review_by
+    return fields
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,23 +291,17 @@ def build_frontmatter(
     note_type: str,
     proposed_type: Optional[str],
     area: Optional[str],
-    today: date,
+    dates: Mapping[str, str],
 ) -> dict[str, str]:
     """The frontmatter block a new record carries, in a fixed key order.
 
     Fixed order is a GAPS W3 requirement: the history compares files byte for
     byte, and a key order that varies makes every write a diff to read past.
+
+    ``dates`` comes from `date_fields`, already validated against ``note_type``.
     """
     fields: dict[str, str] = {"id": record_id, "permalink": record_id, "source": source}
-
-    date_field = _TYPE_DATE_FIELD.get(note_type)
-    if date_field is not None:
-        # The provenance triple travels with the date and never without it: a
-        # date whose origin is unrecorded cannot be re-opened (§2), and the
-        # checker rejects either half alone.
-        fields[date_field] = today.isoformat()
-        fields["date-source"] = DATE_SOURCE
-        fields["date-confidence"] = DATE_CONFIDENCE
+    fields.update(dates)
 
     if area is not None:
         fields["area"] = area
@@ -160,6 +321,7 @@ async def create_record(
     source: str,
     area: Optional[str],
     supersedes: Optional[str],
+    dates: DateOptions,
 ) -> NewRecordOutcome:
     """Allocate an id, render the record, and write it through the local stack.
 
@@ -213,6 +375,12 @@ async def create_record(
             requested_type, vocabulary, project=project.name
         )
 
+        # Resolved before an id is drawn, for E2's reason: a date flag the record's
+        # type cannot carry is a refusal, and the type is only known once the
+        # escape hatch has had its say — `--opened` on an undeclared type files as
+        # `inbox`, which carries no date at all (GAPS U1).
+        stamped_dates = date_fields(note_type, dates, today=date.today())
+
         record_id = await allocate_record_id(session, project.project_id)
 
     file_path = record_path(note_type, record_id, title)
@@ -224,7 +392,7 @@ async def create_record(
             note_type=note_type,
             proposed_type=proposed_type,
             area=area,
-            today=date.today(),
+            dates=stamped_dates,
         ),
         body,
         supersedes=supersedes,
@@ -282,6 +450,64 @@ def new(
         Optional[str],
         typer.Option("--supersedes", help="The finding this one replaces, by id."),
     ] = None,
+    opened: Annotated[
+        Optional[str],
+        typer.Option(
+            "--opened",
+            metavar="YYYY-MM-DD",
+            help="The day a task was opened. Needs --date-source. Defaults to today.",
+        ),
+    ] = None,
+    event_date: Annotated[
+        Optional[str],
+        typer.Option(
+            "--event-date",
+            metavar="YYYY-MM-DD",
+            help="The day a finding's subject happened. Needs --date-source. Defaults to today.",
+        ),
+    ] = None,
+    review_by: Annotated[
+        Optional[str],
+        typer.Option(
+            "--review-by",
+            metavar="YYYY-MM-DD",
+            help=(
+                "The day a finding or guide needs a second look. "
+                "Defaults to the project's review_months out from today."
+            ),
+        ),
+    ] = None,
+    date_source: Annotated[
+        Optional[str],
+        typer.Option(
+            "--date-source",
+            help=(
+                f"How you know the date: {', '.join(DATE_SOURCES)}. Required whenever "
+                f"you state one; defaults to '{DEFAULT_DATE_SOURCE}' for the date bm stamps."
+            ),
+        ),
+    ] = None,
+    date_confidence: Annotated[
+        Optional[str],
+        typer.Option(
+            "--date-confidence",
+            help=(
+                f"How precise the date is: {', '.join(DATE_CONFIDENCES)}. "
+                f"Defaults to '{DEFAULT_DATE_CONFIDENCE}'."
+            ),
+        ),
+    ] = None,
+    date_ref: Annotated[
+        Optional[str],
+        typer.Option(
+            "--date-ref",
+            help=(
+                "The evidence the date came from: a commit sha for git, "
+                "<session-id>#L<line> for a transcript. Required for those two, "
+                "and refused for the other rungs."
+            ),
+        ),
+    ] = None,
     project: Annotated[
         Optional[str],
         typer.Option("--project", "-p", help="Project to write to. Defaults to .bm.yml."),
@@ -297,6 +523,12 @@ def new(
     `[[tnd-…]]` resolve to it. A type this project does not declare is not an
     error: the record is filed as `inbox` proposing that type, for a human to
     promote.
+
+    Dates: state the real one when you know it — `--opened` on a task,
+    `--event-date` on a finding — and say where it came from with
+    `--date-source`. With no date flag the record gets today's date declared
+    `inferred`, which is what puts it in `bm doctor`'s review pile rather than
+    passing a guess off as a date read from the source.
     """
     from basic_memory.cli.record_notes import DEFAULT_SOURCE, write_project_name
     from basic_memory.vocabulary.ids import is_record_id
@@ -308,6 +540,21 @@ def new(
     # Outcome: refuse before writing, naming the shape expected.
     if supersedes is not None and not is_record_id(supersedes):
         raise fail(f"Error: --supersedes takes a record id, got '{supersedes}'")
+
+    dates = DateOptions(
+        opened=opened,
+        event_date=event_date,
+        review_by=review_by,
+        date_source=date_source,
+        date_confidence=date_confidence,
+        date_ref=date_ref,
+    )
+    # A malformed date and an undeclared ladder value are both flag errors, so
+    # they are refused here rather than after a database is opened.
+    try:
+        validate_date_flags(dates)
+    except ValueError as exc:
+        raise fail(f"Error: {exc}")
 
     # An unusable marker and an empty registry both arrive as ValueError, and
     # both are addressing failures — the request names no project that exists.
@@ -326,6 +573,7 @@ def new(
                 source=source if source is not None else DEFAULT_SOURCE,
                 area=area,
                 supersedes=supersedes,
+                dates=dates,
             )
         )
     except typer.Exit:

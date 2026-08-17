@@ -37,6 +37,40 @@ def type_choice(name: str) -> str:
     return f"{name} ({question})" if question else name
 
 
+# The relation that carries supersession, and the only direction it is stored in:
+# the successor owns the edge and the predecessor is never touched
+# (`.forked/schema.md` §5/§12). Here for the same reason the ladders below are —
+# it is schema vocabulary, not a project's, and four modules were spelling it out
+# separately before GAPS U3 needed a fifth.
+SUPERSEDES_RELATION = "supersedes"
+
+
+# --- The date-provenance ladders (`.forked/schema.md` §2) ---
+#
+# Fixed by the schema, not by a project's `vocabulary.yml`: a project declares
+# which *types*, statuses, areas and extra fields it allows, and these two are
+# neither. They live here rather than in `checker.py` because this module is the
+# one every surface that has to *teach* them already imports — `bm types`, the
+# `bm new` flags, and the checker's rejection messages — and it is stdlib-only,
+# so the fast CLI path can read them without pulling PyYAML.
+#
+# Ordered highest fidelity first: `inline` means the source text carried the
+# date, `inferred` means nobody stated it and somebody guessed.
+DATE_SOURCES: tuple[str, ...] = ("inline", "transcript", "git", "mtime", "inferred")
+
+# Ordered most precise first.
+DATE_CONFIDENCES: tuple[str, ...] = ("exact", "day", "month", "unknown")
+
+# The two rungs that point at re-openable evidence, and so must carry a
+# `date-ref`. Forbidden on the other three: they point at nothing to open.
+REF_BEARING_SOURCES: frozenset[str] = frozenset({"transcript", "git"})
+
+
+def _or_listed(values: tuple[str, ...]) -> str:
+    """Join a closed value list for prose: ``a, b, or c``."""
+    return f"{', '.join(values[:-1])}, or {values[-1]}"
+
+
 # --- What each type is for ---
 
 # One or two sentences, in the register `bm types` prints them in: what you do
@@ -128,12 +162,15 @@ FIELD_MEANINGS: Mapping[str, str] = {
     ),
     "event-date": "The day the thing you learned actually happened.",
     "since": "The day this subject started, when you know it.",
+    # Both value lists are interpolated rather than spelled out: this prose used
+    # to carry its own copy of each ladder, which is exactly the second list that
+    # drifts (GAPS U1).
     "date-source": (
-        "How you know the date: inline, transcript, git, mtime, or inferred. "
+        f"How you know the date: {_or_listed(DATE_SOURCES)}. "
         "Required whenever the record carries a date."
     ),
     "date-confidence": (
-        "How precise the date is: exact, day, month, or unknown. "
+        f"How precise the date is: {_or_listed(DATE_CONFIDENCES)}. "
         "Required whenever the record carries a date."
     ),
     "date-ref": (

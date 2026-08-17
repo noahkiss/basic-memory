@@ -39,6 +39,10 @@ from pydantic import computed_field
 
 from basic_memory.project_marker import resolve_cli_project
 from basic_memory.schemas.base import Entity as EntitySchema
+
+# Re-exported: the schema's supersession relation name lives with the rest of its
+# fixed vocabulary, and the two record-writing verbs import it from this module.
+from basic_memory.vocabulary.glossary import SUPERSEDES_RELATION
 from basic_memory.vocabulary.ids import (
     MAX_ID_ATTEMPTS,
     SEPARATOR,
@@ -56,10 +60,6 @@ if TYPE_CHECKING:  # pragma: no cover
 
 # The heading a record's relations live under (`.forked/schema.md` §5/§12).
 RELATIONS_HEADING = "## Relations"
-
-# The relation that carries supersession. One direction only: the successor owns
-# the edge and the predecessor is never touched.
-SUPERSEDES_RELATION = "supersedes"
 
 # The type an undeclared proposal is filed as — W4's escape hatch, and the one
 # type a governed project cannot do without (GAPS E2).

@@ -16,7 +16,13 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, Literal
 
-from basic_memory.vocabulary.glossary import type_choice
+from basic_memory.vocabulary.glossary import (
+    DATE_CONFIDENCES,
+    DATE_SOURCES,
+    REF_BEARING_SOURCES,
+    SUPERSEDES_RELATION,
+    type_choice,
+)
 from basic_memory.vocabulary.model import Vocabulary
 
 type Severity = Literal["error", "advisory"]
@@ -62,7 +68,7 @@ _REQUIRED_COMMON: tuple[str, ...] = ("id", "permalink", "title", "source")
 # Supersession belongs to one type (schema.md §5/§12), and it is a `## Relations`
 # line rather than a frontmatter key — so this rule reads the record's relation
 # types, which only a caller that parsed the body has.
-_SUPERSEDES_RELATION = "supersedes"
+_SUPERSEDES_RELATION = SUPERSEDES_RELATION
 _SUPERSEDES_TYPES: frozenset[str] = frozenset({"finding"})
 
 # Rules a caller cannot decide from this write's frontmatter alone. Public
@@ -82,10 +88,14 @@ _REQUIRED_BY_TYPE: Mapping[str, tuple[str, ...]] = {
 }
 
 _PROVENANCE: tuple[str, ...] = ("date-source", "date-confidence", "date-ref")
-_DATE_SOURCES: tuple[str, ...] = ("inline", "transcript", "git", "mtime", "inferred")
-_DATE_CONFIDENCES: tuple[str, ...] = ("exact", "day", "month", "unknown")
-# The two rungs that point at re-openable evidence, and so must carry a ref.
-_REF_BEARING_SOURCES: frozenset[str] = frozenset({"transcript", "git"})
+
+# The two ladders and the ref rule live in `glossary.py`, which every surface that
+# teaches them already imports — `bm types`, `bm new`'s flags, and the messages
+# below. Aliased rather than re-declared: three copies of a closed value list is
+# how one of them ends up stale (GAPS U1).
+_DATE_SOURCES = DATE_SOURCES
+_DATE_CONFIDENCES = DATE_CONFIDENCES
+_REF_BEARING_SOURCES = REF_BEARING_SOURCES
 
 _SCHEMA_DATE_FIELDS: tuple[str, ...] = ("opened", "event-date", "since", "review-by", "not-before")
 

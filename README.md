@@ -73,7 +73,7 @@ id. `bm` is the short name for `basic-memory`; both run the same commands.
 | Command | What it does |
 |---|---|
 | `bm new <type> "<title>"` | Write a record and print its id. A type this project does not declare is filed as an inbox note proposing it — unless the project declares no `inbox` type, when the write is refused and says so. |
-| `bm ls` | List records: id, type, status, title. Filter with `--type`, `--status`, `--area`. |
+| `bm ls` | List records: id, type, status, title. Filter with `--type`, `--status`, `--area`. A record some other record supersedes reads `superseded` in the status column. |
 | `bm show <id>` | Print a record's file, exactly as it is on disk. |
 | `bm path <id>` | Print a record's file path and nothing else, for `$EDITOR "$(bm path <id>)"`. |
 | `bm edit <id>` | Change a record that is kept current: a guide, profile, state, or inbox note. `--set name=value` writes a field the project declares, on a profile. |
@@ -88,6 +88,33 @@ id. `bm` is the short name for `basic-memory`; both run the same commands.
 | `bm doctor` | Check the notes against the index and report what needs a person. |
 | `bm status` | Report what is indexed and what is not. |
 | `bm project list` | List projects. `project add` creates one; `project info` describes one. |
+
+### Dates on a record
+
+A record that carries a date carries the two fields that say where the date came
+from, so a guess is never mistaken for a fact.
+
+| Flag | On | What it means |
+|---|---|---|
+| `--opened YYYY-MM-DD` | task | The day the task was opened. |
+| `--event-date YYYY-MM-DD` | finding | The day the thing you learned happened. |
+| `--review-by YYYY-MM-DD` | finding, guide | The day it needs a second look. Defaults to the project's `review_months` out from today. |
+| `--date-source` | task, finding | How you know the date: `inline`, `transcript`, `git`, `mtime`, `inferred`. **Required whenever you state a date.** |
+| `--date-confidence` | task, finding | How precise it is: `exact`, `day`, `month`, `unknown`. Defaults to `day`. |
+| `--date-ref` | task, finding | The evidence: a commit sha for `git`, `<session-id>#L<line>` for `transcript`. Required for those two rungs, refused for the rest. |
+
+State the real date when you know it:
+
+```bash
+bm new finding "Backups failed under the memory limit" \
+    --event-date 2026-08-05 --date-source inline --source "NOTES.md#L12-L20"
+```
+
+With no date flag the record gets today's date declared `date-source: inferred`,
+which `bm doctor` reports for review. That is deliberate: bm read the date off a
+clock, not out of your source, and the record says so. `bm new` refuses a date
+flag the record's type does not carry — a guide, a state, and an inbox note have
+no date field at all.
 
 Notes live under `~/.basic-memory/store`, which is a local git repository. Every
 write there is committed, which is what gives `bm undo` something to put back. A
