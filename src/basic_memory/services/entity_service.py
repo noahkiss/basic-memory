@@ -188,11 +188,16 @@ class EntityService(BaseService[EntityModel]):
         file_path: str,
         session: AsyncSession,
         previous: Mapping[str, Any] | None = None,
+        relation_types: Sequence[str] | None = None,
     ) -> list[Violation]:
         """Record, never refuse, what one indexed file breaks.
 
         ``previous`` is the record's frontmatter before this write, and ``None``
         means a creation; it feeds the set-once rule and nothing else.
+
+        ``relation_types`` carries the record's outgoing relation types, which
+        the supersession rule reads because that rule lives in ``## Relations``.
+        Every caller here holds the parsed markdown, so every caller passes them.
 
         ``session`` is required, not optional: the lookup runs inside a mutator's
         open transaction, and the one-connection pool deadlocks if this opens a
@@ -204,6 +209,7 @@ class EntityService(BaseService[EntityModel]):
             mode="record",
             file_path=file_path,
             previous=previous,
+            relation_types=relation_types,
         )
 
     async def detect_file_path_conflicts(
@@ -684,6 +690,7 @@ class EntityService(BaseService[EntityModel]):
                 markdown.frontmatter.metadata,
                 file_path=file_path.as_posix(),
                 session=active_session,
+                relation_types=[relation.type for relation in markdown.relations],
             )
 
             # Use UPSERT to handle conflicts cleanly
@@ -732,6 +739,7 @@ class EntityService(BaseService[EntityModel]):
                 file_path=file_path.as_posix(),
                 session=active_session,
                 previous=db_entity.entity_metadata,
+                relation_types=[relation.type for relation in markdown.relations],
             )
 
             # Observations are owned by the markdown file, so re-indexing replaces the old set.
@@ -864,6 +872,7 @@ class EntityService(BaseService[EntityModel]):
                     file_path=entity.file_path,
                     session=active_session,
                     previous=entity.entity_metadata,
+                    relation_types=[relation.type for relation in markdown.relations],
                 )
 
             # Clear existing relations first

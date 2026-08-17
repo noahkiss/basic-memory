@@ -145,7 +145,8 @@ def render(project_name: str, vocabulary: Vocabulary) -> str:
     sections.append(
         [
             "review-by",
-            f"  Defaults to {vocabulary.review_months} months out on a finding and on a guide.",
+            f"  A finding or a guide written without one gets "
+            f"{vocabulary.review_months} months out.",
         ]
     )
     sections.append(render_declared_fields(vocabulary))

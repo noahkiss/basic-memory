@@ -11,7 +11,7 @@ Field names, requiredness, and the set-once list are fixed by
 """
 
 import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, Literal
@@ -54,6 +54,12 @@ _TYPE_ONLY_FIELDS: Mapping[str, frozenset[str]] = {
 }
 
 _REQUIRED_COMMON: tuple[str, ...] = ("id", "permalink", "title", "source")
+
+# Supersession belongs to one type (schema.md §5/§12), and it is a `## Relations`
+# line rather than a frontmatter key — so this rule reads the record's relation
+# types, which only a caller that parsed the body has.
+_SUPERSEDES_RELATION = "supersedes"
+_SUPERSEDES_TYPES: frozenset[str] = frozenset({"finding"})
 
 # Required beyond the common four, by type.
 _REQUIRED_BY_TYPE: Mapping[str, tuple[str, ...]] = {
@@ -109,11 +115,16 @@ def check_frontmatter(
     vocabulary: Vocabulary,
     *,
     previous: Mapping[str, Any] | None = None,
+    relation_types: Sequence[str] | None = None,
 ) -> list[Violation]:
     """Return every violation in ``metadata``, in a fixed order.
 
     ``previous`` is the record's frontmatter before this write; ``None`` means a
     creation. It feeds the set-once rule and nothing else.
+
+    ``relation_types`` is the record's outgoing relation types. ``None`` means
+    the caller has not parsed them — not that the record has none — and the one
+    rule that reads them is skipped rather than guessed.
     """
     violations: list[Violation] = []
 
@@ -177,7 +188,10 @@ def check_frontmatter(
     # --- 5. Fields that belong to another type ---
     violations.extend(_check_type_only_fields(metadata, record_type, date_field))
 
-    # --- 6. Fields this type requires ---
+    # --- 6. Supersession, which only a finding has ---
+    violations.extend(_check_supersedes(record_type, relation_types))
+
+    # --- 7. Fields this type requires ---
     for name in _REQUIRED_BY_TYPE.get(record_type, ()):
         if not _present(metadata, name):
             violations.append(
@@ -189,9 +203,9 @@ def check_frontmatter(
                 )
             )
 
-    # --- 7. Date values ---
+    # --- 8. Date values ---
     # Declared date fields are checked here too, so `invalid-date` is emitted from
-    # one place; step 10 then only has enum values left to judge.
+    # one place; step 11 then only has enum values left to judge.
     date_keys = [*_SCHEMA_DATE_FIELDS, *_declared_date_fields(vocabulary)]
     for name in date_keys:
         if _present(metadata, name) and not _is_iso_date(metadata[name]):
@@ -207,7 +221,7 @@ def check_frontmatter(
                 )
             )
 
-    # --- 8. The provenance triple, which exists only alongside a date ---
+    # --- 9. The provenance triple, which exists only alongside a date ---
     if date_field is not None and _present(metadata, date_field):
         violations.extend(_check_provenance(metadata, date_field))
     else:
@@ -225,11 +239,11 @@ def check_frontmatter(
                     )
                 )
 
-    # --- 9. Area ---
+    # --- 10. Area ---
     if _present(metadata, "area") and metadata["area"] not in vocabulary.areas:
         violations.append(_unknown_area(metadata["area"], vocabulary))
 
-    # --- 10. Declared optional fields ---
+    # --- 11. Declared optional fields ---
     for name, declared in vocabulary.fields.items():
         if declared.kind != "enum" or not _present(metadata, name):
             continue
@@ -246,7 +260,7 @@ def check_frontmatter(
                 )
             )
 
-    # --- 11. Unknown keys — flagged, never rejected (GAPS W4) ---
+    # --- 12. Unknown keys — flagged, never rejected (GAPS W4) ---
     known = _SCHEMA_KEYS | _HOUSEKEEPING_KEYS | set(vocabulary.fields)
     for name in metadata:
         if name not in known:
@@ -262,7 +276,7 @@ def check_frontmatter(
                 )
             )
 
-    # --- 12. Set-once fields ---
+    # --- 13. Set-once fields ---
     if previous is not None:
         violations.extend(_check_set_once(metadata, previous, record_type))
 
@@ -354,6 +368,36 @@ def _check_type_only_fields(
                 )
             )
     return violations
+
+
+def _check_supersedes(record_type: str, relation_types: Sequence[str] | None) -> list[Violation]:
+    """Report a ``supersedes`` relation on a type that has no supersession.
+
+    ``None`` means the caller did not parse the record's relations — the move
+    planner rewrites a path and no relation line — so the rule is undecidable
+    and is skipped. Treating it as "no relations" would clear rows a real write
+    recorded.
+
+    The match is case-folded: ``Supersedes [[X]]`` reads as the same relation to
+    a person, and letting capitalisation defeat the rule is a hole, not a rule.
+    """
+    if relation_types is None or record_type in _SUPERSEDES_TYPES:
+        return []
+    if not any(name.strip().lower() == _SUPERSEDES_RELATION for name in relation_types):
+        return []
+    return [
+        Violation(
+            rule="supersedes-not-on-type",
+            field=_SUPERSEDES_RELATION,
+            message=(
+                f"Only a finding supersedes another record, and this is a {record_type}. "
+                "A finding is never edited, so a correction is a new finding that "
+                "supersedes the old one. A task is closed with `bm done`, not superseded; "
+                "a guide, a profile, and a state are edited in place."
+            ),
+            severity="error",
+        )
+    ]
 
 
 def _check_provenance(metadata: Mapping[str, Any], date_field: str) -> list[Violation]:

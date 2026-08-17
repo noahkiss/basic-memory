@@ -122,7 +122,10 @@ FIELD_MEANINGS: Mapping[str, str] = {
     "status": "Where the task stands. The project declares the allowed values.",
     "opened": "The day you wrote the task down.",
     "not-before": "Do not surface this task before this day.",
-    "review-by": "The day this needs a second look. bm fills it in from review_months.",
+    "review-by": (
+        "The day this needs a second look. Leave it out and bm sets it "
+        "review_months out from today."
+    ),
     "event-date": "The day the thing you learned actually happened.",
     "since": "The day this subject started, when you know it.",
     "date-source": (

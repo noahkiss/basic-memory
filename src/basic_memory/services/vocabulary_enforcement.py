@@ -24,7 +24,7 @@ the caller has that id in hand. That also removes the deadlock W4 recorded: the
 funnel can no longer open a second connection because it opens none.
 """
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any, Literal
 
 from loguru import logger
@@ -50,6 +50,7 @@ def enforce_vocabulary(
     mode: VocabularyEnforcementMode,
     file_path: str,
     previous: Mapping[str, Any] | None = None,
+    relation_types: Sequence[str] | None = None,
 ) -> list[Violation]:
     """Check one write's frontmatter against its project's vocabulary.
 
@@ -57,6 +58,10 @@ def enforce_vocabulary(
     means a creation; it feeds the set-once rule and nothing else. Both sides are
     normalized first so a native YAML date on the incoming side and the ISO
     string already stored on the previous side compare equal.
+
+    ``relation_types`` carries the record's outgoing relation types, because one
+    rule — supersession — lives in ``## Relations`` rather than in frontmatter.
+    ``None`` means the caller has not parsed them and that rule is skipped.
 
     Raises ``VocabularyViolationError`` in reject mode when the write breaks a
     rule that blocks. Advisories never block.
@@ -67,6 +72,7 @@ def enforce_vocabulary(
         mode=mode,
         file_path=file_path,
         previous=previous,
+        relation_types=relation_types,
     )
 
 
@@ -77,6 +83,7 @@ def apply_vocabulary(
     mode: VocabularyEnforcementMode,
     file_path: str,
     previous: Mapping[str, Any] | None = None,
+    relation_types: Sequence[str] | None = None,
 ) -> list[Violation]:
     """Apply an already-loaded vocabulary to one write.
 
@@ -94,6 +101,7 @@ def apply_vocabulary(
         normalize_frontmatter_metadata(dict(metadata or {})),
         vocabulary,
         previous=None if previous is None else normalize_frontmatter_metadata(dict(previous)),
+        relation_types=relation_types,
     )
 
     if mode == "reject" and has_errors(violations):

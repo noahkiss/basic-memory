@@ -11,6 +11,7 @@ A project is governed only when ``store/<external_id>/vocabulary.yml`` exists, s
 every test governs the project before its first write.
 """
 
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -18,8 +19,9 @@ import pytest
 import yaml
 from mcp.server.fastmcp.exceptions import ToolError
 
+from basic_memory.file_utils import parse_frontmatter
 from basic_memory.mcp.tools import edit_note, move_note, write_note
-from basic_memory.vocabulary.model import vocabulary_path
+from basic_memory.vocabulary.model import default_review_by, parse_vocabulary, vocabulary_path
 
 # The common four the checker requires, minus the type, plus a permalink equal to
 # the id byte-for-byte. A frontmatter permalink that nothing else claims is
@@ -59,6 +61,23 @@ def govern_project(test_project):
 def written_notes(test_project) -> list[Path]:
     """Every markdown file the project has on disk."""
     return sorted(Path(test_project.path).rglob("*.md"))
+
+
+def stored_frontmatter(test_project, title: str) -> dict[str, Any]:
+    """The frontmatter a write actually left on disk, which is what is judged."""
+    path = Path(test_project.path, "notes", f"{title}.md")
+    return parse_frontmatter(path.read_text(encoding="utf-8"))
+
+
+# A finding needs its date and that date's provenance before `review-by` is the
+# only thing left missing, which is what these tests are about.
+FINDING_FRONTMATTER: dict[str, str] = {
+    **BASE_FRONTMATTER,
+    "type": "finding",
+    "event-date": "2026-08-01",
+    "date-source": "inline",
+    "date-confidence": "day",
+}
 
 
 # --- write_note ---
@@ -396,3 +415,171 @@ async def test_directory_move_succeeds_when_every_note_conforms(
         "Batch Guide 2.md",
     ]
     assert Path(test_project.path, "archive/Batch Guide 1.md").exists()
+
+
+# --- review-by, filled in from the project's review_months (GAPS W5 rule 4) ---
+#
+# The expected date comes from `default_review_by`, whose own arithmetic is
+# checked against hand-written dates in `tests/vocabulary/test_vocabulary_model.py`.
+# These tests are about *whether the write path stamps at all*, not about the
+# month arithmetic.
+
+
+def expected_review_by(review_months: int) -> str:
+    """UTC, matching the stamp: every other timestamp on this write path is UTC."""
+    vocabulary = parse_vocabulary({"review_months": review_months}, source="v.yml")
+    return default_review_by(vocabulary, datetime.now(tz=UTC).date())
+
+
+@pytest.mark.asyncio
+async def test_a_finding_written_without_a_review_by_gets_one(app, test_project, govern_project):
+    """The field is required, so demanding a date the writer cannot choose is busywork.
+
+    Before this the write was refused outright: `review-by` was required on a
+    finding and nothing filled it in, so `bm types` promised a default that did
+    not exist.
+    """
+    govern_project(review_months=6)
+
+    result = await write_note(
+        project=test_project.name,
+        title="Superseded Backup Finding",
+        directory="notes",
+        content=note_content("What we learned.", **FINDING_FRONTMATTER),
+        output_format="json",
+    )
+
+    assert isinstance(result, dict)
+    assert result["action"] == "created"
+    # On disk, not merely in the DB: the stamp has to survive into the file the
+    # checker judged, or the validated write is not the stored write.
+    assert stored_frontmatter(test_project, "Superseded Backup Finding")["review-by"] == (
+        expected_review_by(6)
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_explicit_review_by_is_never_overwritten(app, test_project, govern_project):
+    """A default fills a gap. A writer who chose a date has not left one."""
+    govern_project(review_months=6)
+
+    await write_note(
+        project=test_project.name,
+        title="Dated Finding",
+        directory="notes",
+        content=note_content(
+            "What we learned.",
+            **FINDING_FRONTMATTER,
+            **{"review-by": "2029-01-15"},
+        ),
+    )
+
+    assert stored_frontmatter(test_project, "Dated Finding")["review-by"] == "2029-01-15"
+
+
+@pytest.mark.asyncio
+async def test_a_guide_written_without_a_review_by_gets_one(app, test_project, govern_project):
+    """Instructions rot faster than findings do, which is why a guide is on the list."""
+    govern_project(review_months=3)
+
+    await write_note(
+        project=test_project.name,
+        title="Restore Guide",
+        directory="notes",
+        content=note_content("How to restore a backup.", **BASE_FRONTMATTER, type="guide"),
+    )
+
+    assert stored_frontmatter(test_project, "Restore Guide")["review-by"] == expected_review_by(3)
+
+
+@pytest.mark.asyncio
+async def test_a_state_gets_no_review_by(app, test_project, govern_project):
+    """Only a finding and a guide carry the field at all.
+
+    Stamping one on a state would create the `field-not-on-type` violation the
+    same write is being checked for.
+    """
+    govern_project(review_months=6)
+
+    result = await write_note(
+        project=test_project.name,
+        title="Disk State",
+        directory="notes",
+        content=note_content("Capcom root disk at 89%.", **BASE_FRONTMATTER, type="state"),
+        output_format="json",
+    )
+
+    assert isinstance(result, dict)
+    assert result["action"] == "created"
+    assert "review-by" not in stored_frontmatter(test_project, "Disk State")
+
+
+@pytest.mark.asyncio
+async def test_an_ungoverned_project_stamps_nothing(app, test_project):
+    """Positive control for the gate: no vocabulary.yml, no default.
+
+    An absent file means the project is not governed, never "use the defaults",
+    so there is no `review_months` to read and nothing to fill in.
+    """
+    assert not vocabulary_path(test_project.external_id).exists()
+
+    await write_note(
+        project=test_project.name,
+        title="Ungoverned Finding",
+        directory="notes",
+        content=note_content("What we learned.", **FINDING_FRONTMATTER),
+    )
+
+    assert "review-by" not in stored_frontmatter(test_project, "Ungoverned Finding")
+
+
+# --- supersedes, which only a finding has (GAPS W5 rule 1) ---
+
+
+def with_supersedes(body: str, **fields: Any) -> str:
+    """Note markdown carrying one `supersedes` relation line."""
+    return note_content(f"{body}\n\n## Relations\n- supersedes [[Older Record]]\n", **fields)
+
+
+@pytest.mark.asyncio
+async def test_supersedes_on_a_guide_is_refused(app, test_project, govern_project):
+    """The rule reads a `## Relations` line, so only a caller that parsed the body can see it.
+
+    A guide is kept current by editing it, so a second guide superseding the
+    first leaves two live instructions and no way to tell which one holds.
+    """
+    govern_project()
+
+    with pytest.raises(ToolError) as excinfo:
+        await write_note(
+            project=test_project.name,
+            title="Superseding Guide",
+            directory="notes",
+            content=with_supersedes(
+                "How to restore a backup.",
+                **BASE_FRONTMATTER,
+                type="guide",
+                **{"review-by": "2027-01-01"},
+            ),
+        )
+
+    assert "Only a finding supersedes another record" in str(excinfo.value)
+    assert written_notes(test_project) == []
+
+
+@pytest.mark.asyncio
+async def test_supersedes_on_a_finding_is_accepted(app, test_project, govern_project):
+    """Positive control: without it the test above could mean "relations are refused"."""
+    govern_project()
+
+    result = await write_note(
+        project=test_project.name,
+        title="Superseding Finding",
+        directory="notes",
+        content=with_supersedes("What we learned instead.", **FINDING_FRONTMATTER),
+        output_format="json",
+    )
+
+    assert isinstance(result, dict)
+    assert result["action"] == "created"
+    assert [path.name for path in written_notes(test_project)] == ["Superseding Finding.md"]

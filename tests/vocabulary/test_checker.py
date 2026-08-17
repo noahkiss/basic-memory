@@ -309,7 +309,75 @@ def test_a_field_that_belongs_to_another_type(name: str, value: str, owners: str
     assert owners in violation.message
 
 
-# --- 6. missing-required-field (per type) ---
+# --- 6. supersedes-not-on-type ---
+
+# `supersedes` is a `## Relations` line, not a frontmatter key, so these tests
+# pass relation types rather than metadata. The checker's other rules never see
+# them, which is why this is the only rule with its own input.
+
+
+def test_a_finding_may_supersede():
+    """The positive control the rest of this section leans on."""
+    assert check(FINDING, relation_types=["supersedes", "relates-to"]) == []
+
+
+@pytest.mark.parametrize("record", [GUIDE, TASK, STATE, PROFILE], ids=lambda r: r["type"])
+def test_supersedes_is_refused_on_every_other_type(record: dict[str, Any]):
+    violation = one(check(record, relation_types=["supersedes"]))
+
+    assert violation.rule == "supersedes-not-on-type"
+    assert violation.field == "supersedes"
+    assert violation.severity == "error"
+    assert record["type"] in violation.message
+
+
+def test_the_refusal_names_the_route_a_task_takes_instead():
+    """A rejection an agent cannot act on relocates the mistake (GAPS W19)."""
+    violation = one(check(TASK, relation_types=["supersedes"]))
+
+    assert "finding" in violation.message
+    assert "`bm done`" in violation.message
+
+
+def test_unparsed_relations_skip_the_rule():
+    """``None`` means "not known", never "the record has none".
+
+    The move planner rewrites a path and no relation line, so it has nothing to
+    pass. Reading that as "no supersedes" would clear a row a real write left.
+    """
+    assert check(GUIDE, relation_types=None) == []
+    assert check(GUIDE) == []
+
+
+def test_an_empty_relation_list_is_known_and_clean():
+    assert check(GUIDE, relation_types=[]) == []
+
+
+def test_an_unrelated_relation_type_is_not_a_hit():
+    """The rule must not fire on a relation that merely mentions the word."""
+    assert check(GUIDE, relation_types=["supersedes-nothing", "relates-to"]) == []
+
+
+def test_the_match_ignores_capitalisation():
+    """`Relation.type` is verbatim from the line, so a capital would be a hole."""
+    assert one(check(GUIDE, relation_types=["Supersedes"])).rule == "supersedes-not-on-type"
+
+
+def test_the_frontmatter_key_stays_an_advisory_beside_the_relation_error():
+    """Two different faults with the same name, judged separately.
+
+    A `supersedes:` frontmatter key is an undeclared key — kept, indexed, and
+    flagged. The relation is an error that blocks the write. Collapsing them
+    would either reject a harmless key or accept a broken record.
+    """
+    violations = check(GUIDE | {"supersedes": "tnd-0001"}, relation_types=["supersedes"])
+
+    by_rule = {violation.rule: violation.severity for violation in violations}
+    assert by_rule == {"unknown-key": "advisory", "supersedes-not-on-type": "error"}
+    assert has_errors(violations)
+
+
+# --- 7. missing-required-field (per type) ---
 
 
 def test_finding_requires_event_date():
@@ -332,7 +400,7 @@ def test_review_by_is_required(record: dict[str, Any]):
     assert violation.field == "review-by"
 
 
-# --- 7. invalid-date ---
+# --- 8. invalid-date ---
 
 
 @pytest.mark.parametrize(
@@ -365,7 +433,7 @@ def test_a_declared_date_field_is_checked():
     assert violation.field == "commissioned"
 
 
-# --- 8. the provenance triple ---
+# --- 9. the provenance triple ---
 
 
 @pytest.mark.parametrize("name", ["date-source", "date-confidence"])
@@ -433,7 +501,7 @@ def test_provenance_on_a_type_whose_optional_date_is_absent():
     assert rules(check(record)) == ["field-not-on-type"] * 3
 
 
-# --- 9. unknown-area ---
+# --- 10. unknown-area ---
 
 
 def test_unknown_area_names_the_declared_areas():
@@ -453,7 +521,7 @@ def test_a_project_with_no_areas_says_so_plainly():
     assert violation.message == "This project declares no areas, so omit the 'area' field."
 
 
-# --- 10. declared fields ---
+# --- 11. declared fields ---
 
 
 def test_unknown_enum_value_names_the_allowed_values():
@@ -472,7 +540,7 @@ def test_a_declared_string_field_accepts_any_string():
     assert check(PROFILE | {"host-role": "anything at all"}) == []
 
 
-# --- 11. unknown-key (advisory) ---
+# --- 12. unknown-key (advisory) ---
 
 
 def test_unknown_key_is_advisory_and_does_not_block_a_write():
@@ -496,7 +564,7 @@ def test_has_errors_on_a_clean_record():
     assert not has_errors(check(STATE))
 
 
-# --- 12. set-once ---
+# --- 13. set-once ---
 
 
 def test_an_unchanged_set_once_field_is_clean():

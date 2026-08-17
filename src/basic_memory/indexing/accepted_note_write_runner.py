@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, date, datetime
 from typing import Any, Protocol
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -46,6 +46,13 @@ from basic_memory.services.note_preparation import (
     PreparedEntityWrite,
     apply_prepared_entity_fields,
 )
+from basic_memory.vocabulary.model import Vocabulary, default_review_by
+
+# The two types whose `review-by` a project's vocabulary fills in when the write
+# leaves it out (GAPS W4's type table, GAPS W5 rule 4). Instructions rot faster
+# than findings do, which is why a guide is on this list beside a finding.
+REVIEW_BY_DEFAULT_TYPES: frozenset[str] = frozenset({"finding", "guide"})
+REVIEW_BY_FIELD = "review-by"
 
 
 class AcceptedNoteCreatePreparer(Protocol):
@@ -248,6 +255,55 @@ class AcceptedPersistedNoteWrite:
     previous_file_delete: RuntimePendingNoteFileDelete | None = None
 
 
+def accepted_note_create_type(data: EntitySchema) -> str:
+    """The frontmatter type a create will actually store.
+
+    Not simply ``data.note_type``: a content frontmatter block overrides it
+    (``note_preparation._apply_schema_frontmatter_overrides``), and that is how
+    every MCP write states its type. ``entity_metadata`` cannot set the type at
+    all — ``schema_to_markdown`` drops the key — so it is not consulted.
+    """
+    content = data.content or ""
+    if file_utils.has_frontmatter(content):
+        declared = file_utils.parse_frontmatter(content).get("type")
+        if isinstance(declared, str) and declared:
+            return declared
+    return data.note_type
+
+
+def stamp_default_review_by(
+    data: EntitySchema,
+    vocabulary: Vocabulary | None,
+    *,
+    today: date | None = None,
+) -> EntitySchema:
+    """Fill in a create's ``review-by`` from the project's ``review_months``.
+
+    A finding and a guide both require the field, and requiring a date a writer
+    has no basis to choose would make the rule busywork — so an ungoverned
+    project, another type, or a write that states its own date is left alone.
+
+    Stamped on the schema *before* prepare, so the accepted markdown, its
+    checksum, and the entity row all carry the same value the checker then
+    judges. Stamping afterwards would validate one write and store another.
+    """
+    if vocabulary is None or accepted_note_create_type(data) not in REVIEW_BY_DEFAULT_TYPES:
+        return data
+
+    metadata = dict(data.entity_metadata or {})
+    content = data.content or ""
+    content_metadata: dict[str, Any] = {}
+    if file_utils.has_frontmatter(content):
+        content_metadata = file_utils.parse_frontmatter(content)
+    # Both blocks are merged into the stored frontmatter, so a value in either
+    # one is a value the writer stated.
+    if metadata.get(REVIEW_BY_FIELD) or content_metadata.get(REVIEW_BY_FIELD):
+        return data
+
+    metadata[REVIEW_BY_FIELD] = default_review_by(vocabulary, today or datetime.now(tz=UTC).date())
+    return data.model_copy(update={"entity_metadata": metadata})
+
+
 async def prepare_accepted_note_create(
     preparer: AcceptedNoteCreatePreparer,
     data: EntitySchema,
@@ -255,10 +311,11 @@ async def prepare_accepted_note_create(
     check_storage_exists: bool,
     skip_conflict_check: bool = False,
     session: AsyncSession | None = None,
+    vocabulary: Vocabulary | None = None,
 ) -> AcceptedPreparedNoteWrite:
     """Prepare one DB-first note create and checksum the accepted markdown."""
     prepared = await preparer.prepare_create_entity_content(
-        data,
+        stamp_default_review_by(data, vocabulary),
         check_storage_exists=check_storage_exists,
         skip_conflict_check=skip_conflict_check,
         session=session,

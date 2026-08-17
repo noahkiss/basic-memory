@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -33,7 +33,9 @@ from basic_memory.indexing.accepted_note_write_runner import (
 from basic_memory.models import Entity, NoteContent, Project
 from basic_memory.repository import NoteContentVersionConflict
 from basic_memory.services.exceptions import EntityAlreadyExistsError, VocabularyViolationError
+from basic_memory.services.note_preparation import PreparedEntityWrite
 from basic_memory.services.vocabulary_enforcement import enforce_vocabulary
+from basic_memory.vocabulary.model import Vocabulary, load_vocabulary
 from basic_memory.runtime.note_content import (
     RuntimeAcceptedNoteChange,
     RuntimeAcceptedNoteWriteConflictKind,
@@ -360,11 +362,17 @@ def enforce_accepted_note_vocabulary(
     metadata: Mapping[str, Any] | None,
     file_path: RuntimeFilePath,
     previous: Mapping[str, Any] | None = None,
+    relation_types: Sequence[str] | None = None,
 ) -> None:
     """Refuse an accepted note write whose frontmatter is off vocabulary.
 
     Called after prepare and before persist. Prepare derives the markdown the
     note will carry, which is the only thing worth judging.
+
+    ``relation_types`` comes from the same prepared markdown, because one rule —
+    supersession — is a ``## Relations`` line rather than a frontmatter key. A
+    move is the one write with no parsed relations and no way to change one, so
+    it passes ``None`` and the rule is skipped there.
 
     Prepare is not read-only: it stamps the accepted fields onto the entity row
     and flushes. What makes a rejection here still mean "nothing happened" is the
@@ -379,6 +387,7 @@ def enforce_accepted_note_vocabulary(
             mode="reject",
             file_path=file_path,
             previous=previous,
+            relation_types=relation_types,
         )
     except VocabularyViolationError as error:
         # 400, not 409: the content is wrong, and retrying the same content
@@ -387,6 +396,15 @@ def enforce_accepted_note_vocabulary(
             AcceptedNoteMutationRejectKind.bad_request,
             str(error),
         )
+
+
+def accepted_note_relation_types(prepared: PreparedEntityWrite) -> list[str]:
+    """The outgoing relation types of one prepared write, for the checker.
+
+    Read from the prepared markdown rather than the DB: the rule judges the
+    write that is about to land, and the relation rows for it do not exist yet.
+    """
+    return [relation.type for relation in prepared.entity_markdown.relations]
 
 
 async def run_accepted_note_create(
@@ -524,6 +542,7 @@ async def _run_accepted_note_create(
         request.data,
         check_storage_exists=dependencies.verify_storage_absent_on_create,
         session=session,
+        vocabulary=load_vocabulary(project.external_id),
     )
 
     prepared = prepared_write.prepared
@@ -533,6 +552,7 @@ async def _run_accepted_note_create(
         project=project,
         metadata=prepared.entity_markdown.frontmatter.metadata,
         file_path=prepared.file_path.as_posix(),
+        relation_types=accepted_note_relation_types(prepared),
     )
     entity = await create_accepted_pending_entity(
         session,
@@ -617,6 +637,7 @@ async def _run_accepted_note_update(
             request.data,
             check_storage_exists=dependencies.verify_storage_absent_on_create,
             session=session,
+            vocabulary=load_vocabulary(project.external_id),
         )
         entity = await create_accepted_pending_entity(
             session,
@@ -709,6 +730,7 @@ async def _run_accepted_note_update(
         metadata=prepared.entity_markdown.frontmatter.metadata,
         file_path=prepared.file_path.as_posix(),
         previous=previous_metadata,
+        relation_types=accepted_note_relation_types(prepared),
     )
     persisted = await persist_accepted_note_snapshot(
         session,
@@ -782,6 +804,7 @@ async def _run_accepted_note_edit(
         metadata=prepared.entity_markdown.frontmatter.metadata,
         file_path=prepared.file_path.as_posix(),
         previous=previous_metadata,
+        relation_types=accepted_note_relation_types(prepared),
     )
     persisted = await persist_accepted_note_snapshot(
         session,
@@ -1039,8 +1062,14 @@ async def prepare_create_or_reject(
     *,
     check_storage_exists: bool,
     session: AsyncSession,
+    vocabulary: Vocabulary | None = None,
 ) -> AcceptedPreparedNoteWrite:
-    """Prepare a new accepted note or raise a typed mutation rejection."""
+    """Prepare a new accepted note or raise a typed mutation rejection.
+
+    ``vocabulary`` is the project's, already loaded, and is used for one thing:
+    filling in a missing ``review-by`` on a finding or a guide before the write
+    is judged. ``None`` means the project is not governed and nothing is filled.
+    """
     try:
         conflicting_note_paths = [
             path
@@ -1067,6 +1096,7 @@ async def prepare_create_or_reject(
             # binary resources, which are valid alongside Markdown notes.
             skip_conflict_check=True,
             session=session,
+            vocabulary=vocabulary,
         )
     except EntityAlreadyExistsError as error:
         # PUT-as-create over an unindexed on-disk file (local source-of-truth

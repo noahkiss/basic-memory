@@ -2759,6 +2759,54 @@ every file it indexes, including hand edits, so drift cannot sit undetected the 
 did in the predecessor tool. W4 also moves rule 4 — `review-by` is required on **`guide`** as well
 as `finding`.
 
+**PROGRESS 2026-08-16 — item 1 shipped: rules 1 and 4, in the checker and the create path.**
+Two of the five rules above now hold. W5 stays open: rules 2, 3 and 5 were already done, but
+nothing persists a violation and `bm doctor` still reports none of this.
+
+- **Rule 1, `supersedes` only on a `finding`.** It is not a frontmatter rule — `.forked/schema.md`
+  §5/§12 moved `supersedes` into a `## Relations` line — so `check_frontmatter` gained
+  `relation_types`, threaded through `enforce_vocabulary`/`apply_vocabulary` to every caller that
+  parsed the record: the accepted runner's create, PUT and edit sites, and EntityService's three
+  record sites. `None` means *the caller did not parse relations*, not *the record has none*, and
+  the rule is skipped there — the move planner and `index/local_moves.py` pass nothing, because a
+  move rewrites a path and no relation line.
+- **Rule 4's default.** `default_review_by(vocabulary, today)` in `vocabulary/model.py` returns
+  `review_months` calendar months out, clamped to the target month's last day. It is stamped on
+  the schema inside `prepare_accepted_note_create`, **before** `enforce_accepted_note_vocabulary`,
+  so the accepted markdown, its checksum, and the entity row all carry the value the checker then
+  judges — stamping after prepare would validate one write and store another. Create only, on a
+  `finding` or a `guide`, only when the write states no date of its own.
+- **Two shipped strings were false and are now true.** `bm types` promised "Defaults to N months
+  out" and the glossary promised "bm fills it in from review_months" while nothing filled anything
+  in. Both now say what the code does, and both say it is the *missing* field that gets filled.
+- **Judgment call:** the supersedes match is case-folded. `Relation.type` is verbatim from the
+  line, so an exact match would let `Supersedes [[X]]` through a rule a reader would say it breaks.
+- **Judgment call:** a governed create now reads `vocabulary.yml` twice — once for the stamp, once
+  inside the funnel. Kept: the alternative was rewriting the funnel's single `project=` entry point
+  at all four call sites to pass a loaded vocabulary, which is a wider diff across what T22 shipped,
+  for one `stat` and one parse of a few hundred bytes.
+
+**PROGRESS 2026-08-16 — item 2 shipped: the `violation` table, its migration, and its repository.**
+Mechanism A now has a place to put a violation. W5 stays open: nothing writes to the table yet.
+
+- `Violation` (`models/knowledge.py`) with `Entity.violations`, cascaded DB-side
+  (`ondelete="CASCADE"`) and ORM-side (`all, delete-orphan`), matching `NoteContent` because both
+  delete paths are live in this tree. `UniqueConstraint(entity_id, rule, field)` makes one row per
+  rule per field per record; `ix_violation_project_severity` serves the W5-B count query.
+- Migration `o8j9k0l1m2n3` (down_revision `n7i8j9k0l1m2`, the head at the time) creates the table
+  **and** adds `project.vocabulary_stamp` — item 4's revalidation stamp, column only, no logic. One
+  migration for both because they are one mechanism: the rows say what is wrong, the stamp says
+  which vocabulary said so.
+- `repository/violation_repository.py`: `replace_for_entity` (delete-then-insert, so an empty list
+  clears and a re-check cannot accumulate), `count_by_reason`, `count_for_projects`, and
+  `list_for_project` joined to `entity.file_path`. The reads take their project scope as an
+  argument rather than from the repository, because W5-C's unscoped notice rolls up every project.
+- **Judgment call:** the plan named the roll-up `count(session, project_ids)`. `Repository.count`
+  already exists with an incompatible signature, so it ships as `count_for_projects`.
+- **Judgment call:** `replace_for_entity` does not de-duplicate its input. Two violations with the
+  same rule and field hit the unique constraint and fail the write loudly, which is correct: that
+  is a checker bug, and silently dropping one would lose a row nobody would ever look for.
+
 ### W6 — an idempotent, resumable importer — **CLOSED 2026-08-05 (user): no importer ships; it is a Claude workflow**
 The corpus is written by other sessions while a migration runs. Measured over twenty minutes in a
 single session: `project-a` 271 → 368 lines, `project-b` 292 → 438, `project-c` 21 → 31, and the

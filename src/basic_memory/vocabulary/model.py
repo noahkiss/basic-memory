@@ -10,8 +10,10 @@ SQLAlchemy, no API, no MCP. It has to be importable on the fast CLI path.
 """
 
 import re
+from calendar import monthrange
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Literal, NoReturn
@@ -74,6 +76,22 @@ DEFAULT_VOCABULARY = Vocabulary(
     review_months=12,
     fields=MappingProxyType({}),
 )
+
+
+def default_review_by(vocabulary: Vocabulary, today: date) -> str:
+    """The day a record created on ``today`` falls due for review, as an ISO date.
+
+    ``review_months`` calendar months out, never a fixed number of days: a
+    review date is a human appointment, and "the same day of the month, N months
+    on" is the only form that survives a year of leap days and short months.
+
+    A day the target month does not have — the 31st of a 30-day month — clamps
+    to that month's last day, because the alternative is not a real date.
+    """
+    months = today.month - 1 + vocabulary.review_months
+    year = today.year + months // 12
+    month = months % 12 + 1
+    return date(year, month, min(today.day, monthrange(year, month)[1])).isoformat()
 
 
 def vocabulary_path(external_id: str) -> Path:

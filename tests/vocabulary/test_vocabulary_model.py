@@ -1,6 +1,7 @@
 """Tests for the per-project record vocabulary file (GAPS W4)."""
 
 from collections.abc import Mapping
+from datetime import date
 from pathlib import Path
 from typing import Any, cast
 
@@ -11,6 +12,7 @@ from basic_memory.vocabulary.model import (
     DeclaredField,
     Vocabulary,
     VocabularyError,
+    default_review_by,
     load_vocabulary,
     parse_vocabulary,
     vocabulary_path,
@@ -246,3 +248,34 @@ def test_default_vocabulary_matches_the_schema_block():
     assert DEFAULT_VOCABULARY.areas == ()
     assert DEFAULT_VOCABULARY.review_months == 12
     assert DEFAULT_VOCABULARY.fields == {}
+
+
+# --- default_review_by ---
+
+
+def test_the_default_review_date_crosses_a_year_boundary():
+    """Twelve months on from July 2026 is July 2027, not month 19."""
+    vocabulary = parse_vocabulary({"review_months": 12}, source="v.yml")
+
+    assert default_review_by(vocabulary, date(2026, 7, 26)) == "2027-07-26"
+
+
+def test_review_months_is_honoured():
+    """The project's number decides, not a hardcoded year."""
+    vocabulary = parse_vocabulary({"review_months": 3}, source="v.yml")
+
+    assert default_review_by(vocabulary, date(2026, 11, 30)) == "2027-02-28"
+
+
+def test_a_day_the_target_month_lacks_clamps_to_its_last():
+    """The 31st of a 30-day month is not a date; the last day of it is."""
+    vocabulary = parse_vocabulary({"review_months": 1}, source="v.yml")
+
+    assert default_review_by(vocabulary, date(2026, 8, 31)) == "2026-09-30"
+
+
+def test_february_29_survives_a_four_year_review():
+    """A leap day plus 48 months is a leap day; the clamp must not fire."""
+    vocabulary = parse_vocabulary({"review_months": 48}, source="v.yml")
+
+    assert default_review_by(vocabulary, date(2024, 2, 29)) == "2028-02-29"
