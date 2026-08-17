@@ -126,6 +126,9 @@ def ls(
     Reports every project unless `--project` or a `.bm.yml` above the working
     directory pins one; an unscoped listing names the project each row came from.
     A note without a record type is not a record and is not listed.
+
+    A record some other record supersedes reads `superseded` in the status
+    column. `bm show <id>` names the successor.
     """
     # Trigger: --limit 0 or a negative limit.
     # Why: a listing cannot be scoped to fewer than one row, so this is an
@@ -183,6 +186,10 @@ def show(
     The file's bytes are the payload and nothing is added to them (contract:
     raw content is byte-exact). Anything derived — a successor that supersedes
     this record — follows as a notice, after the payload, and `--quiet` drops it.
+
+    The one thing printed that is not in the file is a final newline, and only
+    when the file lacks one: without it the body's last word and the first notice
+    read as one token (GAPS U2).
     """
     try:
         scope = resolve_read_scope(project)
@@ -210,7 +217,17 @@ def show(
     # "raw content is byte-exact" rule — the second one as a traceback rather
     # than the single stderr line rule 6 requires. `click.echo` writes bytes to
     # the binary stream underneath stdout.
-    typer.echo(record.path.read_bytes(), nl=False)
+    payload = record.path.read_bytes()
+    typer.echo(payload, nl=False)
+
+    # Trigger: the file's bytes do not end in a newline.
+    # Why: the payload is byte-exact, so the separator cannot be written into the
+    #     file's own bytes here — and without one the body's last word runs into
+    #     the notice below it, which reads as a single token to any reader
+    #     (GAPS U2). Files written since U2's writer fix already end in one.
+    # Outcome: one newline, printed after the payload rather than inside it.
+    if payload and not payload.endswith(b"\n"):
+        typer.echo("")
 
     if not quiet:
         for supersession in record.superseded_by:

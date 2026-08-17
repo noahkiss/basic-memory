@@ -16,6 +16,7 @@ from sqlalchemy.engine import Row
 
 from basic_memory.models.knowledge import Entity, Observation, Relation
 from basic_memory.repository.repository import Repository
+from basic_memory.vocabulary.glossary import SUPERSEDES_RELATION
 
 type EntityMetadata = dict[str, Any] | None
 
@@ -837,6 +838,10 @@ class RecordListRow:
     status: str
     title: str
     file_path: str
+    # True when some other record in the project carries a `supersedes` relation
+    # pointing here. Derived from the inbound edge, never stored on the record: the
+    # successor owns the edge and the predecessor is never touched (schema.md §5).
+    superseded: bool = False
 
 
 async def list_records(
@@ -866,6 +871,11 @@ async def list_records(
     A record that does not carry the filtered key never matches. Asking for
     ``--status open`` is asking for records that say ``open``, so a record with
     no status is a miss rather than a wildcard.
+
+    ``superseded`` comes from one correlated EXISTS on the inbound relation, so a
+    listing costs the same one query whether or not anything in it is superseded
+    (GAPS U3). It is deliberately *not* a filter: ``--status superseded`` asks for
+    records whose frontmatter says so, and no record's frontmatter ever does.
     """
     if not project_ids:
         return []
@@ -873,6 +883,16 @@ async def list_records(
     record_type = func.json_extract(Entity.entity_metadata, _TYPE_PATH)
     record_status = func.json_extract(Entity.entity_metadata, _STATUS_PATH)
     record_area = func.json_extract(Entity.entity_metadata, _AREA_PATH)
+
+    # One correlated EXISTS rather than a per-row lookup: a listing that asked
+    # "who supersedes this?" once per row would be the N+1 the whole listing is
+    # cheap enough to avoid (GAPS U3). A join would multiply a record with two
+    # successors into two rows, which `--limit` would then cut in the wrong place.
+    superseded = (
+        select(Relation.id)
+        .where(Relation.to_id == Entity.id, Relation.relation_type == SUPERSEDES_RELATION)
+        .exists()
+    )
 
     query = (
         select(
@@ -882,6 +902,7 @@ async def list_records(
             record_status,
             Entity.title,
             Entity.file_path,
+            superseded,
         )
         .where(
             Entity.project_id.in_(project_ids),
@@ -908,8 +929,17 @@ async def list_records(
             status="" if row_status is None else str(row_status),
             title=title,
             file_path=file_path,
+            superseded=bool(is_superseded),
         )
-        for project_id, permalink, row_type, row_status, title, file_path in result.all()
+        for (
+            project_id,
+            permalink,
+            row_type,
+            row_status,
+            title,
+            file_path,
+            is_superseded,
+        ) in result.all()
     ]
 
 

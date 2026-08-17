@@ -18,6 +18,8 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Sequence
 
+from basic_memory.vocabulary.glossary import SUPERSEDES_RELATION
+
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -327,11 +329,25 @@ async def direct_doctor_report(
 
 # The relation that carries supersession. One direction only: the successor owns
 # the edge and the predecessor is never touched (`.forked/schema.md` §5).
-SUPERSEDES = "supersedes"
+SUPERSEDES = SUPERSEDES_RELATION
 
 # What a record with no value in a column prints. A blank would make the columns
 # ambiguous to read; a sentinel that looks like data would be worse.
 NO_VALUE = "-"
+
+# What the status column reads for a record some other record supersedes
+# (GAPS U3). It goes in the status column rather than in a new one because that
+# column is where a reader looks to ask "is this row still live", and a superseded
+# record is not — whatever else it says. `bm ls` printed the same blank column for
+# a dead finding as for a live one, and the only way to tell them apart was to
+# read every other finding's body looking for a relation naming this one.
+#
+# The marker wins over a declared status when a record somehow carries both. That
+# is unreachable in a governed project — only a finding may be superseded and a
+# finding may not carry a status — and where it is reachable, "not live" is the
+# more important of the two facts. `bm show` prints the status and the successor
+# both, which is where the detail belongs.
+SUPERSEDED = "superseded"
 
 
 class RecordNotFound(LookupError):
@@ -443,7 +459,7 @@ async def direct_record_listing(
                 project=names[row.project_id],
                 record_id=row.permalink,
                 note_type=row.note_type,
-                status=row.status or NO_VALUE,
+                status=SUPERSEDED if row.superseded else (row.status or NO_VALUE),
                 title=row.title,
             )
             for row in kept
