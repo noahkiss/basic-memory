@@ -6076,7 +6076,9 @@ either way, so no loss is silent at line granularity:
 
 **Opened 2026-08-17.** The first migration of this repo's own local tracking files into a governed
 bm project wrote 104 records in one pass (69 `finding`, 23 `task`, 10 `guide`, 1 `state`,
-1 `inbox`). Every entry below came out of that pass. They are usage defects, not build defects —
+1 `inbox`). Every entry below came out of that pass. **U7-U14 came out of the second pass**,
+the same day: the same corpus re-migrated with true dates once U1's six date flags existed, again
+104 records with the same type split. Nothing in U1-U6 recurred. They are usage defects, not build defects —
 each one was hit by an agent following the documented workflow, and none of them shows up in a
 test.
 
@@ -6464,6 +6466,237 @@ summed) and print `(40, showing 5)` the way the standing sections now do, or dro
 `more results available` as a notice, which is what `docs/OUTPUT_CONTRACT.md` rule 3 prescribes for a
 count that is not known. The second is cheaper and the contract already names it; the first is
 better and costs one query per project.
+
+### U7 — an empty `bm brief` is still zero bytes, which W20 rule 5 forbids — **OPEN**
+
+W8's close block discharged the *broken* half of "an empty brief and a broken brief are the same
+silence" with `--verbose`, and left the *empty* half where it was, noting it "interacts with W20
+rule 5, which makes an empty result a **stated** result rather than silence." Nothing then stated
+it.
+
+```
+$ bm project add scratchpilot --governed
+Project 'scratchpilot' added successfully
+$ bm brief ; echo "exit=$?" ; bm brief | wc -c
+exit=0
+0
+$ bm ls
+0 records
+bm show <id> read the full entry · bm new record something worth finding again
+```
+
+`bm ls` obeys the rule — an empty result prints `0 records`. `bm brief` prints nothing at all, so a
+new project, a project whose records are all closed, and a brief that resolved a scope with no
+projects in it are one output. The same thing happens on a project that *has* records but none of
+the two types brief renders:
+
+```
+$ bm brief -p scratchpilot          # 1 finding in the project, no tasks, no state
+1 note file has uncommitted changes — run 'bm history dirty'
+```
+
+The payload is empty and only the trailing notice prints, which reads as though the notice *is* the
+answer.
+
+**Fix:** print the standing sections with a zero count, or one stated line — the rule is that an
+empty result is a result. Roughly the shape `bm ls` already uses.
+
+### U8 — `bm status` reports bm's own `headline.md` as an unindexed file, permanently — **OPEN**
+
+W9 has every write derive `<store>/<id>/headline.md` for the statusline. It is bm's own output, it
+is not a record, and it is never indexed — so `bm status` reports it as a file that needs
+reindexing, on a project where nothing is wrong.
+
+```
+$ bm status --project basic-memory
+project: basic-memory
+total files: 106
+unindexed files: 1
+1 file not indexed — invisible to search and read until reindexed
+Run 'basic-memory reindex' to index them.
+```
+
+The corpus is 104 records. The 106 files are those plus `vocabulary.yml` plus `headline.md`, and the
+one unindexed file is `headline.md` (confirmed against the `entity` table: 105 rows, no
+`headline%` row among them, and every record accounted for).
+
+This never clears, because the next write rewrites the file. The advice is also wrong in the other
+direction: a reindex that obeyed it would index bm's own derived output as note content, and W10's
+exclusion mechanism — which already covers `_archive/` — is the place that should have covered it.
+
+**Fix:** exclude the derived headline from the indexing path the way `_archive/` is excluded, so the
+count is honest and the advice is not self-defeating.
+
+### U9 — a governed project's `vocabulary.yml` is indexed as an entity — **OPEN**
+
+The control file that *defines* the corpus is in the corpus.
+
+```
+$ python3 -c "import sqlite3;c=sqlite3.connect('file:\$BASIC_MEMORY_CONFIG_DIR/memory.db?mode=ro',uri=True);\
+print(list(c.execute(\"select count(*) from entity\"))[0]);\
+print([r[0] for r in c.execute(\"select file_path from entity where file_path not like '%/%'\")])"
+(105,)
+['vocabulary.yml']
+```
+
+104 records were written; the `entity` table holds 105 rows and the extra one is `vocabulary.yml`.
+It is not a note, it has no record id, `bm ls` does not list it — and it is still an indexed entity,
+so it is reachable by search and it counts anywhere entities are counted.
+
+Same root as U8 and worth fixing in the same pass: the store holds three kinds of file — records,
+bm's own derived output, and the project's control file — and only the first kind is note content.
+
+**Fix:** exclude `vocabulary.yml` on the indexing path; it is one pattern beside U8's.
+
+### U10 — a record deleted on disk keeps its row, and `bm doctor` calls that clean — **OPEN**
+
+The acceptance gate for a migration is the four commands in *Migrating a repo's tracking files*. One
+of them cannot see a record whose file is gone, which is the exact failure mode a hand-edit or an
+interrupted prune produces.
+
+```
+$ rm "$(bm path tnd-pdem7knd -p scratchpilot)"
+$ bm ls -p scratchpilot
+tnd-dm9d3vcc  finding  -  Delete me B
+tnd-pdem7knd  finding  -  Delete me A
+2 records
+$ bm doctor -p scratchpilot
+integrity  project 'scratchpilot'
+  No issues
+
+hygiene  project 'scratchpilot'
+  No issues
+$ bm show tnd-pdem7knd -p scratchpilot ; echo "exit=$?"
+Error: tnd-pdem7knd is indexed but its file is missing: <store>/<id>/findings/tnd-pdem7knd--delete-me-a.md
+exit=1
+$ bm path tnd-pdem7knd -p scratchpilot ; echo "exit=$?"
+<store>/<id>/findings/tnd-pdem7knd--delete-me-a.md
+exit=0
+```
+
+So one verb knows exactly what is wrong and says so, and the checker that exists to find exactly
+this reports no issues in either group. `bm status` does not cover it either — the only warning it
+produced during this run was U8's, about an unrelated file. A `bm reindex -p <project>` clears the
+row (`project index: 2 observed, 1 indexed, 1 deleted`), so the repair exists and nothing points at
+it.
+
+Note the `bm show` message is *good*: it names the condition and the path, and it exits 1. The gap
+is that nothing aggregates it.
+
+**Fix:** an integrity check that reads each record's `file_path` and reports the missing ones, with
+`bm reindex` named as the repair. It is the same shape as the existing integrity checks and it is
+the check that makes the four-command gate mean something.
+
+**Also:** `bm path` returns a path for a file that does not exist, at exit 0. Either it should
+refuse the way `bm show` does, or that is deliberate (you may want the path in order to restore the
+file) — but it is currently silent about a condition `bm show` treats as an error.
+
+### U11 — `bm new` prints the absolute store path on every write, `--quiet` included — **OPEN**
+
+```
+$ bm new finding "Delete me A" -p scratchpilot --source "x.md#L1" \
+    --event-date 2026-08-01 --date-source inline -b "body A" --quiet
+tnd-pdem7knd  finding  <store>/<id>/findings/tnd-pdem7knd--delete-me-a.md
+1 record
+```
+
+Over a 104-record migration that is 104 lines of a path the reader cannot use and did not choose —
+the store path is store-derived by design, and `bm path <id>` exists for the case where someone
+wants it. It is also the single longest field on the line, so it pushes the id and the type apart in
+a wrapped terminal, and it is the one field guaranteed to differ between machines, which makes any
+captured output non-portable.
+
+`--quiet` drops the notices and the affordance line, per the contract, and this line is payload, so
+it stays. That is consistent — the question is whether the path belongs in the payload at all.
+
+**Fix:** print the store-relative path (`findings/tnd-pdem7knd--delete-me-a.md`), which is what the
+history subject line already uses, or drop the column and leave `bm path` as the way to get it.
+
+### U12 — a bare `bm reindex` dies on a raw traceback if any project's directory is missing — **OPEN**
+
+```
+$ bm reindex
+...
+│   193 │   logger.warning(                                                    │
+│   194 │   │   "Recording unreadable directory during project scan",          │
+│ in walk:369                                                                  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+FileNotFoundError: [Errno 2] No such file or directory: '<a registered project path that no longer exists>'
+```
+
+No project is reindexed, including the healthy ones, and the output is a stack trace rather than a
+message. `bm reindex -p <project>` works fine, so the recovery exists once you know which project is
+at fault — the traceback does name the path, which is the only reason it is recoverable at all.
+
+A registered project whose directory has moved or been deleted is not an exotic state: it is
+precisely what W6's *projects that still live outside the store* produces, and `bm status` hits the
+same wall (`Error checking status: [Errno 2] No such file or directory: ...`).
+
+**Fix:** the same degradation W8 already applies to a broken vocabulary — skip the project, name it,
+reindex the rest, exit non-zero. `bm brief` sets the precedent: one broken project must not silence
+or kill a whole-registry verb.
+
+### U13 — `bm ls` prints `1 records` — **OPEN**
+
+```
+$ bm ls -p scratchpilot
+tnd-dm9d3vcc  finding  -  Delete me B
+1 records
+```
+
+`bm new` gets it right (`1 record`) so the two count renderers disagree. Cosmetic, one line, filed
+because W19 spent a whole item on making this surface read like English.
+
+### U14 — a migration cannot connect a record to the record it came from — **OPEN**
+
+`bm new` writes exactly one relation, `--supersedes`, and only between findings. Nothing else can be
+linked at write time, and `bm edit` moves a title and a body, so nothing can be linked afterwards
+either.
+
+Over this repository's own corpus that meant 104 records and 8 relations. The links that were
+available to write and could not be:
+
+- The task *make `bm brief --query` report the number of matches* came out of a specific finding;
+  they are two records with no edge.
+- Ten guides point at files by name in prose. A guide about the schema and the findings extracted
+  from that schema share nothing a graph query can follow.
+- Twenty-three tasks and sixty-nine findings from the same source file are connected only by the
+  `source:` string, which is free text.
+
+The graph is the substrate this fork chose over an issue tracker — a wikilink in the body resolves,
+so the capability exists at the file level and is simply unreachable from the write verbs. The
+result is a flat corpus that keeps its provenance in prose.
+
+**Fix:** a general `--relates-to <id>` (or `--rel <type>:<id>`, since the relation type is what
+carries the meaning) on `bm new` and on `bm edit`, refusing an id no record in the project holds —
+the check `--supersedes` already performs.
+
+### U15 — with no registered project, `bm new` bootstraps a default project at `~/basic-memory` and writes there — **OPEN**
+
+**Found 2026-08-17** by the re-migration agent, probing with `BASIC_MEMORY_CONFIG_DIR` pointed at
+an empty temp dir and cwd outside any marker. `bm new` did not refuse — it created a default
+project rooted at `~/basic-memory` (upstream's bootstrap default), wrote the record there, and
+committed nothing, because that path is outside the store. The directory did not exist before the
+probe; the agent removed it.
+
+That is upstream's "first run makes you a project" behaviour surviving under a verb whose contract
+is store-homed projects (D3). Two things are wrong at once: a *write* verb silently created a
+project, and it homed it outside the store, so the D3 notice about "no history for this project"
+was the only sign. Reproduction:
+
+```
+$ export BASIC_MEMORY_CONFIG_DIR=$(mktemp -d); cd /tmp
+$ bm new task --title probe --date-source inferred --body x
+tnd-…  task  probe
+<home>/basic-memory/tasks/tnd-…--probe.md
+note: project 'main' lives outside the store, so this write has no history
+$ ls -d ~/basic-memory
+<home>/basic-memory
+```
+
+**Fix:** a native verb with no resolvable project must fail with "no project — run `bm project
+add <name> --governed`", not bootstrap one. Where the bootstrap lives (config load) and whether the
+MCP path still wants it are the questions; the verbs must not.
 
 ### Migrating a repo's tracking files
 
