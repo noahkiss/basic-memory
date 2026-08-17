@@ -43,9 +43,11 @@ records provenance only — it is not a merge base and nothing needs to update i
 remote is fetch-only (push URL `DISABLED`) for as-needed lookups: `git log 232f2c2..upstream/main`
 to see if they already diagnosed something, `git show <sha> -- src/basic_memory` to lift one fix.
 
-**`basic-memory --version` reports the installed build** (e.g. `0.22.2.dev165+117308fb`, fixed in
-`9e4f3c8c` — GAPS T3). Note the `+<sha>` reflects the last `uv sync`/install, not the working
-tree's HEAD; after pulling, re-sync before trusting it.
+**`basic-memory --version` reports the installed build** — purely from `importlib.metadata`, since
+there is no `__version__` literal to fall out of date (GAPS T3). A tagged install prints the plain
+tag (`0.1.0`); a build between tags prints `0.1.0.dev165+117308fb`, and that `+<sha>` reflects the
+last `uv sync`/install, not the working tree's HEAD, so re-sync after pulling before trusting it. A
+source tree with nothing installed prints `0.0.0 (source tree; not installed)`.
 
 ## What this fork is for
 
@@ -273,10 +275,13 @@ Python 3.12+ required (type parameter syntax and `type` aliases).
 `just doctor`. Widen to `just test-sqlite` when the change warrants it. A cold testmon run is slow,
 later ones aren't; testmon collecting 0 tests means nothing was impacted, not that it failed.
 
-**Releases** are a git tag and nothing else — nothing is published anywhere. `just gate` is the
-pre-push check (lint + typecheck + unit tests); `just release vX.Y.Z` tags and pushes; `just
-release-preview vX.Y.Z` shows what it would do. See `.forked/release-design.md` for why there is
-no PyPI, npm, Homebrew, GitHub Release, or CI.
+**Releases** are a git tag plus a GitHub Release with generated notes — nothing goes to a package
+index. `just gate` is the pre-push check (lint + typecheck + unit tests); `just release vX.Y.Z`
+tags, pushes, and runs `gh release create` against `noahkiss/basic-memory` explicitly; `just
+release-preview vX.Y.Z` shows what it would do. Install is the Homebrew tap
+(`brew install noahkiss/tap/basic-memory`), with `uv tool install git+…@vX.Y.Z` as the fallback on a
+machine without the tap. Fork versioning starts at `v0.1.0` (2026-08-17); upstream's `v0.x` tags
+were deleted here. See `.forked/release-design.md` for why there is still no PyPI, npm, or CI.
 
 ### Test Structure
 

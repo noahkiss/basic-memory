@@ -435,9 +435,11 @@ migration message:
 
 
 # --- Release ---
-# A release here is a git tag and nothing else. Nothing is published: the
-# installable artifact is this checkout, and uv-dynamic-versioning derives the
-# package version from the tag at install time. See .forked/release-design.md.
+# A release is a git tag plus a GitHub Release with generated notes. No package
+# is published to an index: the installable artifact is the tagged source, and
+# uv-dynamic-versioning derives the package version from the tag at install
+# time. The Homebrew tap formula (noahkiss/tap/basic-memory) is the install
+# path and is bumped separately. See .forked/release-design.md.
 
 # The one gate. Run before pushing anything you would be sad to break.
 gate:
@@ -445,16 +447,15 @@ gate:
     just typecheck
     just test-unit-sqlite
 
-# Cut a release tag (e.g. just release v0.23.0)
+# Cut a release tag and its GitHub Release (e.g. just release v0.2.0)
 release version:
     #!/usr/bin/env bash
     set -euo pipefail
 
     if [[ ! "{{version}}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-        echo "Invalid version. Use: v0.23.0"
+        echo "Invalid version. Use: v0.2.0"
         exit 1
     fi
-    VERSION_NUM=$(echo "{{version}}" | sed 's/^v//')
 
     # Trigger: dirty tree, wrong branch, or a tag that already exists.
     # Why: a tag must name a state reachable from the remote; a dirty tree
@@ -467,33 +468,34 @@ release version:
 
     just gate
 
-    # Trigger: __version__ in src/basic_memory/__init__.py is a hardcoded
-    # literal that only moves on release.
-    # Why: `basic-memory --version` reads it, so tagging without this bump makes
-    # --version report the previous release (upstream hit exactly this on
-    # v0.21.2 -> v0.21.3).
-    # Outcome: one file changes. Delete this block once __version__ is derived
-    # from importlib.metadata, at which point this recipe writes no files.
-    sed -i -E "s/^__version__ = \".*\"$/__version__ = \"${VERSION_NUM}\"/" \
-        src/basic_memory/__init__.py
-    git diff --quiet src/basic_memory/__init__.py \
-        || git commit -m "chore: version ${VERSION_NUM}" src/basic_memory/__init__.py
-
     git tag -a "{{version}}" -m "{{version}}"
     git push origin main "{{version}}"
 
+    # Trigger: the tag is now on the remote.
+    # Why: a bare `gh` in this working tree resolves to the upstream repo, so
+    # --repo is mandatory or the release lands on someone else's project.
+    # --verify-tag refuses to invent a tag if the push above only half worked.
+    # Outcome: a GitHub Release with notes generated from the commits since the
+    # previous tag. Still nothing on any package index.
+    gh release create "{{version}}" \
+        --repo noahkiss/basic-memory \
+        --title "{{version}}" \
+        --generate-notes \
+        --verify-tag
+
     echo
-    echo "Tagged {{version}}. Nothing was published - that is correct."
-    echo "Install/upgrade locally:"
-    echo "    uv tool install --reinstall $(pwd)"
-    echo "On another machine:"
+    echo "Tagged {{version}} and created its GitHub Release."
+    echo "Install/upgrade:"
+    echo "    brew install noahkiss/tap/basic-memory"
+    echo "    brew upgrade basic-memory"
+    echo "Without the tap:"
     echo "    uv tool install --reinstall 'git+https://github.com/noahkiss/basic-memory@{{version}}'"
     echo
     echo "Migrations auto-apply on first run. Before upgrading across a schema"
     echo "change, snapshot the index:  cp ~/.basic-memory/memory.db{,.bak}"
     echo "Recovery if the index goes bad:  bm reset --reindex"
 
-# Show what `just release` would tag, without writing or pushing anything
+# Show what `just release` would tag and release, without writing or pushing anything
 release-preview version:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -503,7 +505,7 @@ release-preview version:
     echo "would tag:    {{version}}"
     echo "at commit:    $(git rev-parse --short HEAD)"
     echo "current desc: $(git describe --tags --always --dirty --match 'v[0-9]*')"
-    echo "__version__:  $(grep -m1 '^__version__' src/basic_memory/__init__.py | cut -d'"' -f2)"
+    echo "would release: gh release create {{version}} --repo noahkiss/basic-memory"
 
 # List all available recipes
 default:

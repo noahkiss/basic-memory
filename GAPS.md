@@ -316,6 +316,11 @@ distribution version.
 at HEAD: `bm --version` → `Basic Memory version: 0.22.2.dev120+79dc916e`, and a source tree that is
 not installed now says so explicitly rather than reporting a stale number.
 
+**FOLLOW-UP 2026-08-17, with the `v0.1.0` cut:** the release fallback literal `__version__ =
+"0.22.1"` is deleted. `_resolve_version()` takes no argument and returns `("0.0.0", False)` when no
+distribution is installed, so there is no stale number left in the tree to report and `just release`
+writes no files. The literal was the last thing keeping upstream's number in this repo.
+
 > **LABEL SWAP — `git log` will send you to the wrong commit, in both directions.** `9e4f3c8c`'s
 > message calls this work **T6**; it is T3. `7a09c015`'s message calls its frontmatter regression
 > test **T3**; it is T6 (now R-T6). Both commits are pushed, so the messages cannot be corrected

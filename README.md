@@ -30,22 +30,25 @@ search.
 - Free forever (AGPL-3.0)
 - All data on your disk
 - Air-gapped friendly
-- Requires Python via [`uv`](https://docs.astral.sh/uv/)
+
+Install from the Homebrew tap:
 
 ```bash
-git clone https://github.com/noahkiss/basic-memory
-cd basic-memory
-uv tool install .
+brew install noahkiss/tap/basic-memory
+```
+
+Upgrade later with `brew upgrade basic-memory`.
+
+Without the tap, install from the repository with
+[`uv`](https://docs.astral.sh/uv/) — append `@<tag>` or `@<sha>` to pin, or omit
+it to track `main`:
+
+```bash
+uv tool install git+https://github.com/noahkiss/basic-memory@v0.1.0
 ```
 
 This fork is not published to any package index. `uv tool install basic-memory`
-installs the *upstream* project of the same name, not this one. To install
-without a checkout, name the repository directly — append `@<tag>` or `@<sha>`
-to pin, or omit it to track `main`:
-
-```bash
-uv tool install git+https://github.com/noahkiss/basic-memory
-```
+installs the *upstream* project of the same name, not this one.
 
 [**Configure your client ↓**](#connect-your-ai-client)
 

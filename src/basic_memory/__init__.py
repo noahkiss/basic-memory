@@ -4,26 +4,26 @@ from importlib.metadata import PackageNotFoundError, version as _distribution_ve
 
 _DISTRIBUTION_NAME = "basic-memory"
 
-# Release fallback - rewritten in place by the `just release` recipe. It only moves on
-# release, so every build between two releases carries the same number and it cannot identify the
-# code that is running. Used only when no installed distribution exists (a bare source tree).
-__version__ = "0.22.1"
+# Constraint: a bare source tree has no distribution metadata, so there is no version to report.
+# We report this placeholder rather than a hardcoded release number, which would name a build that
+# is not the one running. Callers pair it with `__version_from_metadata__` to say so out loud.
+_UNINSTALLED_VERSION = "0.0.0"
 
 
-def _resolve_version(fallback: str) -> tuple[str, bool]:
+def _resolve_version() -> tuple[str, bool]:
     """Return the version to report, and whether it came from installed package metadata.
 
     Metadata is derived from git by uv-dynamic-versioning, so it names the build actually
-    installed (e.g. `0.22.2.dev120+79dc916e`). Callers that report the version to a human must
-    surface the second element: a fallback number is not the running code's version.
+    installed (e.g. `0.1.0` for a tagged release, `0.1.0.dev4+79dc916e` between tags). Callers
+    that report the version to a human must surface the second element: `0.0.0` is not a version.
     """
     try:
         return _distribution_version(_DISTRIBUTION_NAME), True
     except PackageNotFoundError:
-        return fallback, False
+        return _UNINSTALLED_VERSION, False
 
 
-__version__, __version_from_metadata__ = _resolve_version(__version__)
+__version__, __version_from_metadata__ = _resolve_version()
 
 # API version for FastAPI - independent of package version
 __api_version__ = "v2"
