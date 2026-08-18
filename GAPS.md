@@ -7149,7 +7149,7 @@ parsed relation list today, so it would need the parser to record which relation
 section and which from prose. That is real work for a check nothing currently needs, which is why
 this is a note rather than a task.
 
-### U21 — `.bm.yml` carries only the project name, so no script can find `store/<id>/headline.md` without calling `bm` — **OPEN**
+### U21 — `.bm.yml` carries only the project name, so no script can find `store/<id>/headline.md` without calling `bm` — **FIXED 2026-08-18**
 
 **Found 2026-08-18** while drafting the dotfiles cutover (W9's remaining half). Every shell/JS
 consumer of the headline — the statusline, `notify.sh`, the projects overview — must resolve
@@ -7165,6 +7165,28 @@ existing project too (`bm project mark`?) — spelling is the user's call. The r
 when present, falls back to `project:`. Store root rule for scripts = `resolve_data_dir()`:
 `$BASIC_MEMORY_CONFIG_DIR`, else `$XDG_CONFIG_HOME/basic-memory`, else `~/.basic-memory`. Gates
 the statusline cutover; ship before migration batch 2. Decision task in bm: `tnd-k233nmds`.
+
+**Fixed 2026-08-18.** A `.bm.yml` now carries two keys: `project: <name>` and `id: <external_id>`,
+where the id is the project's store directory name. `render_marker`/`write_marker` in
+`project_marker.py` own the write, `read_marker_id` the read, and `marker_conflict` the refusal —
+a marker naming a different project is never repointed, and `bm project add --here` asks that
+question *before* it creates the project, so a refusal leaves nothing behind.
+
+Two ways to get one. `bm project add <name> --here` writes it for a project it just created.
+`bm project mark [<name>]` writes or refreshes one for a project that already exists; with no
+argument it takes the name from the marker already in the directory, which is the retrofit path
+for every marker written before the id existed. `mark` is a native verb — it needs two columns of
+one registry row, read through the new `lookup_project_external_id` on the synchronous sqlite path
+— and `tests/cli/test_native_command_import_guard.py` covers it as `project-mark`.
+
+**Resolution still keys off `project:`.** The id is recorded for external consumers, not yet
+authoritative: making it so needs a decision about which key wins when the two disagree, and that
+question has no answer until every marker carries both. Stated in `read_marker_id`'s docstring.
+
+The store-root rule scripts must follow is in `README.md` under "Reading a project's files without
+running `bm`", as a shell snippet: `$BASIC_MEMORY_CONFIG_DIR`, else `$XDG_CONFIG_HOME/basic-memory`
+**when that variable is set**, else `~/.basic-memory`; headline at `<root>/store/<id>/headline.md`.
+`resolve_data_dir`'s own docstring had that order backwards and was fixed in the same pass.
 
 ### U22 — `[[x]]` inside inline code is indexed as a `links_to` relation — **FIXED 2026-08-18**
 
@@ -7209,6 +7231,40 @@ The procedure the 2026-08-17 pass followed. Every entry above came out of it.
 6. **Run the writes sequentially** — they allocate ids against one database.
 7. **Finish with `bm ls`, `bm brief`, `bm doctor`, `bm history dirty`.** Those four are the gate.
 8. **File every rough edge here in the same session.** A return visit does not happen.
+
+### U23 — a task could be open or closed and nothing else, so work set aside had to be dropped or left open — **FOUND + FIXED 2026-08-18**
+
+**Found 2026-08-18** (user decision): "not dropped forever but also not in our current set". The
+vocabulary's five statuses forced a choice between two wrong answers. Left `open`, a parked task
+sat in `bm brief` and took the derived headline, which is the one line a statusline shows — so the
+statusline advertised work nobody meant to do. Marked `dropped`, the record said the decision was
+reversed when it was only deferred.
+
+**Fixed 2026-08-18.** `shelved` joins `DEFAULT_VOCABULARY.statuses`, between `blocked` and `done`,
+which is where it sits in meaning: parked, not closed.
+
+The semantics live in `vocabulary/model.py` beside `TERMINAL_STATUSES`, because every caller that
+asks "is this task still open" has to get the same answer:
+
+- `PARKED_STATUSES = frozenset({"shelved"})`
+- `inactive_statuses(vocabulary)` = terminal ∪ parked, each half narrowed to the names the project
+  declares. The terminal half keeps its fallback — a project declaring no terminal name would leave
+  every task open forever — and the parked half has none, because "this project has no parked
+  state" is a real answer.
+
+`bm brief` and `services/headline.py` both read it, so a shelved task is neither listed as open nor
+counted as closed. `bm brief` prints one line under the open-tasks rows, `Shelved: N`, and never
+lists them: a parked pile is context, not something to act on. A brief whose only content is parked
+work stays empty.
+
+`bm types` explains it, through a new `STATUS_MEANINGS` in `vocabulary/glossary.py` — only statuses
+whose name does not speak for itself get a line, which today is `shelved` alone.
+
+**A project governed before today does not get it for free, and that is deliberate.** Its
+`vocabulary.yml` carries a full `statuses:` list, and a present key replaces the defaults outright,
+so `bm mark <id> shelved` is refused there. Humans extend the vocabulary; `bm` must not edit that
+file (W4). So the refusal names the fix instead: `'shelved' is not a status project 'x' declares.
+Allowed: …. Add it to <store>/<id>/vocabulary.yml to enable.`
 
 ## Docs swept
 
