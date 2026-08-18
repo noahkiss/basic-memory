@@ -6076,7 +6076,7 @@ either way, so no loss is silent at line granularity:
 
 **Opened 2026-08-17.** The first migration of this repo's own local tracking files into a governed
 bm project wrote 104 records in one pass (69 `finding`, 23 `task`, 10 `guide`, 1 `state`,
-1 `inbox`). Every entry below came out of that pass. **U7-U14 came out of the second pass**,
+1 `inbox`). Every entry below came out of that pass. **U7-U15 came out of the second pass**,
 the same day: the same corpus re-migrated with true dates once U1's six date flags existed, again
 104 records with the same type split. Nothing in U1-U6 recurred. They are usage defects, not build defects —
 each one was hit by an agent following the documented workflow, and none of them shows up in a
@@ -6087,6 +6087,13 @@ Three things worked without a complaint and are worth recording as the baseline:
 are exact and actionable (`only a task carries a status; '<id>' is a finding`; `'finished' is not a
 status this project declares. Allowed values: open, doing, blocked, done, dropped.`; `no record
 '<id>' in scope`).
+
+**Gate 2026-08-18 — U7 through U15 are all closed below**, in one pass, verified once centrally
+rather than per entry: `just fast-check` clean; `just test-unit-sqlite` 3727 passed (3680 baseline
++ 47 this pass); `just test-int-sqlite` 284 passed; `just doctor` pass. Live store after a
+`bm reindex`: 104 entities, the `vocabulary.yml` row retired, `bm status` 104 files / 0 unindexed.
+Each close block below states what changed and where; none of them restates the gate. **U16-U20
+were filed by the same pass** and are open.
 
 ### U1 — `bm new` cannot state a date it did not invent, and stamps `date-source: inline` to say so — **FIXED 2026-08-17**
 
@@ -6467,7 +6474,7 @@ summed) and print `(40, showing 5)` the way the standing sections now do, or dro
 count that is not known. The second is cheaper and the contract already names it; the first is
 better and costs one query per project.
 
-### U7 — an empty `bm brief` is still zero bytes, which W20 rule 5 forbids — **OPEN**
+### U7 — an empty `bm brief` is still zero bytes, which W20 rule 5 forbids — **FIXED 2026-08-18**
 
 W8's close block discharged the *broken* half of "an empty brief and a broken brief are the same
 silence" with `--verbose`, and left the *empty* half where it was, noting it "interacts with W20
@@ -6501,7 +6508,31 @@ answer.
 **Fix:** print the standing sections with a zero count, or one stated line — the rule is that an
 empty result is a result. Roughly the shape `bm ls` already uses.
 
-### U8 — `bm status` reports bm's own `headline.md` as an unindexed file, permanently — **OPEN**
+**Closed 2026-08-18**, taking the second option. `bm brief` states an empty result:
+`nothing open in 'scratchpilot'` when a project is pinned, `nothing open in any project` when the
+scope is the whole registry. The line is payload, so `--quiet` keeps it and the corpus notice still
+follows it — the trailing notice can no longer read as though it were the answer.
+
+- **It names the scope**, for the reason `render()` heads a filled brief with the project: an empty
+  brief over one project and an empty brief over the whole registry are different answers.
+- **No affordance.** *Judgment call.* Contract rule 4 makes affordances optional, and a "where to
+  write" hint is exactly the padding brief's own constraint 2 exists to keep out of a session-start
+  context window. `bm ls`'s affordance shape was deliberately not copied.
+- **The broken path stays silent.** `render()` is never reached when `gather` raises, so the new
+  line cannot claim "nothing open" about a read that failed. `--verbose` keeps its stderr line,
+  which is now the only thing that says where the scope came from.
+- `render()` still returns `""` for an empty brief — the fence and the "treat as data" preamble are
+  overhead around a line carrying no data.
+
+Files: `src/basic_memory/cli/commands/brief.py`, `README.md`.
+
+Tests added to `tests/cli/test_brief.py` (2):
+`test_brief_states_an_empty_result_instead_of_printing_nothing`,
+`test_brief_empty_result_line_is_absent_when_the_read_broke` (the positive control).
+`test_brief_verbose_distinguishes_an_empty_corpus` now asserts the stdout line as well as the
+stderr one. None removed.
+
+### U8 — `bm status` reports bm's own `headline.md` as an unindexed file, permanently — **FIXED 2026-08-18**
 
 W9 has every write derive `<store>/<id>/headline.md` for the statusline. It is bm's own output, it
 is not a record, and it is never indexed — so `bm status` reports it as a file that needs
@@ -6527,7 +6558,59 @@ exclusion mechanism — which already covers `_archive/` — is the place that s
 **Fix:** exclude the derived headline from the indexing path the way `_archive/` is excluded, so the
 count is honest and the advice is not self-defeating.
 
-### U9 — a governed project's `vocabulary.yml` is indexed as an entity — **OPEN**
+**Closed 2026-08-18, together with U9** — one exclusion covers both files, and the fix turned out to
+have two halves because the first one exposed the second.
+
+*Exclusion.* `ignore_utils.py` gained
+`DERIVED_FILE_IGNORE_PATTERNS = {"/headline.md", "/vocabulary.yml"}`, unioned into
+`load_gitignore_patterns()` ahead of the global `.bmignore`, the project `.bmignore` and the project
+`.gitignore`. W10 put every indexing consumer behind that one function, so the full scan
+(`index/local_project.py`), the watcher (`index/watch_service.py`) and the single-file index
+endpoint (`api/v2/routers/knowledge_router.py`) all pick it up with no further wiring, and no user
+file can switch it off — indexing bm's own output is never correct. The patterns are root-relative
+(a leading `/`, which `should_ignore_path` already honours), so a record named `headline.md` in a
+subdirectory still indexes; that half is the positive control. `bm status` needed no change of its
+own: `unindexed files` is `ProjectIndexObservation`'s arithmetic over the scan's output, so the
+honest count follows the exclusion.
+
+*Retirement.* The first live check found the existing `vocabulary.yml` row still in the `entity`
+table after a full reindex, which the first close block had claimed was impossible. Delete
+*planning* was correct — `indexing/change_planning.py` plans
+`deleted_files = all_db_paths - storage_paths - moved_old_paths`. The veto was at apply time:
+`indexing/project_index_maintenance.py` re-confirms every planned delete through
+`ProjectIndexDeletePathVerifier`, and the local implementation confirmed a path only by proving it
+*absent* — a guard added so a note written between snapshot and apply is never destroyed. An
+excluded file is present forever, so its row was planned, refused, and re-planned on every run.
+`LocalProjectIndexDeletePathVerifier` now also confirms a path the project no longer indexes,
+applying the scan's own two-step filter (`local_relative_path_is_filtered` plus
+`should_ignore_path`) against ignore patterns it loads exactly the way the scan does. The race the
+guard exists for is unaffected: a recreated markdown note is neither absent nor ignored.
+
+No migration. One reindex now retires these rows — and the same fix retires rows for any file a
+newly added `.bmignore` or `.gitignore` pattern excludes, which had the identical permanent-row bug
+before U8 and U9 existed.
+
+Files: `src/basic_memory/ignore_utils.py`, `src/basic_memory/index/local_project.py`.
+
+Tests added (6): `test_scan_excludes_bm_derived_and_control_files`,
+`test_scan_keeps_a_record_named_headline_below_the_root`,
+`test_status_counts_exclude_bm_derived_and_control_files`
+(`tests/index/test_local_project_scan_parity.py`);
+`test_derived_files_are_ignored_at_the_project_root_only` (`tests/cli/test_ignore_utils.py`);
+`test_local_project_index_delete_path_verifier_confirms_newly_ignored_paths`,
+`test_reindex_retires_a_row_whose_path_the_scan_no_longer_indexes`
+(`tests/index/test_local_project_index.py`, the second an end-to-end reindex over a seeded stale row
+with a real note as the positive control). None removed. Three tests in
+`tests/cli/test_ignore_utils.py` that asserted `patterns == DEFAULT_IGNORE_PATTERNS` now compare
+against a `BASELINE_PATTERNS` union — what they measure is "nothing custom was picked up", and the
+baseline is now both halves.
+
+**Seen and not fixed:** `importers/project_zip_import.py` filters with `DEFAULT_IGNORE_PATTERNS`
+directly rather than through `load_gitignore_patterns`, so it does not see the derived-file
+patterns. Harmless — an imported archive has no bm store files at its root — but it is the one
+indexing-adjacent path that bypasses the choke point.
+
+### U9 — a governed project's `vocabulary.yml` is indexed as an entity — **FIXED 2026-08-18**
 
 The control file that *defines* the corpus is in the corpus.
 
@@ -6548,7 +6631,13 @@ bm's own derived output, and the project's control file — and only the first k
 
 **Fix:** exclude `vocabulary.yml` on the indexing path; it is one pattern beside U8's.
 
-### U10 — a record deleted on disk keeps its row, and `bm doctor` calls that clean — **OPEN**
+**Closed 2026-08-18 with U8** — one `DERIVED_FILE_IGNORE_PATTERNS` set covers both files, and this
+entry's own row is the one that proved the exclusion alone was not enough: it survived a full
+reindex until the delete-path verifier learned to confirm a newly ignored path. See U8's close block
+above for the mechanism, the files and the tests. Verified live: after `bm reindex`, 104 entities
+and no `vocabulary.yml` row.
+
+### U10 — a record deleted on disk keeps its row, and `bm doctor` calls that clean — **FIXED 2026-08-18**
 
 The acceptance gate for a migration is the four commands in *Migrating a repo's tracking files*. One
 of them cannot see a record whose file is gone, which is the exact failure mode a hand-edit or an
@@ -6591,7 +6680,39 @@ the check that makes the four-command gate mean something.
 refuse the way `bm show` does, or that is deliberate (you may want the path in order to restore the
 file) — but it is currently silent about a condition `bm show` treats as an error.
 
-### U11 — `bm new` prints the absolute store path on every write, `--quiet` included — **OPEN**
+**Closed 2026-08-18.** `EntityRepository.list_indexed_files` returns every row's `file_path` and
+`permalink`; `_missing_files` in `cli/direct.py` stats each against the project's path and returns
+the rows with nothing behind them. They land in `ProjectIntegrityReport.missing_files` and count
+toward `issue_count`, so `bm doctor` prints `  <file>  missing-file  permalink=<id>` per row,
+followed by one `  repair: bm reindex -p '<project>'` line for the group. The check is in the
+`integrity` group, so `--only hygiene` does not pay for the stats.
+
+- **The stat loop lives above the repository**, in `cli/direct.py`. *Judgment call:* that layer
+  answers questions about the database, not about the disk.
+- **One repair line per group, not per row** — it is the same command for 1 or 100 files.
+- **`bm path` keeps its exit 0 and its bare-path stdout.** This entry called that deliberate, and it
+  is what you want in order to restore the file. It now also writes
+  `note: <id> is indexed but its file is missing — restore it, or run 'bm reindex -p <project>'`
+  to **stderr**, which a `$(bm path …)` command substitution does not capture.
+
+Verified against a real corpus: after `rm "$(bm path tnd-… -p scratchpilot)"`,
+`bm doctor -p scratchpilot --only integrity` reports the row, the repair, and `1 issue`.
+
+**Interaction with U8/U9, worth knowing:** an excluded file is now unindexed rather than deleted, so
+a `vocabulary.yml` someone removes by hand can no longer show up here — but any record file removed
+by hand does.
+
+Files: `src/basic_memory/repository/entity_repository.py`, `src/basic_memory/cli/direct.py`,
+`src/basic_memory/cli/commands/doctor.py`, `src/basic_memory/cli/commands/records.py`.
+
+Tests added (7): `tests/repository/test_entity_repository_missing_files.py` (3, real files, with an
+all-present control), two render tests in `tests/cli/test_doctor_command.py`, and two in
+`tests/cli/test_record_read_commands.py` (including the silent-when-healthy control). None removed.
+
+**Left open, filed below as U19:** `bm doctor` exits 0 even when it reports issues. Pre-existing,
+seen while closing this entry, and out of its scope.
+
+### U11 — `bm new` prints the absolute store path on every write, `--quiet` included — **FIXED 2026-08-18**
 
 ```
 $ bm new finding "Delete me A" -p scratchpilot --source "x.md#L1" \
@@ -6612,7 +6733,32 @@ it stays. That is consistent — the question is whether the path belongs in the
 **Fix:** print the store-relative path (`findings/tnd-pdem7knd--delete-me-a.md`), which is what the
 history subject line already uses, or drop the column and leave `bm path` as the way to get it.
 
-### U12 — a bare `bm reindex` dies on a raw traceback if any project's directory is missing — **OPEN**
+**Closed 2026-08-18**, taking the first option. `bm new` prints the project-relative path —
+`findings/tnd-…--delete-me-a.md` — which is the form the history subject line already uses. The
+absolute path was the longest field on the payload line, the one field guaranteed to differ between
+machines (so captured output was non-portable), and one the reader never chose, the store home being
+store-derived by design. `bm path <id>` remains the way to get the absolute path, so nothing is
+lost. The change is one expression: `path=result.file_path` replaces
+`f"{project.path}/{result.file_path}"`, `result.file_path` having always been project-relative.
+
+**`bm edit` prints the relative path too**, folded into this entry after the first pass left it out:
+every argument above applies to it, and `bm edit` was the other verb printing a path on every write.
+`WriteOutcome.detail` now carries a project-relative path from `edit_record`, and a one-line comment
+says so — `bm mark` and `bm done` put a status in the same field.
+
+Files: `src/basic_memory/cli/commands/new.py`, `src/basic_memory/cli/commands/record_write.py`.
+
+Tests: `tests/cli/test_new_command.py`'s `written_file()` joins the project home back on, and
+`test_new_prints_a_store_relative_path` asserts the payload shape and the absence of the store home
+from stdout. In `tests/cli/test_record_write_commands.py`, `payload_path()` keeps its meaning — an
+absolute path, which is what `bm path` prints — and gains a docstring saying so; a new
+`written_path(project, output)` joins the project home onto a write verb's payload, and the twelve
+`bm edit` call sites moved to it while the seven `bm path` call sites stayed. Added (2):
+`test_new_prints_a_store_relative_path`, `test_edit_prints_a_store_relative_path`. None removed.
+`test_edit_replaces_the_title_and_keeps_the_file_path` got stronger for free — it now also asserts
+the relative form resolves to the same absolute file `bm path` names.
+
+### U12 — a bare `bm reindex` dies on a raw traceback if any project's directory is missing — **FIXED 2026-08-18**
 
 ```
 $ bm reindex
@@ -6636,7 +6782,40 @@ same wall (`Error checking status: [Errno 2] No such file or directory: ...`).
 reindex the rest, exit non-zero. `bm brief` sets the precedent: one broken project must not silence
 or kill a whole-registry verb.
 
-### U13 — `bm ls` prints `1 records` — **OPEN**
+**Closed 2026-08-18**, as the fix describes. `_reindex` in `cli/commands/db.py` checks
+`Path(proj.path).is_dir()` before the per-project body. A project whose directory has gone prints
+`  skipped directory is missing: <path>` under its own heading, is collected, and the run
+continues; the command ends with `Reindex incomplete: N project(s) skipped — <names>` and exits 1,
+and `Reindex complete!` only prints when nothing was skipped. The same guard is in
+`_reindex_projects`, which `bm reset --reindex` uses over the same walk.
+
+`bm status` hit the same wall and gets the same shape: `run_status` returns a
+`StatusScan(reports, missing)` — the shape `direct_revalidate_vocabulary`'s `RevalidationScan`
+already established — so a missing project's status call is never made and the walk that raised is
+never reached. The verb prints the healthy sections to stdout, then one
+`Error: project '<name>' has no directory at <path>` per missing project on stderr, then exits 1.
+
+- **Both are `stat` pre-checks, not caught exceptions.** *Judgment call:* fail-fast stays intact, so
+  a genuine I/O failure still propagates. A directory deleted mid-run would still traceback —
+  accepted, and `bm status`'s `except Exception` catch-all is still what would catch it.
+
+Verified with two registered projects, one of whose directories was deleted: reindex and status each
+reported the healthy project, named the broken one, and exited 1 (checked unpiped).
+
+Files: `src/basic_memory/cli/commands/db.py`, `src/basic_memory/cli/commands/status.py`.
+
+Tests added (4): 2 in `tests/cli/test_status_scope.py`, 2 in `tests/cli/test_db_reindex.py`
+(including the "healthy registry still says complete and exits 0" control). **Test churn this
+forced, worth knowing about:** several existing status and reindex tests used fabricated paths
+(`/tmp/foo`, `/tmp/scratch`, `/tmp/alpha`) that do not exist, which the new guard would have turned
+into silent skip tests; they now use `tempfile.gettempdir()` behind a named constant with a comment
+naming this entry. Same for `_MOCK_PROJECT_ITEM` in `tests/cli/test_json_output.py`, a bare
+`MagicMock` with no `path` set, whose `Path(item.path)` was a MagicMock repr — five tests there
+turned into skip tests before it was given a real temp dir. Files touched by that churn:
+`tests/cli/test_status_scope.py`, `tests/cli/test_status_wait_timeout.py`,
+`tests/cli/test_db_reindex.py`, `tests/cli/test_json_output.py`. None removed.
+
+### U13 — `bm ls` prints `1 records` — **FIXED 2026-08-18**
 
 ```
 $ bm ls -p scratchpilot
@@ -6647,7 +6826,24 @@ tnd-dm9d3vcc  finding  -  Delete me B
 `bm new` gets it right (`1 record`) so the two count renderers disagree. Cosmetic, one line, filed
 because W19 spent a whole item on making this surface read like English.
 
-### U14 — a migration cannot connect a record to the record it came from — **OPEN**
+**Closed 2026-08-18.** `bm ls` pluralises its count line, so one record reads `1 record` the way
+`bm new` already printed it. There is no shared count renderer to reuse — `bm new`, `bm edit`,
+`bm mark` and `bm done` each hardcode the singular string, because each writes exactly one record —
+so this is one expression in `cli/commands/records.py` rather than a new abstraction.
+
+Four existing expectations of `1 records` were the defect written down, and were updated. One of
+them was a live cross-test hazard: `tests/cli/test_native_command_import_guard.py` matched the `ls`
+tail on `" records"` against a corpus it seeds with exactly one record; it now matches `"1 record"`.
+
+Files: `src/basic_memory/cli/commands/records.py`.
+
+Tests added (1): `test_ls_count_line_reads_as_english_at_every_count`
+(`tests/cli/test_record_read_commands.py`), which locks 0, 1 and 3 so the plural cannot be lost to
+the fix. Expectations updated in `tests/cli/test_record_read_commands.py` (3),
+`tests/cli/test_undo_command.py` (1) and `tests/cli/test_native_command_import_guard.py` (1). None
+removed.
+
+### U14 — a migration cannot connect a record to the record it came from — **FIXED 2026-08-18**
 
 `bm new` writes exactly one relation, `--supersedes`, and only between findings. Nothing else can be
 linked at write time, and `bm edit` moves a title and a body, so nothing can be linked afterwards
@@ -6671,7 +6867,72 @@ result is a flat corpus that keeps its provenance in prose.
 carries the meaning) on `bm new` and on `bm edit`, refusing an id no record in the project holds —
 the check `--supersedes` already performs.
 
-### U15 — with no registered project, `bm new` bootstraps a default project at `~/basic-memory` and writes there — **OPEN**
+**Closed 2026-08-18**, taking `--rel <type>:<id>`, repeatable, on both `bm new` and `bm edit`. A
+record can now be connected to the record it came out of, at write time or afterwards. The target id
+must name a record the project holds — the check `--supersedes` already made, now made for every
+edge — and the edge is written as `- <type> [[<id>]]` under `## Relations`, which is what
+`--supersedes` already wrote and what the markdown parser indexes.
+
+- **The relation type is closed vocabulary.** A new `relations:` key in `vocabulary.yml`, a plain
+  string list like `types:` and `statuses:`, defaulting to `relates_to`, `derived_from`,
+  `supersedes`. No per-relation mapping, no allowed source/target types, no cardinality. An
+  **absent** key means those three, not "no edges" — every vocabulary file written before this item
+  omits it, and reading omission as a refusal would turn `--rel` off for every project that exists.
+  A **present** key replaces the list outright, the way `types:` does.
+- **Enforcement is at the verb, not in `vocabulary/checker.py`.** *The judgment call worth
+  explaining.* The checker already receives a record's parsed relation types
+  (`accepted_note_relation_types` → `check_frontmatter(relation_types=…)`), so a
+  `relation-not-declared` rule there looked like the "same style as types and statuses" answer. It
+  is wrong: an inline `[[…]]` anywhere in a body parses to a relation of type `links_to`
+  (`markdown/plugins.py`), so a checker rule over that list would make every note whose prose links
+  to another note an error and block the write — the D8 `note`-type breakage again, one layer over.
+  The closed vocabulary governs **what a verb may write**, not how prose may link, so the check sits
+  beside `bm mark`'s status check in `cli/commands/record_write.py`, which is already how a *flag*
+  value is measured against the vocabulary. The consequence is filed below as **U20**.
+- **`--supersedes` is sugar over the general path** and keeps its own error text. Both flags build
+  one list of edges and one rendering path, so they cannot drift; each edge remembers which flag
+  produced it, so `--supersedes tnd-xxx` still fails with `--supersedes names 'tnd-xxx'`. It is
+  **exempt from the project's `relations:` list** — supersession is schema vocabulary
+  (`glossary.SUPERSEDES_RELATION`), already governed by the checker's `supersedes-not-on-type` rule,
+  so a project that narrowed its list has not thereby disabled the flag. `--rel supersedes:<id>`
+  *is* governed by the list, because it is a `--rel`.
+- **`bm edit --rel` appends and never replaces.** Existing edges are facts somebody recorded; an
+  edit that states one new link says nothing about the others. A bullet already present is skipped,
+  so re-running the same command is a re-run and not a duplicate edge. A record with no
+  `## Relations` section gets one at the end of the body; one that already has the heading gets the
+  bullets joined to it, after the last bullet of that section rather than at the end of the file — a
+  hand-edited record can carry prose after its relations. The write goes through `stack.update_note`
+  like every other edit, so the history records it. `--rel` alone satisfies the "nothing to change"
+  guard and suppresses `$EDITOR`, for the same reason `--title` and `--set` do.
+- **`bm types` prints relations with a sentence each**, unlike `statuses` and `areas`, which are bare
+  lists. `derived_from` versus `relates_to` is precisely the choice an agent gets wrong with no
+  guidance, and W19's rule is that the write path and `bm types` teach one vocabulary.
+
+Files: `src/basic_memory/vocabulary/model.py` (`DEFAULT_RELATIONS`, `Vocabulary.relations`,
+`_ALLOWED_KEYS`, the parser, `vocabulary_document`), `src/basic_memory/vocabulary/glossary.py`
+(`RELATION_MEANINGS`, `relation_meaning()`), `src/basic_memory/vocabulary/__init__.py`,
+`src/basic_memory/cli/record_notes.py` (`Relation`, `relation_line`, `parse_relations`,
+`check_relation_types`, `append_relations`; `record_markdown(relations=…)` replaces
+`record_markdown(supersedes=…)`), `src/basic_memory/cli/commands/new.py`,
+`src/basic_memory/cli/commands/record_write.py`, `src/basic_memory/cli/commands/types.py`,
+`README.md`.
+
+Tests added (13 `def test_`, 16 collected): `tests/cli/test_new_command.py` (5 defs, 8 collected —
+one parametrized), `tests/cli/test_record_write_commands.py` (3),
+`tests/cli/test_types_command.py` (2), `tests/vocabulary/test_vocabulary_model.py` (3). None
+removed. One assertion trap found and recorded in the helper's docstring: on resolution a relation's
+`to_name` is deliberately rewritten to the target's **title**
+(`indexing/relation_resolution.py`, `indexing/batch_indexer.py`), so identity lives on
+`to_id`/`to_entity`. `indexed_relations` now reads `to_entity.permalink`, which is byte-for-byte the
+id that was typed.
+
+**Three things left open by this entry**, all filed below: `bm edit --body` wipes an existing
+`## Relations` section (**U17**), `bm edit --rel` cannot touch a task or a finding (**U18**), and
+`bm doctor` does not judge relation types on records MCP or a hand edit wrote (**U20**). A fourth is
+noted and not filed: `--rel` accepts an edge whose target is any type, because nothing in the schema
+declares source/target rules to enforce.
+
+### U15 — with no registered project, `bm new` bootstraps a default project at `~/basic-memory` and writes there — **FIXED 2026-08-18**
 
 **Found 2026-08-17** by the re-migration agent, probing with `BASIC_MEMORY_CONFIG_DIR` pointed at
 an empty temp dir and cwd outside any marker. `bm new` did not refuse — it created a default
@@ -6697,6 +6958,163 @@ $ ls -d ~/basic-memory
 **Fix:** a native verb with no resolvable project must fail with "no project — run `bm project
 add <name> --governed`", not bootstrap one. Where the bootstrap lives (config load) and whether the
 MCP path still wants it are the questions; the verbs must not.
+
+**Closed 2026-08-18** — and **the entry's own reproduction no longer reproduced**, which is the part
+worth reading. `bm new` already refused in-tree, because `write_project_name` in
+`cli/record_notes.py` predates this pass; the entry was written against the installed release build,
+which does not carry it. The live defect was the *read and maintenance* verbs: `bm ls`, `bm doctor`,
+`bm types`, `bm status` and `bm reindex` each created `<home>/basic-memory` and a project `main`,
+and each exited 0.
+
+`ensure_project_registry` takes `bootstrap: bool = True` (`services/initialization.py`); the
+fresh-install branch returns early when it is False, while the legacy `config.json` import still runs
+— importing projects a user declared is not invention. Every native-verb entry passes
+`bootstrap=False`: `cli/direct.py` (six call sites), `index/local_write_stack.py`,
+`cli/commands/history.py`, and `cli/commands/db.py`'s two reindex paths. `bm types` was the last verb
+still bootstrapping, through `ensure_initialization`; it is now in `cli/app.py`'s
+`skip_init_commands`, where AGENTS.md's native-verb list already implied it belonged, which also
+removes a duplicate init it was paying for.
+
+- **Reads report empty, writes refuse.** *Judgment call.* `bm ls` → `0 records`, `bm doctor` → `No
+  projects to check.`, `bm types` → `no projects registered`, `bm project list` → `0 projects`, all
+  exit 0. Only a write is an error, because only a write needs a home. The message is the constant
+  `NO_PROJECT_MESSAGE` — `no project — run 'bm project add <name> --governed'` — raised by
+  `write_project_name`, which `new`, `edit`, `mark` and `done` all call before opening a database.
+- **A `bootstrap` kwarg, not a deleted branch**, so the local-ASGI seam (`mcp/async_client.py`) is
+  untouched and the MCP server still bootstraps. That is why `bm project add` on a fresh install
+  still leaves a `main` project behind — the remaining half, filed below as **U16**.
+- **One knock-on:** `bm project list` on a genuinely empty registry died with
+  `Error listing projects: No default project configured` at exit 1, because
+  `ProjectService.get_default_project_name` raises rather than returning `None`. `fetch_project_list`
+  now skips that lookup when there are no projects; the field was already Optional. The service
+  contract was left alone because the API reads it too.
+- **A second knock-on:** `tests/cli/test_native_command_import_guard.py`'s probe bootstrapped its
+  fixture by invoking `project list`, which no longer creates a registry. It now calls
+  `ensure_project_registry` directly, which imports nothing on the ban list.
+
+Files: `src/basic_memory/services/initialization.py`, `src/basic_memory/cli/direct.py`,
+`src/basic_memory/index/local_write_stack.py`, `src/basic_memory/cli/commands/history.py`,
+`src/basic_memory/cli/commands/db.py`, `src/basic_memory/cli/app.py`,
+`src/basic_memory/cli/record_notes.py`, `src/basic_memory/cli/commands/project.py`.
+
+Tests added (3): `tests/cli/test_no_project_bootstrap.py` — subprocess, temp HOME,
+`BASIC_MEMORY_HOME` deliberately unset, two of them parametrized over four commands each, plus a
+positive control that `ensure_project_registry` at its default *does* still create the directory.
+`tests/cli/test_native_command_import_guard.py` changed as described above. None removed.
+
+### U16 — `bm project add` on a fresh install still bootstraps a `main` project at `<home>/basic-memory` — **OPEN**
+
+**Found 2026-08-18** while closing U15, and it is the remaining half of it. U15 stopped every native
+verb from bootstrapping, by giving `ensure_project_registry` a `bootstrap=False` and passing it from
+the native entry points. `bm project add` is not a native verb: it is client-routed through the
+in-process ASGI app, so its bootstrap is the one in `mcp/async_client.py` (~line 200), which the
+local MCP server shares. That path was deliberately left alone — the MCP server genuinely does want
+a registry to exist before it serves — so the first `bm project add` on a fresh install still creates
+a project `main` rooted at `<home>/basic-memory`, outside the store, alongside the project the user
+asked for.
+
+The wound is smaller than U15's, because nothing is *written* to that project: it is a stray
+registry row and a stray empty directory, not a record filed somewhere invisible. But it is the same
+upstream "first run makes you a project" behaviour, surviving under a command whose contract is
+store-homed projects (D3), and it means a clean install cannot reach a state of exactly one project.
+
+**Fix:** decide what the ASGI seam should do when the registry is empty and the caller is
+`bm project add` — most likely thread the same `bootstrap=False` through, since the command is about
+to create a project itself and needs no default one. Whether the local MCP server still wants the
+bootstrap is the separable question; if it does, the seam needs two callers rather than one policy.
+
+### U17 — `bm edit --body` wipes an existing `## Relations` section — **OPEN**
+
+**Found 2026-08-18** while closing U14, and pre-existing — U14 only made it visible, by giving the
+relations a way to get there other than `--supersedes`.
+
+`bm edit --body` replaces the body wholesale, and the relations live in the body as
+`- <type> [[<id>]]` bullets under `## Relations`. So an edit that restates the prose silently drops
+every edge the record held, including one written by `--supersedes`, and nothing warns. The record
+is still valid, the graph is quietly smaller, and `bm doctor` cannot tell — a relation that no
+longer exists is not a dangling relation.
+
+**Fix:** `--body` should replace the prose and preserve the `## Relations` section, the way
+`--rel` appends to it rather than rewriting the body around it. The section is already parsed by
+`append_relations` in `cli/record_notes.py`, so the split point exists; `--body` needs to use it.
+The alternative — refuse `--body` on a record that carries relations — is worse, because the whole
+point of `--body` is to fix prose.
+
+### U18 — `bm edit --rel` cannot touch a task or a finding, so U14's own example still cannot be linked afterwards — **OPEN**
+
+**Found 2026-08-18** while closing U14. `_refuse_edit` allows `bm edit` only on the kept-current
+types, on the principle that a finding is evidence and a task is a record of what was decided —
+neither is a document you revise. `--rel` inherits that refusal, because it is a flag on `bm edit`.
+
+The consequence is exactly U14's motivating example. *The task `make bm brief --query report the
+number of matches` came out of a specific finding* — that pair can now be linked at `bm new` time
+with `--rel derived_from:<id>`, but only if the writer knows the other id when the second record is
+written. A migration that writes 69 findings and then 23 tasks does not: the finding ids exist by
+then, but the connection is usually noticed afterwards, on the read-back. For those records there is
+still no way to add the edge.
+
+Widening `bm edit` to accept a relations-only change on a task or a finding is defensible — it adds
+an edge, it does not rewrite evidence, and the record's own claims are untouched. But that is
+**a change in what the verb is**, which AGENTS.md's stop-list reserves for the user.
+
+**Fix — needs a decision, not an implementation.** The options are: (a) allow `--rel` on any type
+while `--title`, `--body` and `--set` keep the current refusal, so `bm edit` becomes two verbs
+wearing one name; (b) a separate `bm link <type> <from> <to>` that is never a document edit; (c)
+leave it, and accept that provenance must be known at write time. **Do not implement any of these
+without asking.**
+
+### U19 — `bm doctor` exits 0 even when it reports issues — **OPEN**
+
+**Found 2026-08-18** while closing U10, and pre-existing. `bm doctor` prints its integrity and
+hygiene rows and its `N issues` count, and then exits 0 whether the count is zero or not:
+
+```
+$ bm doctor -p scratchpilot --only integrity ; echo "exit=$?"
+integrity  project 'scratchpilot'
+  findings/tnd-…--delete-me-a.md  missing-file  permalink=tnd-…
+  repair: bm reindex -p 'scratchpilot'
+  1 issue
+exit=0
+```
+
+W2 made doctor the gate — the gardener's jobs are checks inside it, and the migration procedure ends
+with doctor as one of its four acceptance commands. A gate that always exits 0 cannot be a gate for
+anything automated: no hook, no `just` recipe and no CI step can act on it without parsing the text,
+which the output contract does not promise to keep stable.
+
+Note the contrast with the verbs closed the same day: U12 has `bm reindex` and `bm status` exit 1
+when they skip a project, and W20 rule 6 already says the exit code, not the payload, is what says a
+run failed.
+
+**Fix:** exit 1 when `issue_count > 0`. The open question is whether *hygiene* should count toward
+that or only *integrity* — hygiene rows are advisory (an unfiled inbox record is a legitimate
+resting state, per U5), so a doctor that exits 1 on hygiene alone would make the count unclosable
+again. The likely answer is integrity → exit 1, hygiene → exit 0 with the rows still printed, and
+`--strict` for anyone who wants both.
+
+### U20 — `bm doctor` does not judge relation *types* on records MCP or a hand edit wrote — **OPEN (design note, low priority)**
+
+**Recorded 2026-08-18** so the limit is on the ledger, not because it needs fixing. U14 put the
+closed vocabulary's `relations:` enforcement at the verb — `bm new` and `bm edit` refuse a `--rel`
+type the project does not declare — and deliberately *not* in `vocabulary/checker.py`.
+
+The reason is not effort. An inline `[[…]]` anywhere in a note's prose parses to a relation of type
+`links_to` (`markdown/plugins.py`), and the checker receives that list through
+`accepted_note_relation_types`. A `relation-not-declared` rule there would therefore refuse every
+note whose body links to another note — the D8 `note`-type breakage repeated one layer up. So the
+closed vocabulary governs **what a verb may write**, not how prose may link.
+
+The consequence, stated plainly: an edge of any type written by the MCP tools, by a hand edit, or by
+an importer is never reported by `bm doctor`. Dangling relations are still reported (T4) and
+`supersedes` is still governed on the type it appears on (`supersedes-not-on-type`); it is only the
+*type vocabulary* of a relation that goes unchecked outside the verbs.
+
+**Fix, if it is ever wanted:** a checker rule that judges only edges written as
+`- <type> [[<id>]]` bullets under `## Relations` — the form the verbs write — and ignores relations
+the markdown parser derived from inline prose links. That distinction does not survive into the
+parsed relation list today, so it would need the parser to record which relations came from the
+section and which from prose. That is real work for a check nothing currently needs, which is why
+this is a note rather than a task.
 
 ### Migrating a repo's tracking files
 
