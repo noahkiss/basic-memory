@@ -95,6 +95,22 @@ PROBE_SOURCE = (
 
     _asyncio.run(_bootstrap_registry())
 
+    if command[:2] == ["project", "mark"]:
+        # `mark` writes a marker for a *registered* project, and the bootstrap
+        # above is what registered one. Its name is read here rather than baked
+        # into the parametrization because the bootstrap derives it from this
+        # probe's temp environment.
+        import sqlite3
+
+        from basic_memory.config_models import DATABASE_NAME, resolve_data_dir
+
+        connection = sqlite3.connect(resolve_data_dir() / DATABASE_NAME)
+        default_name = connection.execute(
+            "SELECT name FROM project WHERE is_default = 1"
+        ).fetchone()[0]
+        connection.close()
+        command = [*command, default_name]
+
     if command[0] == "types":
         # `bm types` renders nothing but the ungoverned line until a vocabulary
         # file exists, so give it one — the guard has to cover the full render.
@@ -251,11 +267,14 @@ PROBE_SOURCE = (
 # empty tail because its payload is not a count line and is not last: it states an
 # empty result (GAPS U7) and runs without --quiet, so a notice may follow it. The
 # else branch below asserts that line instead.
+# `project mark` prints labelled lines rather than a count, and the last one is
+# the marker it wrote, so its tail is the marker's filename (GAPS U21).
 # `ls` seeds exactly one record, so its count line is singular (GAPS U13).
 # `show` matches the seeded file's last body line and
 # `path` its file path, because neither verb prints a count (VERBS_PLAN D9).
 NATIVE_COMMANDS = (
     (["project", "list"], " projects"),
+    (["project", "mark"], ".bm.yml"),
     (["types", "--quiet"], " types"),
     (["mine", "sqlite", "--quiet"], " turns"),
     (["doctor", "--quiet"], "No issues"),
@@ -306,6 +325,7 @@ def _probe(tmp_path, banned, command=("project", "list"), tail=" projects"):
     NATIVE_COMMANDS,
     ids=[
         "project-list",
+        "project-mark",
         "types",
         "mine",
         "doctor",

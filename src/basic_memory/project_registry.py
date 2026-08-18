@@ -85,3 +85,21 @@ def lookup_project(identifier: str) -> tuple[str, str] | tuple[None, None]:
     if rows:
         return rows[0][0], rows[0][1]
     return None, None
+
+
+def lookup_project_external_id(identifier: str) -> tuple[str, str] | tuple[None, None]:
+    """Resolve a project by name or permalink, returning ``(name, external_id)``.
+
+    Separate from ``lookup_project`` rather than widening its return: the path
+    and the external id answer different questions — where a project's files sit
+    versus which store directory is its own — and every existing caller wants
+    the path. `bm project mark` wants the id, and it is the reason this exists
+    (GAPS U21): the marker it writes records the store directory name.
+    """
+    rows = _query(
+        "SELECT name, external_id FROM project WHERE is_active = 1 AND (name = ? OR permalink = ?)",
+        (identifier, generate_permalink(identifier)),
+    )
+    if rows:
+        return rows[0][0], rows[0][1]
+    return None, None

@@ -14,8 +14,12 @@ import pytest
 from basic_memory.project_marker import (
     MarkerError,
     find_marker,
+    marker_conflict,
+    read_marker_id,
     read_marker_project,
+    render_marker,
     resolve_cli_project,
+    write_marker,
 )
 
 
@@ -83,6 +87,82 @@ def test_read_marker_bad_project_value_raises(tmp_path, content):
     marker.write_text(content)
     with pytest.raises(MarkerError, match="non-empty string"):
         read_marker_project(marker)
+
+
+# --- read_marker_id (GAPS U21) ---
+
+
+def test_read_marker_id(tmp_path):
+    marker = tmp_path / ".bm.yml"
+    marker.write_text("project: research\nid: 12345678-1234-1234-1234-123456789012\n")
+    assert read_marker_id(marker) == "12345678-1234-1234-1234-123456789012"
+
+
+def test_read_marker_id_absent_returns_none(tmp_path):
+    """Every marker written before U21 carries the name alone."""
+    marker = tmp_path / ".bm.yml"
+    marker.write_text("project: research\n")
+    assert read_marker_id(marker) is None
+
+
+def test_read_marker_id_bad_value_raises(tmp_path):
+    marker = tmp_path / ".bm.yml"
+    marker.write_text("project: research\nid: []\n")
+    with pytest.raises(MarkerError, match="non-empty string"):
+        read_marker_id(marker)
+
+
+def test_marker_id_does_not_change_resolution(tmp_path, write_registry_file):
+    """Resolution keys off `project:`. The id is recorded, not yet authoritative."""
+    write_registry_file({"named": str(tmp_path)}, default="named")
+    (tmp_path / ".bm.yml").write_text("project: named\nid: some-other-projects-id\n")
+    assert resolve_cli_project(None, tmp_path) == "named"
+
+
+# --- render_marker / write_marker / marker_conflict (GAPS U21) ---
+
+
+def test_render_marker_is_two_plain_lines():
+    """Shell consumers grep it line by line, so the shape is part of the contract."""
+    assert render_marker("research", "abc-123") == "project: research\nid: abc-123\n"
+
+
+def test_write_marker_writes_both_keys(tmp_path):
+    marker = write_marker(tmp_path, "research", "abc-123")
+    assert marker == tmp_path / ".bm.yml"
+    assert read_marker_project(marker) == "research"
+    assert read_marker_id(marker) == "abc-123"
+
+
+def test_write_marker_retrofits_a_name_only_marker(tmp_path):
+    """The U21 retrofit path: same project, so the file is rewritten with its id."""
+    (tmp_path / ".bm.yml").write_text("project: research\n")
+    marker = write_marker(tmp_path, "research", "abc-123")
+    assert read_marker_id(marker) == "abc-123"
+
+
+def test_write_marker_refuses_a_foreign_marker(tmp_path):
+    (tmp_path / ".bm.yml").write_text("project: someone-else\n")
+    with pytest.raises(MarkerError, match="already names project 'someone-else'"):
+        write_marker(tmp_path, "research", "abc-123")
+    # Refusing means refusing to write, not writing and then complaining.
+    assert (tmp_path / ".bm.yml").read_text() == "project: someone-else\n"
+
+
+def test_marker_conflict_reports_only_a_different_name(tmp_path):
+    assert marker_conflict(tmp_path, "research") is None
+
+    (tmp_path / ".bm.yml").write_text("project: research\n")
+    assert marker_conflict(tmp_path, "research") is None
+
+    (tmp_path / ".bm.yml").write_text("project: other\n")
+    assert marker_conflict(tmp_path, "research") == "other"
+
+
+def test_marker_conflict_ignores_a_marker_without_a_project_key(tmp_path):
+    """A marker kept for other purposes claims no project, so nothing conflicts."""
+    (tmp_path / ".bm.yml").write_text("id: abc-123\n")
+    assert marker_conflict(tmp_path, "research") is None
 
 
 # --- resolve_cli_project chain ---

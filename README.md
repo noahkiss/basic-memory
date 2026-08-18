@@ -77,7 +77,7 @@ id. `bm` is the short name for `basic-memory`; both run the same commands.
 | `bm show <id>` | Print a record's file, exactly as it is on disk. |
 | `bm path <id>` | Print a record's file path and nothing else, for `$EDITOR "$(bm path <id>)"`. |
 | `bm edit <id>` | Change a record that is kept current: a guide, profile, state, or inbox note (`--rel` alone is allowed on any type — an edge rewrites nothing). `--body` replaces the prose and keeps the record's `## Relations` section. `--set name=value` writes a field the project declares, on a profile. `--rel type:id` adds a link to another record, and on its own works on every type — a task and a finding included. |
-| `bm mark <id> <status>` | Set a task's status. |
+| `bm mark <id> <status>` | Set a task's status: `open`, `doing`, `blocked`, `shelved`, `done`, or `dropped`. `shelved` parks a task — `bm brief` counts it instead of listing it, and `bm mark <id> open` revives it. |
 | `bm done <id>` | Close a task. Exactly `bm mark <id> done`. |
 | `bm types` | Show the types, statuses, areas, and relation types this project allows. |
 | `bm brief` | Print what is open, as a session-start orientation (below). |
@@ -87,7 +87,9 @@ id. `bm` is the short name for `basic-memory`; both run the same commands.
 | `bm undo` | Put the note store back to the content it held before its last change. |
 | `bm doctor` | Check the notes against the index and report what needs a person. Exits 1 when integrity found something; hygiene alone exits 0, `--strict` exits 1 on either. |
 | `bm status` | Report what is indexed and what is not. |
-| `bm project list` | List projects. `project add` creates one; `project info` describes one. |
+| `bm project list` | List projects. `project info` describes one. |
+| `bm project add <name>` | Create a project, homed in the store. `--governed` turns the schema checks on; `--here` also writes a `.bm.yml` in the current directory pointing at it. |
+| `bm project mark [<name>]` | Point the current directory at a project by writing its `.bm.yml`. With no name it refreshes the marker that is already there, which is how a marker written before `bm` recorded ids gains one. |
 
 ### Dates on a record
 
@@ -124,6 +126,32 @@ says so on each write.
 Which project a command uses: `--project`, then the nearest `.bm.yml` above the
 working directory. A read with neither covers every project; a write with neither
 goes to the default project.
+
+### Reading a project's files without running `bm`
+
+A `.bm.yml` carries two keys — `project:`, the name, and `id:`, the project's
+store directory. Any `bm` command costs at least 0.15 s, which is too slow for a
+statusline, so a script reads the store directly instead:
+
+```bash
+if [ -n "$BASIC_MEMORY_CONFIG_DIR" ]; then
+    root="$BASIC_MEMORY_CONFIG_DIR"
+elif [ -n "$XDG_CONFIG_HOME" ]; then
+    root="$XDG_CONFIG_HOME/basic-memory"
+else
+    root="$HOME/.basic-memory"
+fi
+id=$(sed -n 's/^id: //p' .bm.yml)
+cat "$root/store/$id/headline.md"
+```
+
+`bm` resolves the store root the same way, in that order — note that
+`XDG_CONFIG_HOME` counts only when it is set, and does not fall back to
+`~/.config`. Do not read the `projects` map in `config.json`: it is legacy import
+state, not the registry.
+
+A marker written before `bm` recorded ids carries `project:` alone. Run
+`bm project mark` in that directory once to fill the `id:` in.
 
 ## Session briefings
 

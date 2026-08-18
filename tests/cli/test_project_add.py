@@ -17,6 +17,7 @@ import basic_memory.cli.commands.project  # noqa: F401
 # module scope, so CLI startup stays off it (GAPS.md T30). Patch the source
 # module, which the function-local import resolves against at call time.
 import basic_memory.mcp.async_client as async_client_module
+from basic_memory.project_marker import read_marker_id, read_marker_project
 
 
 @pytest.fixture
@@ -253,3 +254,98 @@ def test_project_add_announces_when_the_default_moves(runner, mock_config, monke
 
     assert result.exit_code == 0, f"Exit code: {result.exit_code}, Stdout: {result.stdout}"
     assert "default project" in result.stdout
+
+
+# --- `--here`: the marker `bm project add` leaves behind (GAPS U21) ---
+
+
+@pytest.fixture
+def stub_create_project(monkeypatch, tmp_path, registry_external_id):
+    """Answer `ProjectClient.create_project` without a server, for any name.
+
+    `--here` runs after the create, so these tests need the create to succeed
+    and to say nothing about the marker — the marker is written from the
+    registry, not from this response.
+    """
+
+    @asynccontextmanager
+    async def fake_get_client():
+        yield object()
+
+    async def fake_create_project(self, project_data):
+        return ProjectStatusResponse.model_validate(
+            {
+                "message": f"Project '{project_data['name']}' added successfully",
+                "status": "success",
+                "default": False,
+                "old_project": None,
+                "new_project": {
+                    "id": 1,
+                    "external_id": registry_external_id(project_data["name"]),
+                    "name": project_data["name"],
+                    "path": str(tmp_path / "store"),
+                    "is_default": False,
+                },
+            }
+        )
+
+    monkeypatch.setattr(async_client_module, "get_client", fake_get_client)
+    monkeypatch.setattr(ProjectClient, "create_project", fake_create_project)
+
+
+def test_project_add_here_writes_both_marker_keys(
+    runner,
+    mock_config,
+    stub_create_project,
+    write_registry_file,
+    registry_external_id,
+    monkeypatch,
+    tmp_path,
+):
+    """`--here` is what makes `store/<id>/` reachable without a `bm` call."""
+    work = tmp_path / "work"
+    work.mkdir()
+    monkeypatch.chdir(work)
+    write_registry_file({"research": str(tmp_path / "store")}, default="research")
+
+    result = runner.invoke(app, ["project", "add", "research", "--here"])
+
+    assert result.exit_code == 0, result.output
+    marker = work / ".bm.yml"
+    assert read_marker_project(marker) == "research"
+    assert read_marker_id(marker) == registry_external_id("research")
+    assert str(marker) in result.stdout
+
+
+def test_project_add_without_here_writes_no_marker(
+    runner, mock_config, stub_create_project, write_registry_file, monkeypatch, tmp_path
+):
+    """Positive control for the test above: the marker is the flag's doing."""
+    work = tmp_path / "work"
+    work.mkdir()
+    monkeypatch.chdir(work)
+    write_registry_file({"research": str(tmp_path / "store")}, default="research")
+
+    result = runner.invoke(app, ["project", "add", "research"])
+
+    assert result.exit_code == 0, result.output
+    assert not (work / ".bm.yml").exists()
+
+
+def test_project_add_here_refuses_a_foreign_marker(
+    runner, mock_config, stub_create_project, write_registry_file, monkeypatch, tmp_path
+):
+    """The refusal comes before the create, so nothing is left half-done."""
+    work = tmp_path / "work"
+    work.mkdir()
+    (work / ".bm.yml").write_text("project: someone-else\n")
+    monkeypatch.chdir(work)
+    write_registry_file({"research": str(tmp_path / "store")}, default="research")
+
+    result = runner.invoke(app, ["project", "add", "research", "--here"])
+
+    assert result.exit_code == 1, result.output
+    assert "already names project 'someone-else'" in result.output
+    assert (work / ".bm.yml").read_text() == "project: someone-else\n"
+    # Contract rule 6: nothing lands on stdout on the error path.
+    assert result.stdout == ""

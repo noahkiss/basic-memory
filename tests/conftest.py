@@ -135,6 +135,18 @@ def config_home(tmp_path, monkeypatch) -> Path:
     return tmp_path
 
 
+def external_id_for(name: str) -> str:
+    """The synthetic ``external_id`` :func:`write_project_registry` gives a project.
+
+    Real ids are UUID4, which a test cannot predict and so cannot assert on. A
+    name-derived id is stable across calls, which is what lets a test written
+    against `bm project mark` state the exact id it expects in the marker.
+    """
+    from basic_memory.utils import generate_permalink
+
+    return f"external-{generate_permalink(name)}"
+
+
 def write_project_registry(projects: dict[str, str], default: str | None = None) -> Path:
     """Write the on-disk project registry the synchronous reader sees.
 
@@ -159,21 +171,41 @@ def write_project_registry(projects: dict[str, str], default: str | None = None)
     connection = sqlite3.connect(database_path)
     try:
         connection.execute(
+            # `external_id` is on the real table and is what the store keys off,
+            # so a projection that omitted it would make `lookup_project_
+            # external_id` fail here for a reason no production run can hit.
             "CREATE TABLE IF NOT EXISTS project ("
             "id INTEGER PRIMARY KEY, name TEXT, permalink TEXT, path TEXT, "
-            "is_active INTEGER, is_default INTEGER)"
+            "external_id TEXT, is_active INTEGER, is_default INTEGER)"
         )
         connection.execute("DELETE FROM project")
         for name, path in projects.items():
             connection.execute(
-                "INSERT INTO project (name, permalink, path, is_active, is_default) "
-                "VALUES (?, ?, ?, 1, ?)",
-                (name, generate_permalink(name), path, 1 if name == default else None),
+                "INSERT INTO project (name, permalink, path, external_id, is_active, is_default) "
+                "VALUES (?, ?, ?, ?, 1, ?)",
+                (
+                    name,
+                    generate_permalink(name),
+                    path,
+                    external_id_for(name),
+                    1 if name == default else None,
+                ),
             )
         connection.commit()
     finally:
         connection.close()
     return database_path
+
+
+@pytest.fixture
+def registry_external_id():
+    """Fixture wrapper around :func:`external_id_for`.
+
+    A fixture rather than an import: `tests/cli/` has no ``__init__.py``, so its
+    modules are imported top-level and ``tests.conftest`` is not reliably on the
+    path from them.
+    """
+    return external_id_for
 
 
 @pytest.fixture

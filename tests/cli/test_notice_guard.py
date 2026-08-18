@@ -44,6 +44,12 @@ EXEMPT: dict[tuple[str, str], str] = {
     # read (W5-C), and its own output already names `bm history dirty`. The next
     # read verb carries the notice, as it does after `bm db reindex`.
     ("history.py", "undo"): "a store-scoped mutation; its scope is the repo, not a project",
+    # `bm project mark` writes the marker in cwd from one registry row (name and
+    # external id); it opens no project's corpus, so there is nothing to notice.
+    (
+        "project.py",
+        "mark_project",
+    ): "writes .bm.yml from a registry row; reads no project's records",
     # Importers are one-shot writes into one project.
     ("import_chatgpt.py", "import_chatgpt"): "a one-shot import, not a read",
     ("import_claude_conversations.py", "import_claude"): "a one-shot import, not a read",

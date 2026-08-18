@@ -10,10 +10,15 @@ The marker is a **pointer, not a container**: it sits at the root of a working
 directory (usually a code repo you run `bm` from) and never has note content
 beside it. Note content lives only in the central store at `store/<id>/`.
 
-The marker's full schema (the store id that `bm history`/`bm undo` will key
-off) is owned by the store design and not built yet. This module reads one
-key — `project:` — and ignores everything else, so it stays forward-compatible
-with whatever the marker grows into.
+A marker carries two keys and ignores everything else, so it stays
+forward-compatible with whatever it grows into:
+
+- `project:` — the project name, and the key **resolution** uses.
+- `id:` — the project's `external_id`, which is also its store directory name.
+
+The id is written for consumers that cannot afford a `bm` call: a statusline
+reads `store/<id>/headline.md` directly, and the 0.15 s floor for any `bm`
+invocation is too slow for something that re-renders constantly (GAPS U21).
 
 Parsing here is strict: a marker that exists but cannot be read, or whose
 `project:` value is not a non-empty string, raises `MarkerError`. A silent
@@ -48,13 +53,8 @@ def find_marker(start: Path) -> Optional[Path]:
     return None
 
 
-def read_marker_project(marker: Path) -> Optional[str]:
-    """Read the `project:` key out of a `.bm.yml`, strictly.
-
-    Returns None when the key is absent (a marker may exist for other
-    purposes). Raises MarkerError when the file is unreadable, is not a YAML
-    mapping, or carries a `project:` value that is not a non-empty string.
-    """
+def _read_marker_mapping(marker: Path) -> dict:
+    """Load a `.bm.yml` as a mapping, strictly. An empty file is an empty mapping."""
     # Deferred: PyYAML stays off the --version floor.
     import yaml
 
@@ -64,16 +64,96 @@ def read_marker_project(marker: Path) -> Optional[str]:
         raise MarkerError(f"Unreadable project marker {marker}: {exc}") from exc
 
     if data is None:
-        return None
+        return {}
     if not isinstance(data, dict):
         raise MarkerError(f"Invalid project marker {marker}: expected a YAML mapping")
-    if "project" not in data:
+    return data
+
+
+def _read_marker_key(marker: Path, key: str) -> Optional[str]:
+    """Read one string key out of a marker, or None when it is absent."""
+    data = _read_marker_mapping(marker)
+    if key not in data:
         return None
 
-    value = data["project"]
+    value = data[key]
     if not isinstance(value, str) or not value.strip():
-        raise MarkerError(f"Invalid project marker {marker}: 'project' must be a non-empty string")
+        raise MarkerError(f"Invalid project marker {marker}: '{key}' must be a non-empty string")
     return value.strip()
+
+
+def read_marker_project(marker: Path) -> Optional[str]:
+    """Read the `project:` key out of a `.bm.yml`, strictly.
+
+    Returns None when the key is absent (a marker may exist for other
+    purposes). Raises MarkerError when the file is unreadable, is not a YAML
+    mapping, or carries a `project:` value that is not a non-empty string.
+    """
+    return _read_marker_key(marker, "project")
+
+
+def read_marker_id(marker: Path) -> Optional[str]:
+    """Read the `id:` key — the project's `external_id` — out of a `.bm.yml`.
+
+    Returns None for every marker written before GAPS U21, which carried the
+    name alone; `bm project mark` is the retrofit that fills them in.
+
+    **Resolution still keys off `project:`, not this.** The id is recorded for
+    external consumers that must reach `store/<id>/` without paying for a `bm`
+    invocation. Making it authoritative for resolution is a later step: it would
+    need a decision about which key wins when a marker's two keys disagree, and
+    that question has no answer until every marker carries both.
+    """
+    return _read_marker_key(marker, "id")
+
+
+def render_marker(project: str, external_id: str) -> str:
+    """The two-key marker document, hand-written rather than dumped by PyYAML.
+
+    A marker is read by shell and JS consumers as often as by `bm`, and several
+    of them grep it line by line. Emitting the two keys in a fixed order, one per
+    line, unquoted, is what keeps `grep '^id:'` a valid way to read it — a YAML
+    dump reserves the right to reorder or quote, and a working marker would then
+    stop parsing for reasons nothing in this tree would explain.
+
+    Neither value can need quoting: a project name is registry-validated and an
+    external id is a UUID4.
+    """
+    return f"project: {project}\nid: {external_id}\n"
+
+
+def marker_conflict(directory: Path, project: str) -> Optional[str]:
+    """The name a marker in `directory` already carries, when it is not `project`.
+
+    Returns None when there is no marker, when it names this same project, or
+    when it carries no `project:` key at all — those three are all "safe to
+    write". Exposed separately from `write_marker` so a caller that must refuse
+    *before* it does other work can ask the question first.
+    """
+    marker = directory / MARKER_FILENAME
+    if not marker.is_file():
+        return None
+    existing = read_marker_project(marker)
+    return existing if existing is not None and existing != project else None
+
+
+def write_marker(directory: Path, project: str, external_id: str) -> Path:
+    """Write `<directory>/.bm.yml` for `project`, and return where it landed.
+
+    Refuses when a marker is already there naming a *different* project: that
+    directory is somebody else's working tree, and silently repointing it would
+    send every later write in it to the wrong project. A marker naming this same
+    project is rewritten, which is how a name-only marker gains its `id:`.
+    """
+    if conflict := marker_conflict(directory, project):
+        raise MarkerError(
+            f"{directory / MARKER_FILENAME} already names project '{conflict}'; "
+            f"remove it first to mark this directory as '{project}'"
+        )
+
+    marker = directory / MARKER_FILENAME
+    marker.write_text(render_marker(project, external_id), encoding="utf-8")
+    return marker
 
 
 def resolve_cli_project(explicit: Optional[str], cwd: Optional[Path] = None) -> Optional[str]:

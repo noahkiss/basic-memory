@@ -50,10 +50,13 @@ def _default_semantic_search_enabled() -> bool:
 def resolve_data_dir() -> Path:
     """Resolve the Basic Memory data directory.
 
-    Single source of truth for the per-user state directory. Honors
-    ``BASIC_MEMORY_CONFIG_DIR`` so each process/worktree can isolate config
-    and database state; otherwise falls back to ``<user home>/.basic-memory``,
-    and then to ``XDG_CONFIG_HOME``.
+    Single source of truth for the per-user state directory, and the rule any
+    script that reads the store has to follow (GAPS U21). In order:
+    ``BASIC_MEMORY_CONFIG_DIR``, so each process/worktree can isolate config and
+    database state; then ``$XDG_CONFIG_HOME/basic-memory`` when that variable is
+    set; then ``<user home>/.basic-memory``. ``XDG_CONFIG_HOME`` does **not**
+    fall back to ``~/.config`` — an unset variable means the home directory
+    branch, not the XDG default.
 
     Cross-platform: ``Path.home()`` reads ``$HOME`` on POSIX and
     ``%USERPROFILE%`` on Windows, so there's no need to check ``$HOME``

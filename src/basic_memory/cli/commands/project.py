@@ -95,6 +95,78 @@ def list_projects(
     emit_notices(ReadScope(project=None, origin="unscoped"), quiet=quiet, command="project list")
 
 
+def mark_here(name: str) -> None:
+    """Write the current directory's `.bm.yml` for a registered project (GAPS U21).
+
+    Both the marker's keys are resolved from the registry rather than taken from
+    the caller: `project:` is the registered spelling of the name, so a marker
+    written from a permalink still resolves, and `id:` is the project's
+    `external_id`, which is also its store directory name.
+
+    Reads the registry through the synchronous sqlite path, not the service
+    layer — the marker write needs two columns of one row, and this keeps the
+    verb off the SQLAlchemy import (AGENTS.md, "Measured baseline").
+    """
+    from basic_memory.project_marker import MarkerError, write_marker
+    from basic_memory.project_registry import lookup_project_external_id
+
+    registered, external_id = lookup_project_external_id(name)
+    if registered is None or external_id is None:
+        raise fail(f"Error: '{name}' is not a registered project (see 'bm project list')")
+
+    try:
+        marker = write_marker(Path.cwd(), registered, external_id)
+    except MarkerError as error:
+        raise fail(f"Error: {error}")
+    except OSError as error:
+        raise fail(f"Error: could not write the marker: {error}")
+
+    # Contract rule 1: a single record renders as labelled lines. `marker:` is
+    # last because it is the longest value and the one a reader scans for.
+    typer.echo(f"project: {registered}")
+    typer.echo(f"id: {external_id}")
+    typer.echo(f"marker: {marker}")
+
+
+@project_app.command("mark")
+def mark_project(
+    name: Optional[str] = typer.Argument(
+        None, help="Project to mark. Defaults to the name the existing .bm.yml carries."
+    ),
+) -> None:
+    """Point the current directory at a project by writing its `.bm.yml`.
+
+    The marker records the project's name **and** its store id, so a script can
+    reach `<store>/<id>/headline.md` without paying for a `bm` invocation. This
+    is also the retrofit path: a marker written before the id existed carries
+    only the name, and `bm project mark` with no argument fills the id in.
+
+    Refuses when the directory's marker names a different project — that tree
+    belongs to something else. Remove the marker first.
+
+    Examples:
+        bm project mark research
+        bm project mark
+    """
+    if name is None:
+        from basic_memory.project_marker import MARKER_FILENAME, MarkerError, read_marker_project
+
+        # Only this directory's own marker, never one walked up to: `mark` writes
+        # here, and defaulting the name from a parent's marker would silently
+        # adopt that project into a subdirectory the caller never named.
+        marker = Path.cwd() / MARKER_FILENAME
+        try:
+            name = read_marker_project(marker) if marker.is_file() else None
+        except MarkerError as error:
+            raise fail(f"Error: {error}")
+        if name is None:
+            raise fail(
+                "Error: no .bm.yml here to refresh — name the project: bm project mark <name>"
+            )
+
+    mark_here(name)
+
+
 @project_app.command("add")
 def add_project(
     name: str = typer.Argument(..., help="Name of the project"),
@@ -106,6 +178,11 @@ def add_project(
         False,
         "--governed",
         help="Write the default record vocabulary, so every write to this project is checked.",
+    ),
+    here: bool = typer.Option(
+        False,
+        "--here",
+        help="Write a .bm.yml in the current directory pointing at the new project.",
     ),
     quiet: bool = typer.Option(False, "--quiet", help="Hide the status lines and next-step hints"),
 ) -> None:
@@ -121,9 +198,29 @@ def add_project(
     `note` alongside the six record types, so an ordinary note still has a home in
     a governed project — what governance costs is that every write is checked.
 
+    `--here` leaves a `.bm.yml` in the current directory, so every `bm` command
+    run from it means this project without naming it.
+
     Example:
         bm project add research
     """
+    # Decision point: the marker conflict is checked before the project is
+    # created, not after it is written.
+    # Why: refusing after the create would leave a registered project behind and
+    #     report a failure, so the caller could not tell what had happened.
+    # Outcome: a foreign marker fails the whole command with nothing created.
+    if here:
+        from basic_memory.project_marker import MarkerError, marker_conflict
+
+        try:
+            conflict = marker_conflict(Path.cwd(), name)
+        except MarkerError as error:
+            raise fail(str(error))
+        if conflict:
+            raise fail(
+                f"Error: this directory's .bm.yml already names project '{conflict}'; "
+                f"remove it first to mark it as '{name}'"
+            )
     # Resolve to absolute path. None stays None: it means "no import source", and
     # the service gives the project its store-derived home (decision D3).
     resolved_path = (
@@ -156,6 +253,12 @@ def add_project(
         raise fail(f"Error adding project: {e}")
 
     typer.echo(result.message)
+
+    # The marker is written from the registry, after the create: the project's
+    # `external_id` is assigned by the service, and the registry is where it is
+    # readable without depending on what the response happened to carry.
+    if here:
+        mark_here(name)
 
     # Trigger: the caller named a directory instead of taking the store default.
     # Why: notes outside `store/<id>/` are not in the history repo's worktree, so
