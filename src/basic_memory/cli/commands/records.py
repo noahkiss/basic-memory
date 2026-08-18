@@ -272,3 +272,18 @@ def path(
         raise fail(f"Error: '{record_id}' is in more than one project ({exc}) — name one with -p")
 
     typer.echo(record.path)
+
+    # Trigger: the row resolved but its file is gone (GAPS U10).
+    # Why: `bm show` calls this an error and exits 1, and this verb stayed silent
+    #     — so the same condition read as fine here. Refusing would be wrong
+    #     though: the path is exactly what you want in order to restore the file,
+    #     and the verb exists to be substituted into another command.
+    # Outcome: the path still goes to stdout at exit 0, so `$EDITOR "$(bm path
+    #     …)"` is unchanged; the warning goes to stderr, where a substitution
+    #     does not capture it but a human still sees it.
+    if not record.path.exists():
+        typer.echo(
+            f"note: {record.record_id} is indexed but its file is missing — restore it, "
+            f"or run 'bm reindex -p {record.project}' to drop the row",
+            err=True,
+        )

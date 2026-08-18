@@ -18,6 +18,7 @@ from typer.testing import CliRunner
 import basic_memory.cli.commands.doctor as doctor_cmd
 from basic_memory.cli.app import app
 from basic_memory.cli.direct import (
+    MissingFile,
     ProjectDoctorReport,
     ProjectHygieneReport,
     ProjectIntegrityReport,
@@ -318,6 +319,51 @@ def test_doctor_unknown_project_fails_loudly(monkeypatch):
 
     assert result.exit_code == 1
     assert "Error: Project not found: 'nope'" in result.stderr
+
+
+def test_doctor_reports_a_record_whose_file_is_gone(stub_report):
+    """A row with no file behind it is an integrity issue, named with its repair (GAPS U10)."""
+    stub_report(
+        [
+            ProjectDoctorReport(
+                project_name="scratchpilot",
+                integrity=ProjectIntegrityReport(
+                    missing_files=[
+                        MissingFile(
+                            file_path="findings/tnd-pdem7knd--delete-me-a.md",
+                            permalink="tnd-pdem7knd",
+                        ),
+                        MissingFile(file_path="findings/orphan.md", permalink=None),
+                    ]
+                ),
+            )
+        ]
+    )
+
+    result = runner.invoke(app, ["doctor", "--only", "integrity", "--quiet"])
+
+    assert result.exit_code == 0, result.output
+    lines = result.stdout.strip().splitlines()
+    assert lines[1] == (
+        "  findings/tnd-pdem7knd--delete-me-a.md  missing-file  permalink=tnd-pdem7knd"
+    )
+    # A row with no permalink still has to print, and its columns must not shift.
+    assert lines[2] == "  findings/orphan.md  missing-file  permalink=-"
+    # One repair line for the group, naming the project the reindex has to be
+    # pointed at — nothing pointed at the repair before.
+    assert lines[3] == "  repair: bm reindex -p 'scratchpilot'"
+    assert lines[4] == "  2 issues"
+
+
+def test_doctor_names_no_repair_when_no_file_is_missing(stub_report):
+    """The repair line rides on the rows, so a clean corpus must not print it."""
+    stub_report([ProjectDoctorReport(project_name="alpha")])
+
+    result = runner.invoke(app, ["doctor", "--only", "integrity", "--quiet"])
+
+    assert result.exit_code == 0, result.output
+    assert "repair:" not in result.stdout
+    assert "missing-file" not in result.stdout
 
 
 def test_doctor_empty_registry_is_a_result(stub_report):

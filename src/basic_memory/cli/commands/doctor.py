@@ -49,6 +49,11 @@ GROUPS = (INTEGRITY, HYGIENE)
 
 NO_ISSUES = "  No issues"
 
+# Introduces the one repair line the missing-file check prints (GAPS U10). The
+# rows above it name what is broken; this names the single command that fixes
+# all of them, which is what nothing pointed at before.
+MISSING_FILE_REPAIR_PREFIX = "  repair: "
+
 # W19 item 5: a fixed list of next verbs, no conditions and no memory. `--quiet`
 # is the only thing that suppresses it.
 AFFORDANCES = (
@@ -107,6 +112,13 @@ def render_integrity(report: "ProjectDoctorReport") -> list[str]:
         if issue.issue == "drift":
             detail += f"  frontmatter={issue.frontmatter_permalink}"
         lines.append(f"  {issue.file_path}  permalink-{issue.issue}  {detail}")
+    for missing in integrity.missing_files:
+        lines.append(f"  {missing.file_path}  missing-file  permalink={missing.permalink or '-'}")
+    if integrity.missing_files:
+        # The repair is stated once for the group, not once per row: it is the
+        # same command whether one file is gone or a hundred, and repeating it on
+        # every line would bury the paths that differ (GAPS U10).
+        lines.append(f"{MISSING_FILE_REPAIR_PREFIX}bm reindex -p '{report.project_name}'")
     lines.extend(_violation_lines(integrity.errors))
 
     if integrity.issue_count == 0:

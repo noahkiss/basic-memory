@@ -49,6 +49,14 @@ class PermalinkIntegrityIssue:
 
 
 @dataclass(frozen=True, slots=True)
+class IndexedFile:
+    """One indexed entity, as the pair needed to check it still exists on disk."""
+
+    file_path: str
+    permalink: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class HygieneRecord:
     """One record a hygiene check wants a person to look at (GAPS W2).
 
@@ -140,6 +148,26 @@ class EntityRepository(Repository[Entity]):
                     )
                 )
         return issues
+
+    async def list_indexed_files(self, session: AsyncSession) -> List[IndexedFile]:
+        """Every indexed entity's project-relative file path and permalink.
+
+        The caller cross-checks these against the filesystem (GAPS U10): a row
+        whose file was deleted on disk survives the delete, and every count and
+        every search still includes it. The stat loop stays out of the repository
+        — this layer answers questions about the database, not about the disk —
+        so the query is deliberately unfiltered and cheap.
+        """
+        query = (
+            select(Entity.file_path, Entity.permalink)
+            .where(Entity.project_id == self.project_id)
+            .order_by(Entity.file_path.asc())
+        )
+        result = await session.execute(query)
+        return [
+            IndexedFile(file_path=file_path, permalink=permalink)
+            for file_path, permalink in result.all()
+        ]
 
     # --- Hygiene: the checks that need a person, not a right answer (GAPS W2) ---
     #

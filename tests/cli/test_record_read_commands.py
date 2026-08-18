@@ -559,6 +559,35 @@ def test_path_on_an_unknown_id_exits_one() -> None:
     assert result.stdout.strip() == ""
 
 
+def test_path_warns_on_stderr_when_the_file_is_gone() -> None:
+    """GAPS U10: still exit 0 with the path — you want it in order to restore the file.
+
+    `bm show` calls the same state an error and exits 1. `bm path` cannot: it
+    exists to be substituted into another command, and the path is the useful
+    answer even when nothing is behind it. The warning goes to stderr, which a
+    command substitution does not capture.
+    """
+    seeded = seed(BASIC_CORPUS)
+    seeded.file(MAIN, FINDING["file_path"]).unlink()
+
+    result = runner.invoke(app, ["path", "tnd-cccc3333", "--project", MAIN])
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout.strip() == str(seeded.file(MAIN, FINDING["file_path"]))
+    assert "tnd-cccc3333 is indexed but its file is missing" in result.stderr
+    assert "bm reindex -p main" in result.stderr
+
+
+def test_path_says_nothing_on_stderr_when_the_file_is_there() -> None:
+    """Control for the warning above: a healthy record must stay silent."""
+    seed(BASIC_CORPUS)
+
+    result = runner.invoke(app, ["path", "tnd-cccc3333", "--project", MAIN])
+
+    assert result.exit_code == 0, result.output
+    assert result.stderr.strip() == ""
+
+
 def test_an_unscoped_lookup_finds_a_record_in_any_project() -> None:
     """Reads roll up by default; `bm show <id>` should not need `cd` first."""
     seed({MAIN: [TASK], BETA: [FINDING]})

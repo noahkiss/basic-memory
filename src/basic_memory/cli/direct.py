@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from basic_memory.models import Entity, Project
     from basic_memory.repository.entity_repository import (
         HygieneRecord,
+        IndexedFile,
         PermalinkIntegrityIssue,
     )
     from basic_memory.repository.relation_repository import UnresolvedRelationReportRow
@@ -189,16 +190,30 @@ STALE_STATE_DAYS = 30
 
 
 @dataclass(frozen=True, slots=True)
+class MissingFile:
+    """One indexed record whose file is no longer on disk (GAPS U10)."""
+
+    file_path: str
+    permalink: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class ProjectIntegrityReport:
     """One project's integrity findings: the checks that have right answers."""
 
     unresolved: "list[UnresolvedRelationReportRow]" = field(default_factory=list)
     permalink_issues: "list[PermalinkIntegrityIssue]" = field(default_factory=list)
+    missing_files: list[MissingFile] = field(default_factory=list)
     errors: "list[ViolationRow]" = field(default_factory=list)
 
     @property
     def issue_count(self) -> int:
-        return len(self.unresolved) + len(self.permalink_issues) + len(self.errors)
+        return (
+            len(self.unresolved)
+            + len(self.permalink_issues)
+            + len(self.missing_files)
+            + len(self.errors)
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -220,6 +235,25 @@ class ProjectHygieneReport:
             + len(self.inbox)
             + len(self.advisories)
         )
+
+
+def _missing_files(project_path: Path, indexed: "Sequence[IndexedFile]") -> list[MissingFile]:
+    """Which indexed rows have no file behind them any more (GAPS U10).
+
+    Files are the source of truth, so a row without one is stale index, not a
+    record: `bm ls` still lists it, search still returns it, and every count
+    still includes it — while `bm show` on the same id exits 1 saying the file is
+    gone. One `stat` per row is the only honest check, and the rows are already
+    in memory from the query beside it.
+
+    Ordering follows the query (file path ascending), so a corpus that did not
+    change reports the same rows twice.
+    """
+    return [
+        MissingFile(file_path=row.file_path, permalink=row.permalink)
+        for row in indexed
+        if not (project_path / row.file_path).exists()
+    ]
 
 
 @dataclass(frozen=True, slots=True)
@@ -296,6 +330,9 @@ async def direct_doctor_report(
                         ).find_unresolved_relation_report(session)
                     ),
                     permalink_issues=await entities.find_permalink_integrity_issues(session),
+                    missing_files=_missing_files(
+                        Path(project.path), await entities.list_indexed_files(session)
+                    ),
                     errors=await violations.list_for_project(session, project.id, severity="error"),
                 )
 
