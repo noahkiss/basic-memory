@@ -581,7 +581,12 @@ def _brief(*sections: Section, project: str | None = "p", query_text: str | None
 
 
 def test_render_empty_is_silent():
-    """The concession that earns the hook its slot: nothing open, nothing printed."""
+    """No payload means no markdown — not one placeholder heading, not one fence.
+
+    The verb, not the renderer, is what states the empty result (GAPS U7): the
+    "treat this as data" preamble and the fence are pure overhead around a line
+    that carries no data.
+    """
     assert render(_brief(Section("Open tasks"))) == ""
 
 
@@ -752,13 +757,49 @@ def test_brief_verbose_names_the_broken_read(monkeypatch, capsys):
 
 
 def test_brief_verbose_distinguishes_an_empty_corpus(monkeypatch, capsys):
-    """The other half: nothing open reads differently from nothing working."""
+    """The other half: nothing open reads differently from nothing working.
+
+    Both halves print now (GAPS U7). stdout states the result and names the
+    scope; only stderr says where that scope came from, which is the diagnostic
+    --verbose was added for.
+    """
     _run_brief(monkeypatch, _scope(None), Brief(project=None), verbose=True)
 
     captured = capsys.readouterr()
-    assert captured.out == ""
+    assert captured.out.strip() == "nothing open in any project"
     assert "nothing open" in captured.err
     assert "all projects" in captured.err
+
+
+def test_brief_states_an_empty_result_instead_of_printing_nothing(monkeypatch, capsys):
+    """GAPS U7: zero bytes made an empty brief, a new project and a broken scope one output.
+
+    Contract rule 5 — an empty result is a result. The line is payload, so it
+    survives --quiet, and it names the scope the way the payload header would.
+    """
+    _run_brief(monkeypatch, _scope("scratchpilot"), Brief(project="scratchpilot"), verbose=False)
+
+    captured = capsys.readouterr()
+    assert captured.out.strip() == "nothing open in 'scratchpilot'"
+    assert captured.err == ""
+
+
+def test_brief_empty_result_line_is_absent_when_the_read_broke(monkeypatch, capsys):
+    """The positive control for the test above: a broken brief must stay silent.
+
+    U7 states the *empty* result. Constraint 3 still owns the *broken* one — a
+    failed read that printed "nothing open" would assert something it never
+    checked.
+    """
+    _run_brief(
+        monkeypatch,
+        _scope("ghost"),
+        UnknownProject("unknown project 'ghost'"),
+        verbose=False,
+    )
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
 
 
 def test_brief_prints_the_payload_and_says_nothing_else(monkeypatch, capsys):

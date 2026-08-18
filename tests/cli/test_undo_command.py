@@ -311,7 +311,7 @@ def test_undo_of_a_create_takes_the_record_out_of_the_index(project: Path) -> No
     commit([path], "create notes/tasks")
     index()
 
-    assert ls_lines()[-1] == "1 records"
+    assert ls_lines()[-1] == "1 record"
 
     assert runner.invoke(app, ["undo", "--quiet"]).exit_code == 0
 

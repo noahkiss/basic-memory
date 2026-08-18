@@ -134,8 +134,9 @@ count of the unfiled inbox. Guides and profiles get no rows — they are consult
 on demand, and listing them would make the brief a table of contents.
 
 It reads every project unless `--project` or a `.bm.yml` above the working
-directory pins one. It prints nothing when nothing is open; use `--verbose` to
-see on stderr why a brief came back empty.
+directory pins one. When nothing is open it says so in one line
+(`nothing open in 'myproject'`); use `--verbose` to see on stderr why a brief
+came back empty.
 
 `bm brief --query "<text>"` searches instead, printing one line per hit —
 permalink and title, never note content. A search that matches nothing says

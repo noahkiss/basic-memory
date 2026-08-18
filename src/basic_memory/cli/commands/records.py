@@ -155,8 +155,10 @@ def ls(
         typer.echo(line)
 
     # Contract rule 3: the count closes the listing, on its own line. Rule 5: an
-    # empty result is a result — `0 records`, exit 0.
-    typer.echo(f"{len(listing.rows)} records")
+    # empty result is a result — `0 records`, exit 0. The singular matches what
+    # `bm new` already prints for one write (GAPS U13).
+    count = len(listing.rows)
+    typer.echo(f"{count} record{'' if count == 1 else 's'}")
 
     if listing.truncated and not quiet:
         typer.echo(f"more records match — raise --limit above {limit}")

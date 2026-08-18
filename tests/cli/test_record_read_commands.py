@@ -189,6 +189,23 @@ def test_ls_lists_every_record_with_a_count_line() -> None:
     assert any(line.startswith("tnd-aaaa1111") and "open" in line for line in lines)
 
 
+def test_ls_count_line_reads_as_english_at_every_count() -> None:
+    """GAPS U13: `bm ls` printed `1 records`; `bm new` already printed `1 record`.
+
+    Zero and three are the positive controls — the plural must survive the fix.
+    """
+    seed(BASIC_CORPUS)
+
+    def count_line(*filters: str) -> str:
+        result = runner.invoke(app, ["ls", "--project", MAIN, "--quiet", *filters])
+        assert result.exit_code == 0, result.output
+        return result.stdout.strip().splitlines()[-1]
+
+    assert count_line() == "3 records"
+    assert count_line("--type", "finding") == "1 record"
+    assert count_line("--type", "guide") == "0 records"
+
+
 def test_ls_filters_by_type() -> None:
     seed(BASIC_CORPUS)
 
@@ -197,7 +214,7 @@ def test_ls_filters_by_type() -> None:
     assert result.exit_code == 0, result.output
     assert "tnd-cccc3333" in result.stdout
     assert "tnd-aaaa1111" not in result.stdout
-    assert result.stdout.strip().splitlines()[-1] == "1 records"
+    assert result.stdout.strip().splitlines()[-1] == "1 record"
 
 
 def test_ls_filters_by_status() -> None:
@@ -253,7 +270,7 @@ def test_a_pinned_listing_leaves_the_project_column_out() -> None:
 
     assert result.exit_code == 0, result.output
     assert BETA not in result.stdout
-    assert result.stdout.strip().splitlines()[-1] == "1 records"
+    assert result.stdout.strip().splitlines()[-1] == "1 record"
 
 
 def test_limit_caps_the_rows_and_says_more_match() -> None:
@@ -305,7 +322,7 @@ def test_a_note_without_a_record_type_is_not_listed() -> None:
     assert "notes/plain" not in result.stdout
     # Positive control: the corpus can produce a row, and did.
     assert "tnd-aaaa1111" in result.stdout
-    assert result.stdout.strip().splitlines()[-1] == "1 records"
+    assert result.stdout.strip().splitlines()[-1] == "1 record"
 
 
 def test_ls_marks_a_superseded_record_in_the_status_column() -> None:

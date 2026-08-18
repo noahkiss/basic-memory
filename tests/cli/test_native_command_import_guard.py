@@ -45,6 +45,10 @@ RECORD_ID = "tnd-guard0001"
 RECORD_FILE = "tasks/tnd-guard0001--seed.md"
 RECORD_BODY = f"---\nid: {RECORD_ID}\ntype: task\n---\n\nseeded for the import guard\n"
 
+# What `bm brief` prints over this probe's empty corpus. The probe runs from an
+# unmarked temp cwd, so the scope is every project (GAPS U7).
+BRIEF_EMPTY_LINE = "nothing open in any project"
+
 # The placeholder a write-verb probe carries where the seeded record's id goes.
 # The id is drawn at random by `bm new`, so it cannot be baked into the table.
 SEEDED = "<seeded>"
@@ -54,6 +58,7 @@ SEEDED = "<seeded>"
 PROBE_SOURCE = (
     f"RECORD_ID = {RECORD_ID!r}\nRECORD_FILE = {RECORD_FILE!r}\n"
     f"RECORD_BODY = {RECORD_BODY!r}\nSEEDED = {SEEDED!r}\n"
+    f"BRIEF_EMPTY_LINE = {BRIEF_EMPTY_LINE!r}\n"
 ) + textwrap.dedent(
     """
     import json
@@ -69,11 +74,26 @@ PROBE_SOURCE = (
 
     runner = CliRunner()
 
-    # Bootstrap: opening the database is what creates the project registry, and
-    # a project-scoped verb needs one to resolve against. `project list` is a
-    # native command itself, so it cannot smuggle a banned import in here.
-    bootstrap = runner.invoke(app, ["project", "list"])
-    assert bootstrap.exit_code == 0, bootstrap.output
+    # Bootstrap: a project-scoped verb needs a registry to resolve against, and
+    # no native verb creates one any more — they all pass bootstrap=False so a
+    # read can never invent a project at ~/basic-memory (GAPS U15). So call the
+    # bootstrap directly, the way `bm project add` would have left things. It
+    # imports nothing on the ban list, so it cannot mask a crossing.
+    import asyncio as _asyncio
+
+    async def _bootstrap_registry():
+        from basic_memory import db as _db
+        from basic_memory.config import ConfigManager as _ConfigManager
+        from basic_memory.services.initialization import (
+            ensure_project_registry as _ensure_project_registry,
+        )
+
+        try:
+            await _ensure_project_registry(_ConfigManager().config)
+        finally:
+            await _db.shutdown_db()
+
+    _asyncio.run(_bootstrap_registry())
 
     if command[0] == "types":
         # `bm types` renders nothing but the ungoverned line until a vocabulary
@@ -213,11 +233,11 @@ PROBE_SOURCE = (
         # command rendered a payload rather than exiting early on a swallowed error.
         assert result.stdout.strip().splitlines()[-1].endswith(tail), result.stdout
     else:
-        # `bm brief` prints nothing when nothing is open, and it swallows every
-        # failure to keep a session start alive, so there is no payload to match.
-        # An empty stdout is the assertion: anything printed here would be a
-        # traceback or a notice, and the import question is answered either way.
-        assert result.stdout.strip() == "", result.stdout
+        # `bm brief` is the one verb whose payload is not a count line: it states
+        # an empty result and nothing else here (GAPS U7). It runs without
+        # --quiet, deliberately — that keeps the notice path inside the import
+        # measurement — so the payload is the *first* line, not the last.
+        assert result.stdout.strip().splitlines()[0] == BRIEF_EMPTY_LINE, result.stdout
 
     print(json.dumps([name for name in banned if name in sys.modules]))
     """
@@ -227,10 +247,12 @@ PROBE_SOURCE = (
 # line — the assertion that proves the command rendered rather than exiting
 # early. `types`, `mine` and `doctor` run --quiet so the count line is last, not
 # the affordance. `doctor` checks a corpus with nothing in it, so its last line
-# is the hygiene section's empty-result line rather than a count. `brief` has an
-# empty tail because it prints nothing on an empty corpus by design — it is the
-# most latency-sensitive verb in the tree, so it is guarded despite carrying no
-# payload to match against. `show` matches the seeded file's last body line and
+# is the hygiene section's empty-result line rather than a count. `brief` keeps an
+# empty tail because its payload is not a count line and is not last: it states an
+# empty result (GAPS U7) and runs without --quiet, so a notice may follow it. The
+# else branch below asserts that line instead.
+# `ls` seeds exactly one record, so its count line is singular (GAPS U13).
+# `show` matches the seeded file's last body line and
 # `path` its file path, because neither verb prints a count (VERBS_PLAN D9).
 NATIVE_COMMANDS = (
     (["project", "list"], " projects"),
@@ -238,7 +260,7 @@ NATIVE_COMMANDS = (
     (["mine", "sqlite", "--quiet"], " turns"),
     (["doctor", "--quiet"], "No issues"),
     (["brief"], ""),
-    (["ls", "--quiet"], " records"),
+    (["ls", "--quiet"], "1 record"),
     (["show", RECORD_ID, "--quiet"], "seeded for the import guard"),
     (["path", RECORD_ID], RECORD_FILE),
     (["new", "task", "Guard record", "--body", "seeded", "--quiet"], "1 record"),

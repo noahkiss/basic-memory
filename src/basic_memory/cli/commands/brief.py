@@ -13,11 +13,13 @@ Three constraints shape the whole file, and each one is a reversal of how upstre
    `entity` table directly through SQLAlchemy: no HTTP, no MCP. `--query` reaches the
    FTS index through the repository layer, which is on the same direct path.
 
-2. **It must be silent when it has nothing to say.** No setup nudges, no "where to write"
-   guidance, no placeholder headings. An empty brief prints nothing at all and exits 0.
-   A stale or padded blob at the top of a context window is worse than no blob. The one
-   exception is `--query`: a search someone typed gets `0 results` rather than silence,
-   because an unanswered question is not the same as a quiet corpus (contract rule 5).
+2. **It must be nearly silent when it has nothing to say.** No setup nudges, no "where to
+   write" guidance, no placeholder headings — a stale or padded blob at the top of a
+   context window is worse than no blob. But *nothing at all* is not a result: a new
+   project, a project whose work is all closed, and a scope holding no projects were one
+   output, and the trailing corpus notice then read as though it were the answer. So an
+   empty brief costs exactly one stated line (`nothing open in …`), and `--query` gets
+   `0 results` — an empty result is a result (contract rule 5, GAPS U7).
 
 3. **It must never break a session start.** Every failure path degrades to empty output.
    `--verbose` adds a stated reason on stderr, because an empty brief and a broken one
@@ -532,6 +534,18 @@ def _heading_count(section: Section) -> str:
     return str(total)
 
 
+def empty_brief_line(scope: ReadScope) -> str:
+    """The one line an empty brief prints (GAPS U7).
+
+    It names the scope for the same reason `render` heads the payload with the
+    project: an empty brief over one project and an empty brief over the whole
+    registry are different answers, and a bare "nothing open" would be a third
+    output that means either.
+    """
+    where = f"'{scope.project}'" if scope.project is not None else "any project"
+    return f"nothing open in {where}"
+
+
 def render(brief: Brief) -> str:
     """Render to markdown, or to the empty string when there is nothing to report."""
     if brief.is_empty:
@@ -627,9 +641,9 @@ def brief(
     roll-up covers active projects only.
 
     `--query` turns the same command into a pointer-shaped search: one line per
-    hit, permalink and title, never note content. Prints nothing when there is
-    nothing open. Intended for a SessionStart hook, but it is an ordinary command
-    and is worth running by hand.
+    hit, permalink and title, never note content. Prints one stated line when
+    there is nothing open. Intended for a SessionStart hook, but it is an
+    ordinary command and is worth running by hand.
     """
     # Trigger: any failure at all — unusable marker, unknown project, missing or locked
     # database, un-migrated schema, malformed config or vocabulary.
@@ -646,11 +660,16 @@ def brief(
             typer.echo(output[:MAX_BRIEF_CHARS])
         elif query_text is not None:
             # Contract rule 5: a well-scoped search that matched nothing is a result.
-            # Silence is only right for the standing brief, which nobody asked a
-            # question of.
             typer.echo("0 results")
-        elif verbose:
-            typer.echo(f"brief: nothing open — {scope.describe()}", err=True)
+        else:
+            # Contract rule 5 again (GAPS U7). Payload, so `--quiet` keeps it and the
+            # notices still follow it. One line and no affordance: rule 4 makes the
+            # affordance optional, and "where to write" guidance is the padding
+            # constraint 2 above exists to keep out of a session-start context window.
+            typer.echo(empty_brief_line(scope))
+            if verbose:
+                # The payload names the scope; only this names where it came from.
+                typer.echo(f"brief: nothing open — {scope.describe()}", err=True)
 
         # A project the brief could not read is reported whether or not the rest
         # of the brief had anything to say: the sections it would have
