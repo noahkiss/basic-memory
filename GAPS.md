@@ -7149,6 +7149,23 @@ parsed relation list today, so it would need the parser to record which relation
 section and which from prose. That is real work for a check nothing currently needs, which is why
 this is a note rather than a task.
 
+### U21 — `.bm.yml` carries only the project name, so no script can find `store/<id>/headline.md` without calling `bm` — **OPEN**
+
+**Found 2026-08-18** while drafting the dotfiles cutover (W9's remaining half). Every shell/JS
+consumer of the headline — the statusline, `notify.sh`, the projects overview — must resolve
+`.bm.yml → store/<id>/headline.md` without a `bm` call (the 0.15 s floor is too slow for a
+statusline; W9 point 1). The marker holds `project: <name>`; the name→id map lives in the DB, so no
+script can make the hop. `AGENTS.md` already says "the id in [the marker] is authoritative", so this
+is finishing the design, not changing it. Note `~/.config/basic-memory/config.json`'s `projects`
+map is legacy import state, not the registry — a script must not read it.
+
+**Fix:** `bm project add <name> --governed --here` writes `.bm.yml` in cwd with `project:` and
+`id: <external_id>` (refuses to overwrite a marker naming a different project); a way to mark an
+existing project too (`bm project mark`?) — spelling is the user's call. The resolver reads `id:`
+when present, falls back to `project:`. Store root rule for scripts = `resolve_data_dir()`:
+`$BASIC_MEMORY_CONFIG_DIR`, else `$XDG_CONFIG_HOME/basic-memory`, else `~/.basic-memory`. Gates
+the statusline cutover; ship before migration batch 2. Decision task in bm: `tnd-k233nmds`.
+
 ### U22 — `[[x]]` inside inline code is indexed as a `links_to` relation — **FIXED 2026-08-18**
 
 **Found 2026-08-18** by the batch-1 migration (briefcase). A finding's body read
