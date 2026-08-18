@@ -855,3 +855,74 @@ def test_brief_stays_quiet_about_a_skipped_project_without_verbose(monkeypatch, 
     captured = capsys.readouterr()
     assert "Ship it" in captured.out
     assert captured.err == ""
+
+
+# --- Parked work: counted, never listed (GAPS U23) ---
+
+SHELVED_STATUSES = "[open, doing, blocked, shelved, done, dropped]"
+
+
+@pytest.mark.asyncio
+async def test_a_shelved_task_is_neither_open_nor_closed(session_maker, test_project, config_home):
+    """The whole point of the status: it leaves both answers and gets its own count."""
+    _govern(test_project, types="[task]", statuses=SHELVED_STATUSES)
+    for title, status in (("Open", "open"), ("Shelved", "shelved"), ("Done", "done")):
+        await _make_entity(
+            session_maker,
+            test_project.id,
+            title=title,
+            note_type="task",
+            metadata={"status": status},
+        )
+
+    result = await query(session_maker, _scope(test_project.name))
+
+    section = _required_section(result, "task")
+    assert _titles(result, "task") == ["Open"]
+    # Not counted as open work either — the heading's total is the open one.
+    assert section.total == 1
+    assert section.parked == 1
+
+
+@pytest.mark.asyncio
+async def test_the_shelved_count_prints_under_the_rows(session_maker, test_project, config_home):
+    _govern(test_project, types="[task]", statuses=SHELVED_STATUSES)
+    await _make_entity(
+        session_maker,
+        test_project.id,
+        title="Open",
+        note_type="task",
+        metadata={"status": "open"},
+    )
+    for title in ("Parked one", "Parked two"):
+        await _make_entity(
+            session_maker,
+            test_project.id,
+            title=title,
+            note_type="task",
+            metadata={"status": "shelved"},
+        )
+
+    rendered = render(await query(session_maker, _scope(test_project.name)))
+
+    assert "Shelved: 2" in rendered
+    # Counted, never listed: the titles stay out of the context window.
+    assert "Parked one" not in rendered
+
+
+@pytest.mark.asyncio
+async def test_a_brief_with_only_shelved_work_is_empty(session_maker, test_project, config_home):
+    """A parked pile is context, not content: alone it does not make a section."""
+    _govern(test_project, types="[task]", statuses=SHELVED_STATUSES)
+    await _make_entity(
+        session_maker,
+        test_project.id,
+        title="Parked",
+        note_type="task",
+        metadata={"status": "shelved"},
+    )
+
+    result = await query(session_maker, _scope(test_project.name))
+
+    assert result.is_empty
+    assert render(result) == ""

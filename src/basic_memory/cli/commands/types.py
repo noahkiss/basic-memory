@@ -40,6 +40,7 @@ from basic_memory.vocabulary.glossary import (
     field_meaning,
     picking_question,
     relation_meaning,
+    status_meaning,
     type_fields,
     type_summary,
 )
@@ -158,6 +159,24 @@ def render_relations(vocabulary: Vocabulary) -> list[str]:
     return lines
 
 
+def render_statuses(vocabulary: Vocabulary) -> list[str]:
+    """The statuses this project declares, then prose for the ones that need it.
+
+    The list stays one line, because status names are short and a reader scans
+    them as a set. Only a name the glossary explains earns a line of its own —
+    today that is `shelved` alone (GAPS U23), so a project that never declared it
+    prints exactly what it printed before.
+    """
+    lines = ["statuses", f"  {', '.join(vocabulary.statuses) or NONE_DECLARED}"]
+    explained = [name for name in vocabulary.statuses if status_meaning(name)]
+    if not explained:
+        return lines
+
+    width = max(len(name) for name in explained)
+    lines.extend(f"  {name:<{width + LABEL_GAP}}{status_meaning(name)}" for name in explained)
+    return lines
+
+
 def render(project_name: str, vocabulary: Vocabulary, path_note: str = "") -> str:
     """Render the whole report: type sections, then the rest of the vocabulary.
 
@@ -175,7 +194,7 @@ def render(project_name: str, vocabulary: Vocabulary, path_note: str = "") -> st
     if field_meanings:
         sections.append(field_meanings)
 
-    sections.append(["statuses", f"  {', '.join(vocabulary.statuses) or NONE_DECLARED}"])
+    sections.append(render_statuses(vocabulary))
     sections.append(["areas", f"  {', '.join(vocabulary.areas) or NONE_DECLARED}"])
     sections.append(render_relations(vocabulary))
     sections.append(

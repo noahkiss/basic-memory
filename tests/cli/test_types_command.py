@@ -267,3 +267,35 @@ def test_unscoped_types_names_no_single_file_to_edit(
 
     assert result.exit_code == 0, result.output
     assert "Edit a project's vocabulary.yml to add a type" in result.stdout
+
+
+# --- Status prose (GAPS U23) ---
+
+
+def test_shelved_gets_a_line_of_prose(runner, config_home, stub_project, write_vocabulary):
+    """`shelved` is the one status whose name does not say what it means."""
+    write_vocabulary("types: [task]\nstatuses: [open, shelved, done]\n")
+
+    result = runner.invoke(app, ["types", "--project", PROJECT])
+
+    assert result.exit_code == 0, result.output
+    assert "open, shelved, done" in result.stdout
+    assert "Parked — not in the current set, not dropped." in result.stdout
+    assert "bm mark <id> open` revives it." in result.stdout
+
+
+def test_statuses_that_speak_for_themselves_get_no_prose(
+    runner, config_home, stub_project, write_vocabulary
+):
+    """Positive control for the test above, and the reason there is no prose table.
+
+    A line under every status would be five lines a reader learns to skip, so a
+    project that declares none of the explained names prints the bare list alone.
+    """
+    write_vocabulary("types: [task]\nstatuses: [open, doing, done]\n")
+
+    result = runner.invoke(app, ["types", "--project", PROJECT])
+
+    assert result.exit_code == 0, result.output
+    statuses = result.stdout.split("statuses\n", 1)[1]
+    assert statuses.startswith("  open, doing, done\n\n")

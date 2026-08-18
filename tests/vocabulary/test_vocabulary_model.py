@@ -9,10 +9,13 @@ import pytest
 
 from basic_memory.vocabulary.model import (
     DEFAULT_VOCABULARY,
+    PARKED_STATUSES,
+    TERMINAL_STATUSES,
     DeclaredField,
     Vocabulary,
     VocabularyError,
     default_review_by,
+    inactive_statuses,
     load_vocabulary,
     parse_vocabulary,
     vocabulary_path,
@@ -258,7 +261,14 @@ def test_default_vocabulary_matches_the_schema_block():
         "inbox",
         "note",
     )
-    assert DEFAULT_VOCABULARY.statuses == ("open", "doing", "blocked", "done", "dropped")
+    assert DEFAULT_VOCABULARY.statuses == (
+        "open",
+        "doing",
+        "blocked",
+        "shelved",
+        "done",
+        "dropped",
+    )
     assert DEFAULT_VOCABULARY.areas == ()
     assert DEFAULT_VOCABULARY.review_months == 12
     assert DEFAULT_VOCABULARY.fields == {}
@@ -328,3 +338,45 @@ def test_february_29_survives_a_four_year_review():
     vocabulary = parse_vocabulary({"review_months": 48}, source="v.yml")
 
     assert default_review_by(vocabulary, date(2024, 2, 29)) == "2028-02-29"
+
+
+# --- Parked statuses (GAPS U23) ---
+
+
+def test_shelved_is_a_default_status():
+    """Parked between the open statuses and the closing ones, which is what it means."""
+    assert "shelved" in DEFAULT_VOCABULARY.statuses
+    assert DEFAULT_VOCABULARY.statuses.index("shelved") == (
+        DEFAULT_VOCABULARY.statuses.index("blocked") + 1
+    )
+    assert PARKED_STATUSES == {"shelved"}
+    # Parked is not terminal: a shelved task is waiting, not finished with.
+    assert not PARKED_STATUSES & TERMINAL_STATUSES
+
+
+def test_inactive_statuses_is_terminal_plus_parked():
+    assert inactive_statuses() == {"done", "dropped", "shelved"}
+
+
+def test_inactive_statuses_narrows_to_what_a_project_declares():
+    """A project that never declared `shelved` cannot hold a task in it."""
+    vocabulary = parse_vocabulary({"statuses": ["open", "done"]}, source="v.yml")
+
+    assert inactive_statuses(vocabulary) == {"done"}
+
+
+def test_inactive_statuses_keeps_a_declared_parked_name():
+    vocabulary = parse_vocabulary({"statuses": ["open", "shelved", "done"]}, source="v.yml")
+
+    assert inactive_statuses(vocabulary) == {"shelved", "done"}
+
+
+def test_inactive_statuses_falls_back_when_no_terminal_name_is_declared():
+    """No terminal name means the defaults stand — otherwise every task is open forever.
+
+    The parked half has no such fallback: "this project has no parked state" is a
+    real answer, where "no terminal statuses" is not.
+    """
+    vocabulary = parse_vocabulary({"statuses": ["open", "doing"]}, source="v.yml")
+
+    assert inactive_statuses(vocabulary) == TERMINAL_STATUSES

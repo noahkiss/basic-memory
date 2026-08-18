@@ -263,7 +263,7 @@ def test_task_without_status():
 
     assert violation.rule == "missing-status"
     assert violation.field == "status"
-    assert "open, doing, blocked, done, dropped" in violation.message
+    assert "open, doing, blocked, shelved, done, dropped" in violation.message
 
 
 def test_task_with_off_vocabulary_status():
@@ -271,7 +271,7 @@ def test_task_with_off_vocabulary_status():
 
     assert violation.rule == "unknown-status"
     assert violation.field == "status"
-    assert "open, doing, blocked, done, dropped" in violation.message
+    assert "open, doing, blocked, shelved, done, dropped" in violation.message
 
 
 # --- 5. field-not-on-type ---

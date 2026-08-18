@@ -827,8 +827,12 @@ def test_mark_rejects_a_status_the_project_does_not_declare() -> None:
     result = runner.invoke(app, ["mark", record_id, "shipped", "-p", GOVERNED])
 
     assert result.exit_code == 1
-    assert "'shipped' is not a status this project declares" in result.stderr
-    assert "open, doing, blocked, done, dropped" in result.stderr
+    assert "'shipped' is not a status project 'governed' declares" in result.stderr
+    assert "Allowed: open, doing, blocked, shelved, done, dropped." in result.stderr
+    # The fix is a human's edit to the vocabulary file, so the message names it
+    # (GAPS U23): a project governed before a status joined the defaults has a
+    # `statuses:` list of its own, and a present key replaces the defaults.
+    assert "vocabulary.yml to enable." in result.stderr
     assert result.stdout.strip() == ""
 
 
@@ -912,3 +916,26 @@ def test_quiet_drops_the_affordance_and_keeps_the_payload() -> None:
 
     assert result.exit_code == 0, result.output
     assert result.stdout.strip().splitlines() == [f"{record_id}  task  done", "1 record"]
+
+
+def test_mark_shelved_and_back_to_open_round_trips() -> None:
+    """`shelved` parks a task; `open` revives it (GAPS U23).
+
+    Nothing about the record moves but the status, so the round trip has to end
+    where it started — a park that lost the body would be a park nobody uses.
+    """
+    seed_project()
+    record_id = create(GOVERNED, "task", "Rework The Importer", body="Line one.\n")
+    path = payload_path(runner.invoke(app, ["path", record_id, "-p", GOVERNED]).stdout + "\n")
+    body_before = path.read_text(encoding="utf-8").split("---\n", 2)[2]
+
+    shelved = runner.invoke(app, ["mark", record_id, "shelved", "-p", GOVERNED, "--quiet"])
+
+    assert shelved.exit_code == 0, shelved.output
+    assert frontmatter_of(path)["status"] == "shelved"
+
+    revived = runner.invoke(app, ["mark", record_id, "open", "-p", GOVERNED, "--quiet"])
+
+    assert revived.exit_code == 0, revived.output
+    assert frontmatter_of(path)["status"] == "open"
+    assert path.read_text(encoding="utf-8").split("---\n", 2)[2] == body_before

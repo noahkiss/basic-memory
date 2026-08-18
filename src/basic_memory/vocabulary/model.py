@@ -102,7 +102,9 @@ class Vocabulary:
 # glossary summary, so `bm new` never offers it as a choice.
 DEFAULT_VOCABULARY = Vocabulary(
     types=("task", "guide", "finding", "profile", "state", "inbox", "note"),
-    statuses=("open", "doing", "blocked", "done", "dropped"),
+    # `shelved` sits between the open statuses and the closing ones because that
+    # is what it means: parked, not dropped (GAPS U23).
+    statuses=("open", "doing", "blocked", "shelved", "done", "dropped"),
     areas=(),
     review_months=12,
     fields=MappingProxyType({}),
@@ -132,6 +134,35 @@ def terminal_statuses(vocabulary: Vocabulary | None = None) -> frozenset[str]:
         return TERMINAL_STATUSES
     declared = TERMINAL_STATUSES & set(vocabulary.statuses)
     return frozenset(declared) if declared else TERMINAL_STATUSES
+
+
+# The status names that park a task: it is not in the current set and it is not
+# dropped either (GAPS U23, user decision 2026-08-18 — "not dropped forever but
+# also not in our current set"). Kept apart from TERMINAL_STATUSES because the
+# two answer different questions: a terminal task is finished with, a parked one
+# is waiting, and `bm mark <id> open` revives it.
+PARKED_STATUSES: frozenset[str] = frozenset({"shelved"})
+
+
+def inactive_statuses(vocabulary: Vocabulary | None = None) -> frozenset[str]:
+    """Which status names keep a task out of "what is open", terminal or parked.
+
+    This — not `terminal_statuses` — is what every caller asking "is this task
+    still open" wants, because a shelved task belongs in neither answer: it is
+    not listed as open and it is not counted as closed.
+
+    Narrowed to declared names the same way `terminal_statuses` is, and for the
+    same reason: a project that never declared `shelved` cannot have a task in
+    that state, so matching on it would filter nothing and mislead a reader of
+    the query. Unlike the terminal set there is no fallback when nothing matches
+    — an undeclared parked name means the project has no parked state, which is
+    a real answer, where "no terminal names" would leave every task open forever.
+    """
+    return terminal_statuses(vocabulary) | (
+        PARKED_STATUSES
+        if vocabulary is None
+        else frozenset(PARKED_STATUSES & set(vocabulary.statuses))
+    )
 
 
 def default_review_by(vocabulary: Vocabulary, today: date) -> str:

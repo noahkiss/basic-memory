@@ -223,3 +223,47 @@ async def test_headline_path_sits_in_the_store(test_project: Project):
         store_path() / test_project.external_id / "headline.md"
     )
     assert Path(test_project.path) != store_path()
+
+
+@pytest.mark.asyncio
+async def test_a_shelved_task_never_becomes_the_headline(session_maker, test_project, add_task):
+    """Parked work is not what is next, so the headline shows the next open task.
+
+    Ungoverned: no vocabulary file, so `inactive_statuses()` answers with the
+    defaults, which is the state most projects are in (GAPS U23).
+    """
+    await add_task("Still open", minutes_ago=60)
+    await add_task("Set aside", status="shelved", minutes_ago=1)
+
+    await refresh(session_maker, test_project)
+
+    assert "headline: Still open" in headline_path(test_project.external_id).read_text()
+
+
+@pytest.mark.asyncio
+async def test_a_project_that_never_declared_shelved_treats_it_as_open(
+    session_maker, test_project, add_task
+):
+    """The narrowing rule, in the direction that proves it is a narrowing.
+
+    A project whose vocabulary omits `shelved` has no parked state, so a task
+    carrying that status is off-vocabulary rather than parked — and hiding it
+    would suppress work over a fault `bm doctor` already reports.
+    """
+    govern(test_project, statuses=["open", "doing", "done"])
+    await add_task("Plainly open", minutes_ago=60)
+    await add_task("Set aside", status="shelved", minutes_ago=1)
+
+    await refresh(session_maker, test_project)
+
+    assert "headline: Set aside" in headline_path(test_project.external_id).read_text()
+
+
+@pytest.mark.asyncio
+async def test_only_shelved_work_leaves_no_headline(session_maker, test_project, add_task):
+    """No open work is a real answer, and the file says it by not existing."""
+    await add_task("Set aside", status="shelved", minutes_ago=1)
+
+    await refresh(session_maker, test_project)
+
+    assert not headline_path(test_project.external_id).exists()

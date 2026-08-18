@@ -539,7 +539,7 @@ def edit(
 async def mark_record(*, project_name: str, record_id: str, status: str) -> WriteOutcome:
     """Set one task's status, leaving its body byte-identical."""
     from basic_memory.schemas.request import EditEntityRequest
-    from basic_memory.vocabulary.model import load_vocabulary
+    from basic_memory.vocabulary.model import load_vocabulary, vocabulary_path
 
     stack, project, record = await _open_record(project_name, record_id)
 
@@ -553,9 +553,16 @@ async def mark_record(*, project_name: str, record_id: str, status: str) -> Writ
     # ungoverned, never "use the defaults" (GAPS W4).
     vocabulary = load_vocabulary(project.external_id)
     if vocabulary is not None and status not in vocabulary.statuses:
+        # The message names the file, because the fix is a human's one-line edit
+        # to it and nothing else can make it. A project governed before a status
+        # was added to the defaults — `shelved`, GAPS U23 — has a full
+        # `statuses:` list of its own, and a present key replaces the defaults
+        # outright. `bm` must not edit that file: humans extend the vocabulary,
+        # agents only select from it (GAPS W4). So it says where to go.
         raise RecordVerbError(
-            f"'{status}' is not a status this project declares. "
-            f"Allowed values: {', '.join(vocabulary.statuses)}."
+            f"'{status}' is not a status project '{project.name}' declares. "
+            f"Allowed: {', '.join(vocabulary.statuses)}. "
+            f"Add it to {vocabulary_path(project.external_id)} to enable."
         )
 
     result = await stack.edit_note(
@@ -588,10 +595,13 @@ def mark(
         typer.Option("--quiet", help="Hide the notices and the next-step hints."),
     ] = False,
 ) -> None:
-    """Set a task's status — open, doing, blocked, done, or dropped.
+    """Set a task's status — open, doing, blocked, shelved, done, or dropped.
 
     A task's status is the only field any verb changes after creation. Nothing
     else about the record moves, and no other type has one.
+
+    `shelved` parks a task: it stops being open work without being dropped, so
+    `bm brief` counts it rather than listing it. `bm mark <id> open` revives it.
     """
     from basic_memory.cli.record_notes import write_project_name
 

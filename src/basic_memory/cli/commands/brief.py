@@ -69,11 +69,13 @@ MAX_BRIEF_CHARS = 10_000
 # starts skimming.
 MAX_ROWS = 5
 
-# The statuses that close a task live in `vocabulary/model.py`, which is their one home:
-# a brief and a headline file that disagreed about whether a task is still open would read
-# as a bug in whichever the reader checked second. Read through `terminal_statuses()` at the
-# query site, unnarrowed — brief's rows span every in-scope project, and there is no single
-# project's vocabulary to narrow by.
+# The statuses that take a task out of "what is open" live in `vocabulary/model.py`, which
+# is their one home: a brief and a headline file that disagreed about whether a task is
+# still open would read as a bug in whichever the reader checked second. Read through
+# `inactive_statuses()` at the query site, unnarrowed — brief's rows span every in-scope
+# project, and there is no single project's vocabulary to narrow by. Inactive covers both
+# the terminal statuses and the parked one, so a shelved task is neither listed as open nor
+# counted as closed (GAPS U23); it is counted on its own line instead.
 
 # What an ungoverned project contributes. W4 decided that an absent `vocabulary.yml`
 # means *unchecked*, not *typeless*: records still carry a frontmatter `type`, and a
@@ -149,15 +151,23 @@ class Section:
     and says the list is capped when it is (GAPS U4): a count that silently meant
     "rows I chose to print" told an agent this project had five open tasks when it
     had twenty-three, and was indistinguishable from a true count.
+
+    `parked` is how many records the section's type carries in a parked status —
+    `shelved` (GAPS U23). It is a count and never rows: a shelved task is not
+    what to do next, so listing it would spend the brief's budget on work that
+    was deliberately set aside. Zero for every section but the task one.
     """
 
     heading: str
     rows: tuple[Row, ...] = ()
     count: int = 0
     total: int = 0
+    parked: int = 0
 
     @property
     def is_empty(self) -> bool:
+        # `parked` alone does not make a section: a brief whose only content is
+        # "Shelved: 3" would report a heading over nothing to act on.
         return not self.rows and not self.count
 
 
@@ -346,7 +356,7 @@ async def query(session_maker, scope: ReadScope, query_text: Optional[str] = Non
 
         # Deferred with the rest of the vocabulary reader: it pulls PyYAML, which
         # has no business loading at CLI import time.
-        from basic_memory.vocabulary.model import terminal_statuses
+        from basic_memory.vocabulary.model import PARKED_STATUSES, inactive_statuses
 
         status = Entity.entity_metadata["status"].as_string()
         review_by = func.json_extract(Entity.entity_metadata, REVIEW_BY_PATH)
@@ -365,14 +375,31 @@ async def query(session_maker, scope: ReadScope, query_text: Optional[str] = Non
                 sections.append(Section(heading=rule.heading, count=total or 0))
                 continue
 
+            parked = 0
             statement = base(note_type)
             if rule.rule == "non-terminal":
                 # A missing or undeclared status still counts as open. Hiding a task
                 # because its frontmatter is wrong would suppress open work over a
                 # schema fault the notice already reports.
                 statement = statement.where(
-                    or_(status.is_(None), status.not_in(sorted(terminal_statuses())))
+                    or_(status.is_(None), status.not_in(sorted(inactive_statuses())))
                 ).order_by(recent)
+                # One extra COUNT for the parked pile (GAPS U23). Counted rather
+                # than listed, and counted separately from the section's own
+                # total, because a shelved task belongs to neither answer: it is
+                # not open work and it is not closed work.
+                parked = (
+                    await session.scalar(
+                        select(func.count())
+                        .select_from(Entity)
+                        .where(
+                            Entity.note_type == note_type,
+                            Entity.project_id.in_(project_ids),
+                            status.in_(sorted(PARKED_STATUSES)),
+                        )
+                    )
+                    or 0
+                )
             elif rule.rule == "review-due":
                 # Oldest expiry first: a review that lapsed last year is a different
                 # problem from one that lapsed today. ISO dates sort lexicographically,
@@ -392,7 +419,9 @@ async def query(session_maker, scope: ReadScope, query_text: Optional[str] = Non
                 select(func.count()).select_from(statement.order_by(None).subquery())
             )
             found = await session.execute(statement.limit(MAX_ROWS))
-            sections.append(Section(heading=rule.heading, rows=_rows(found), total=total or 0))
+            sections.append(
+                Section(heading=rule.heading, rows=_rows(found), total=total or 0, parked=parked)
+            )
 
         return Brief(project=scope.project, sections=tuple(sections), skipped=scan.skipped)
 
@@ -576,6 +605,11 @@ def render(brief: Brief) -> str:
             + (f" — {row.ref}" if row.ref else "")
             for row in section.rows
         )
+        # One line, under the rows, and only when there is a pile to report. A
+        # shelved task is context — "there is work you set aside" — not an item
+        # to act on, so it is stated and never listed (GAPS U23).
+        if section.parked:
+            lines.append(f"Shelved: {section.parked}")
 
     body = "\n".join(lines)
     opening = (

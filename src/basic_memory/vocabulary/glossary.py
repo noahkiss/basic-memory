@@ -61,6 +61,21 @@ def relation_meaning(name: str) -> str | None:
     return RELATION_MEANINGS.get(name)
 
 
+# The statuses whose name does not say what they mean, and only those. `open`,
+# `doing`, `blocked`, `done` and `dropped` each read as themselves, and a line of
+# prose under every one of them would be five lines of noise a reader learns to
+# skip. `shelved` is the exception it exists for: nothing in the word says
+# whether the work comes back (GAPS U23).
+STATUS_MEANINGS: Mapping[str, str] = {
+    "shelved": "Parked — not in the current set, not dropped. `bm mark <id> open` revives it.",
+}
+
+
+def status_meaning(name: str) -> str | None:
+    """What a status means, or None when the name speaks for itself."""
+    return STATUS_MEANINGS.get(name)
+
+
 # --- The date-provenance ladders (`.forked/schema.md` §2) ---
 #
 # Fixed by the schema, not by a project's `vocabulary.yml`: a project declares

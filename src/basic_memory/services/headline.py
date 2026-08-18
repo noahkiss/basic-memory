@@ -19,9 +19,9 @@ Three constraints, all from W9, and each one is a failure that already happened:
   D6). Writing next to a working directory's `.bm.yml` would be `bm` editing
   someone else's tree.
 
-The value is derived, not stored: the most recently updated non-terminal `task`,
-its title truncated to the statusline's limit. No new frontmatter field, so no
-set-once surface is widened.
+The value is derived, not stored: the most recently updated `task` that is
+neither closed nor shelved, its title truncated to the statusline's limit. No new
+frontmatter field, so no set-once surface is widened.
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from basic_memory.models import Entity, Project
 from basic_memory.store.history import store_path
-from basic_memory.vocabulary.model import load_vocabulary, terminal_statuses
+from basic_memory.vocabulary.model import inactive_statuses, load_vocabulary
 
 HEADLINE_FILENAME = "headline.md"
 
@@ -100,7 +100,10 @@ async def refresh_headline(session: AsyncSession, project: Project) -> bool:
 
 
 async def _current_task_title(session: AsyncSession, project: Project) -> str | None:
-    """The most recently updated non-terminal task's title, if there is one."""
+    """The most recently updated open task's title, if there is one.
+
+    Open here means neither terminal nor parked — see `inactive_statuses`.
+    """
     status = Entity.entity_metadata["status"].as_string()
     query = (
         select(Entity.title)
@@ -114,10 +117,13 @@ async def _current_task_title(session: AsyncSession, project: Project) -> str | 
         .limit(1)
     )
 
-    if terminal := terminal_statuses(load_vocabulary(project.external_id)):
+    if inactive := inactive_statuses(load_vocabulary(project.external_id)):
         # A task with no status counts as open. Hiding open work because its
         # frontmatter is incomplete would suppress the thing the file exists to
         # show, over a fault `bm doctor` already reports.
-        query = query.where(or_(status.is_(None), status.not_in(sorted(terminal))))
+        #
+        # Parked as well as terminal (GAPS U23): a shelved task is not what is
+        # next, so the headline skips it and shows the next open one instead.
+        query = query.where(or_(status.is_(None), status.not_in(sorted(inactive))))
 
     return await session.scalar(query)
