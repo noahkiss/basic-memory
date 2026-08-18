@@ -1,5 +1,7 @@
 """Tests for the `bm status --wait` compatibility behavior."""
 
+import tempfile
+
 import pytest
 
 import basic_memory.mcp.async_client as async_client_module
@@ -17,7 +19,9 @@ async def test_status_wait_returns_current_project_index_observation(monkeypatch
         id=1,
         external_id="11111111-1111-1111-1111-111111111111",
         name="scratch",
-        path="/tmp/scratch",
+        # A directory that exists: `run_status` skips a project whose path is gone
+        # (GAPS U12), which would otherwise turn this into a skip test.
+        path=tempfile.gettempdir(),
         is_default=True,
     )
     project_index_status = ProjectIndexStatusResponse(
@@ -58,15 +62,15 @@ async def test_status_wait_returns_current_project_index_observation(monkeypatch
     monkeypatch.setattr(project_context_module, "get_active_project", fake_get_active_project)
     monkeypatch.setattr(clients_module, "ProjectClient", FakeProjectClient)
 
-    reports = await run_status(
+    scan = await run_status(
         ["scratch"],
         wait=True,
         timeout=0.01,
         poll_interval=0.001,
     )
 
-    assert len(reports) == 1
-    project_name, status = reports[0]
+    assert len(scan.reports) == 1
+    project_name, status = scan.reports[0]
     assert project_name == "scratch"
     assert status.total_files == 1
     assert status.observed_files[0].path == "notes/seed.md"

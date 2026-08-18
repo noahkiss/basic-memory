@@ -5,6 +5,8 @@ registry default retired from this read path — an unmarked working directory n
 reports every project, one section each, rather than one arbitrary project.
 """
 
+from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Annotated, Optional, Sequence
 
 import typer
@@ -14,6 +16,26 @@ from basic_memory.cli.app import app
 from basic_memory.cli.notices import emit_notices
 from basic_memory.cli.scope import resolve_read_scope
 from basic_memory.schemas import ProjectIndexStatusResponse
+
+
+@dataclass(frozen=True, slots=True)
+class MissingProject:
+    """One registered project whose directory is not there any more (GAPS U12)."""
+
+    name: str
+    path: str
+
+
+@dataclass(frozen=True, slots=True)
+class StatusScan:
+    """What one status pass could report, and which projects it could not read.
+
+    The same shape `direct_revalidate_vocabulary` uses: a whole-registry read
+    must not lose every project to one broken one.
+    """
+
+    reports: list[tuple[str, ProjectIndexStatusResponse]] = field(default_factory=list)
+    missing: list[MissingProject] = field(default_factory=list)
 
 
 def display_project_index_status(
@@ -58,11 +80,20 @@ async def run_status(
     wait: bool = False,
     timeout: float = 30.0,
     poll_interval: float = 0.5,
-) -> list[tuple[str, ProjectIndexStatusResponse]]:
+) -> StatusScan:
     """Fetch current project-index observation status, one row per project.
 
     ``projects`` names the projects to report. ``None`` means every registered
     project, which is what an unscoped read resolves to (GAPS W5-C).
+
+    Trigger: a registered project whose directory has gone (GAPS U12).
+    Why: the status endpoint walks that path, so an unguarded pass died on
+        ``Error checking status: [Errno 2] …`` and reported *no* project — the
+        healthy ones included. That is the same wall `bm reindex` hit.
+    Outcome: the project is named in ``missing`` and skipped, the rest report as
+        usual, and the caller decides what to print and what to exit with. The
+        check is a ``stat`` rather than a caught exception, so a real failure
+        still propagates.
 
     The event-index flow no longer exposes a pending-change counter. The watcher
     is the incremental path, and explicit project indexing is a full fanout.
@@ -96,18 +127,17 @@ async def run_status(
 
         if projects is None:
             listed = await project_client.list_projects()
-            return [
-                (item.name, await project_client.get_status(item.external_id))
-                for item in listed.projects
-            ]
+            items = list(listed.projects)
+        else:
+            items = [await get_active_project(client, name, None) for name in projects]
 
-        results: list[tuple[str, ProjectIndexStatusResponse]] = []
-        for name in projects:
-            project_item = await get_active_project(client, name, None)
-            results.append(
-                (project_item.name, await project_client.get_status(project_item.external_id))
-            )
-        return results
+        scan = StatusScan()
+        for item in items:
+            if not Path(item.path).is_dir():
+                scan.missing.append(MissingProject(name=item.name, path=item.path))
+                continue
+            scan.reports.append((item.name, await project_client.get_status(item.external_id)))
+        return scan
 
 
 @app.command()
@@ -149,7 +179,7 @@ def status(
     try:
         scope = resolve_read_scope(project)
         projects = None if scope.project is None else [scope.project]
-        reports = run_with_cleanup(run_status(projects, wait=wait, timeout=timeout))
+        scan = run_with_cleanup(run_status(projects, wait=wait, timeout=timeout))
     except (ValueError, ToolError) as e:
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(code=1)
@@ -164,16 +194,24 @@ def status(
     # Why: contract rule 5 — a well-scoped request whose answer is "nothing there" is a
     #      result, not a failure, and silence would read as a healthy corpus.
     # Outcome: state it and exit 0.
-    if not reports:
+    if not scan.reports and not scan.missing:
         typer.echo("no projects registered")
         emit_notices(scope, quiet=quiet, command="status")
         return
 
     # A grouped report renders as one plain section per project (contract rule 1). The
     # per-project block is unchanged, so a pinned run prints exactly what it always did.
-    for position, (project_name, project_index_status) in enumerate(reports):
+    for position, (project_name, project_index_status) in enumerate(scan.reports):
         if position:
             typer.echo("")
         display_project_index_status(project_name, project_index_status, verbose, quiet)
 
     emit_notices(scope, quiet=quiet, command="status")
+
+    # A project that could not be read is an error about that project, so it goes to
+    # stderr — the payload above stays parseable — and it decides the exit code. The
+    # healthy projects still reported, which is the whole point of the degradation.
+    for missing in scan.missing:
+        typer.echo(f"Error: project '{missing.name}' has no directory at {missing.path}", err=True)
+    if scan.missing:
+        raise typer.Exit(code=1)

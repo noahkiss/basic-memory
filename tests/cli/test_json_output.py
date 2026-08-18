@@ -6,6 +6,7 @@ and the `--wait` parameter check.
 """
 
 import json
+import tempfile
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -56,6 +57,10 @@ PROJECT_INDEX_STATUS_EMPTY = ProjectIndexStatusResponse(
 _MOCK_PROJECT_ITEM = MagicMock()
 _MOCK_PROJECT_ITEM.name = "test-project"
 _MOCK_PROJECT_ITEM.external_id = "11111111-1111-1111-1111-111111111111"
+# A directory that exists: `run_status` skips a project whose directory is gone
+# (GAPS U12), and a bare MagicMock attribute is not a path, so leaving it unset
+# would turn every status test below into a skip test.
+_MOCK_PROJECT_ITEM.path = tempfile.gettempdir()
 
 # These tests measure rendering for one project, so they pin the scope. Reads resolve
 # through `resolve_read_scope` since GAPS W5-C; an unpinned run would report every

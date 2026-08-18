@@ -1,11 +1,13 @@
 """Tests for `bm reindex` CLI wiring."""
 
 import asyncio
+import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+import typer
 from typer.testing import CliRunner
 
 from basic_memory.cli.app import app
@@ -13,6 +15,10 @@ import basic_memory.cli.commands.db as db_cmd  # noqa: F401
 
 
 runner = CliRunner()
+
+# `_reindex` skips a project whose directory is gone (GAPS U12), so a project
+# stub needs a path that exists or every test below becomes a skip test.
+EXISTING_DIR = tempfile.gettempdir()
 
 
 def _stub_app_config(*, semantic_search_enabled: bool = True) -> SimpleNamespace:
@@ -161,7 +167,7 @@ async def test_reindex_project_full_uses_core_project_index_and_reports_summary(
     session_maker,
 ):
     app_config = _stub_app_config()
-    project = SimpleNamespace(id=1, name="foo", path="/tmp/foo")
+    project = SimpleNamespace(id=1, name="foo", path=EXISTING_DIR)
     project_index = AsyncMock(
         return_value=SimpleNamespace(
             total_files=3,
@@ -220,7 +226,7 @@ async def test_reindex_embeddings_only_full_passes_force_full_to_vector_reindex(
     session_maker,
 ):
     app_config = _stub_app_config()
-    project = SimpleNamespace(id=1, name="foo", path="/tmp/foo")
+    project = SimpleNamespace(id=1, name="foo", path=EXISTING_DIR)
     printed_lines: list[str] = []
     vector_reindex_calls: list[dict[str, object]] = []
 
@@ -318,8 +324,8 @@ async def test_reindex_recovers_stuck_materializations_before_scan(monkeypatch, 
     as a missing file. Recovery must re-drive stuck rows before each project scan."""
     app_config = _stub_app_config()
     projects = [
-        SimpleNamespace(id=1, name="foo", path="/tmp/foo"),
-        SimpleNamespace(id=2, name="bar", path="/tmp/bar"),
+        SimpleNamespace(id=1, name="foo", path=EXISTING_DIR),
+        SimpleNamespace(id=2, name="bar", path=EXISTING_DIR),
     ]
     call_order: list[str] = []
 
@@ -365,7 +371,7 @@ async def test_reindex_full_does_not_double_embed(monkeypatch, session_maker):
     """A full reindex (search + embeddings) must embed once: the FTS rebuild runs
     with embeddings=False so only the explicit vector phase calls the provider."""
     app_config = _stub_app_config()
-    project = SimpleNamespace(id=1, name="foo", path="/tmp/foo")
+    project = SimpleNamespace(id=1, name="foo", path=EXISTING_DIR)
     vector_reindex_calls: list[dict[str, object]] = []
     project_index = AsyncMock(
         return_value=SimpleNamespace(
@@ -435,3 +441,113 @@ async def test_reindex_full_does_not_double_embed(monkeypatch, session_maker):
     assert index_call.kwargs["embeddings"] is False
     assert len(vector_reindex_calls) == 1
     assert vector_reindex_calls[0]["force_full"] is True
+
+
+# --- A registered project whose directory has gone (GAPS U12) ---
+
+
+@pytest.mark.asyncio
+async def test_reindex_skips_a_missing_project_and_still_indexes_the_rest(
+    monkeypatch,
+    session_maker,
+    tmp_path,
+):
+    """A bare `bm reindex` used to die on a raw FileNotFoundError and index nothing.
+
+    The scan walks the project's path, so an absent directory aborted the whole
+    run — healthy projects included. It must now name that project, skip it,
+    finish the others, and exit non-zero.
+    """
+    app_config = _stub_app_config()
+    gone = tmp_path / "moved-away"
+    projects = [
+        SimpleNamespace(id=1, name="gone", path=str(gone)),
+        SimpleNamespace(id=2, name="healthy", path=EXISTING_DIR),
+    ]
+    project_index = AsyncMock(
+        return_value=SimpleNamespace(
+            total_files=1, enqueued_files=1, enqueued_batches=1, deleted_files=0
+        )
+    )
+    printed_lines: list[str] = []
+
+    class StubProjectRepository:
+        async def get_active_projects(self, session):
+            return projects
+
+    monkeypatch.setattr("basic_memory.services.initialization.ensure_project_registry", AsyncMock())
+    monkeypatch.setattr(
+        "basic_memory.services.initialization.recover_project_materializations", AsyncMock()
+    )
+    monkeypatch.setattr(
+        "basic_memory.db.get_or_create_db",
+        AsyncMock(return_value=(None, session_maker)),
+    )
+    monkeypatch.setattr("basic_memory.db.shutdown_db", AsyncMock())
+    monkeypatch.setattr("basic_memory.repository.ProjectRepository", StubProjectRepository)
+    monkeypatch.setattr(
+        "basic_memory.index.local_project.run_local_project_index_for_project",
+        project_index,
+    )
+    monkeypatch.setattr(
+        db_cmd.console,
+        "print",
+        lambda message="", *args, **kwargs: printed_lines.append(str(message)),
+    )
+
+    with pytest.raises(typer.Exit) as exc_info:
+        await db_cmd._reindex(app_config, search=True, embeddings=False, full=False, project=None)
+
+    assert exc_info.value.exit_code == 1
+    # The healthy project was still indexed — that is the whole point.
+    project_index.assert_awaited_once()
+    assert project_index.await_args is not None
+    assert project_index.await_args.args[0] is projects[1]
+    # The skip names the project and the path, inline and again at the end.
+    assert any(str(gone) in line for line in printed_lines)
+    assert any("Reindex incomplete" in line and "gone" in line for line in printed_lines)
+    assert not any("Reindex complete" in line for line in printed_lines)
+
+
+@pytest.mark.asyncio
+async def test_reindex_says_complete_when_every_directory_is_there(
+    monkeypatch,
+    session_maker,
+):
+    """Control for the skip above: a healthy registry must not exit non-zero."""
+    app_config = _stub_app_config()
+    projects = [SimpleNamespace(id=1, name="healthy", path=EXISTING_DIR)]
+    printed_lines: list[str] = []
+
+    class StubProjectRepository:
+        async def get_active_projects(self, session):
+            return projects
+
+    monkeypatch.setattr("basic_memory.services.initialization.ensure_project_registry", AsyncMock())
+    monkeypatch.setattr(
+        "basic_memory.services.initialization.recover_project_materializations", AsyncMock()
+    )
+    monkeypatch.setattr(
+        "basic_memory.db.get_or_create_db",
+        AsyncMock(return_value=(None, session_maker)),
+    )
+    monkeypatch.setattr("basic_memory.db.shutdown_db", AsyncMock())
+    monkeypatch.setattr("basic_memory.repository.ProjectRepository", StubProjectRepository)
+    monkeypatch.setattr(
+        "basic_memory.index.local_project.run_local_project_index_for_project",
+        AsyncMock(
+            return_value=SimpleNamespace(
+                total_files=1, enqueued_files=1, enqueued_batches=1, deleted_files=0
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        db_cmd.console,
+        "print",
+        lambda message="", *args, **kwargs: printed_lines.append(str(message)),
+    )
+
+    await db_cmd._reindex(app_config, search=True, embeddings=False, full=False, project=None)
+
+    assert any("Reindex complete" in line for line in printed_lines)
+    assert not any("Reindex incomplete" in line for line in printed_lines)

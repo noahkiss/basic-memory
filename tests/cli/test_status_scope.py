@@ -5,6 +5,8 @@ project and said nothing about the rest. It now means every project, one plain
 section each (OUTPUT_CONTRACT rule 1).
 """
 
+import tempfile
+
 import pytest
 import typer
 
@@ -34,12 +36,17 @@ def _status(total: int) -> ProjectIndexStatusResponse:
     )
 
 
-def _project(position: int, name: str) -> ProjectItem:
+def _project(position: int, name: str, path: str | None = None) -> ProjectItem:
+    """A registry row. The default path is a directory that exists.
+
+    `run_status` skips a project whose directory is gone (GAPS U12), so a
+    fabricated path would silently turn every scope test into a skip test.
+    """
     return ProjectItem(
         id=position,
         external_id=f"{position}" * 8 + "-1111-1111-1111-111111111111",
         name=name,
-        path=f"/tmp/{name}",
+        path=path if path is not None else tempfile.gettempdir(),
         is_default=position == 1,
     )
 
@@ -76,9 +83,10 @@ async def test_run_status_unscoped_reports_every_project(monkeypatch):
     monkeypatch.setattr(async_client_module, "get_client", lambda **kwargs: _FakeClientContext())
     monkeypatch.setattr(clients_module, "ProjectClient", FakeProjectClient)
 
-    reports = await status_module.run_status(None)
+    scan = await status_module.run_status(None)
 
-    assert [name for name, _ in reports] == ["alpha", "beta"]
+    assert [name for name, _ in scan.reports] == ["alpha", "beta"]
+    assert scan.missing == []
     assert asked == [projects[0].external_id, projects[1].external_id]
 
 
@@ -110,19 +118,19 @@ async def test_run_status_pinned_asks_for_one_project(monkeypatch):
     monkeypatch.setattr(clients_module, "ProjectClient", FakeProjectClient)
     monkeypatch.setattr(project_context_module, "get_active_project", fake_get_active_project)
 
-    reports = await status_module.run_status(["alpha"])
+    scan = await status_module.run_status(["alpha"])
 
-    assert [name for name, _ in reports] == ["alpha"]
+    assert [name for name, _ in scan.reports] == ["alpha"]
     assert not listed
 
 
-def _run_status_command(monkeypatch, scope: ReadScope, reports) -> None:
+def _run_status_command(monkeypatch, scope: ReadScope, reports, missing=()) -> None:
     """Drive the verb with scope and the fetch stubbed, so only rendering is under test."""
     monkeypatch.setattr(status_module, "resolve_read_scope", lambda explicit: scope)
 
     async def fake_run_status(projects, wait=False, timeout=30.0):
         assert projects == (None if scope.project is None else [scope.project])
-        return reports
+        return status_module.StatusScan(reports=list(reports), missing=list(missing))
 
     monkeypatch.setattr(status_module, "run_status", fake_run_status)
     status_module.status(project=None, verbose=False, quiet=False, wait=False, timeout=30.0)
@@ -161,6 +169,53 @@ def test_status_unscoped_states_an_empty_registry(monkeypatch, capsys):
     _run_status_command(monkeypatch, ReadScope(project=None, origin="unscoped"), [])
 
     assert capsys.readouterr().out == "no projects registered\n"
+
+
+@pytest.mark.asyncio
+async def test_run_status_skips_a_project_whose_directory_is_gone(monkeypatch, tmp_path):
+    """GAPS U12: one absent directory must not cost the healthy projects their report."""
+    gone = tmp_path / "moved-away"
+    projects = [_project(1, "alpha"), _project(2, "beta", path=str(gone))]
+    asked: list[str] = []
+
+    class FakeProjectClient:
+        def __init__(self, client):
+            pass
+
+        async def list_projects(self):
+            return ProjectList(projects=projects, default_project="alpha")
+
+        async def get_status(self, external_id):
+            asked.append(external_id)
+            return _status(1)
+
+    monkeypatch.setattr(async_client_module, "get_client", lambda **kwargs: _FakeClientContext())
+    monkeypatch.setattr(clients_module, "ProjectClient", FakeProjectClient)
+
+    scan = await status_module.run_status(None)
+
+    assert [name for name, _ in scan.reports] == ["alpha"]
+    assert [(item.name, item.path) for item in scan.missing] == [("beta", str(gone))]
+    # The endpoint was never asked about the missing project — the walk it does is
+    # exactly what used to raise.
+    assert asked == [projects[0].external_id]
+
+
+def test_status_names_a_missing_project_on_stderr_and_exits_1(monkeypatch, capsys):
+    """The healthy project still reports on stdout; the broken one sets the exit code."""
+    with pytest.raises(typer.Exit) as exc_info:
+        _run_status_command(
+            monkeypatch,
+            ReadScope(project=None, origin="unscoped"),
+            [("alpha", _status(2))],
+            missing=[status_module.MissingProject(name="beta", path="/gone/beta")],
+        )
+
+    assert exc_info.value.exit_code == 1
+    captured = capsys.readouterr()
+    assert "project: alpha" in captured.out
+    assert "beta" not in captured.out
+    assert captured.err.strip() == "Error: project 'beta' has no directory at /gone/beta"
 
 
 def test_status_exits_1_on_an_unusable_marker(monkeypatch, capsys):
