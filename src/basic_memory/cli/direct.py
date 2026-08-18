@@ -51,7 +51,7 @@ async def direct_project_service() -> "ProjectService":
 
     config = ConfigManager().config
     _, session_maker = await db.get_or_create_db(config.database_path, config=config)
-    await ensure_project_registry(config)
+    await ensure_project_registry(config, bootstrap=False)
     return ProjectService(repository=ProjectRepository(), session_maker=session_maker)
 
 
@@ -83,7 +83,7 @@ async def direct_project_refs(project_name: str | None) -> list[ProjectRef]:
 
     config = ConfigManager().config
     _, session_maker = await db.get_or_create_db(config.database_path, config=config)
-    await ensure_project_registry(config)
+    await ensure_project_registry(config, bootstrap=False)
     async with db.scoped_session(session_maker) as session:
         repository = ProjectRepository()
         if project_name is None:
@@ -154,7 +154,7 @@ async def direct_revalidate_vocabulary(project_name: str | None = None) -> Reval
 
     config = ConfigManager().config
     _, session_maker = await db.get_or_create_db(config.database_path, config=config)
-    await ensure_project_registry(config)
+    await ensure_project_registry(config, bootstrap=False)
     async with db.scoped_session(session_maker) as session:
         repository = ProjectRepository()
         if project_name is None:
@@ -262,7 +262,7 @@ async def direct_doctor_report(
 
     config = ConfigManager().config
     _, session_maker = await db.get_or_create_db(config.database_path, config=config)
-    await ensure_project_registry(config)
+    await ensure_project_registry(config, bootstrap=False)
 
     review_cutoff = today if today is not None else date.today()
     # Local-aware, because that is how the rows were stamped: SQLite keeps the
@@ -435,7 +435,7 @@ async def direct_record_listing(
 
     config = ConfigManager().config
     _, session_maker = await db.get_or_create_db(config.database_path, config=config)
-    await ensure_project_registry(config)
+    await ensure_project_registry(config, bootstrap=False)
 
     async with db.scoped_session(session_maker) as session:
         projects = await _projects_in_scope(session, project_name)
@@ -483,7 +483,7 @@ async def direct_record(project_name: str | None, record_id: str) -> ResolvedRec
 
     config = ConfigManager().config
     _, session_maker = await db.get_or_create_db(config.database_path, config=config)
-    await ensure_project_registry(config)
+    await ensure_project_registry(config, bootstrap=False)
 
     async with db.scoped_session(session_maker) as session:
         found: list[ResolvedRecord] = []

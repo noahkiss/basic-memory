@@ -136,6 +136,15 @@ class ExistingRecord:
 # --- Which project a write lands in ---
 
 
+# What a write says when the registry holds no project it can land in. Naming
+# `--governed` is the point of the line: an ungoverned project writes records
+# unchecked (GAPS W4), so the message that creates a user's first project should
+# not steer them into the shape `bm doctor` will then complain about. Nothing
+# bootstraps a project on this path any more (GAPS U15) — this message is the
+# whole recovery, so it has to be runnable as written.
+NO_PROJECT_MESSAGE = "no project — run 'bm project add <name> --governed'"
+
+
 def write_project_name(explicit: Optional[str]) -> str:
     """The project a record write goes to: `--project`, marker, then the default.
 
@@ -149,7 +158,7 @@ def write_project_name(explicit: Optional[str]) -> str:
     """
     name = resolve_cli_project(explicit)
     if not name:
-        raise ValueError("no project to write to — name one with --project or run 'bm project add'")
+        raise ValueError(NO_PROJECT_MESSAGE)
     return name
 
 

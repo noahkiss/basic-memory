@@ -531,5 +531,5 @@ async def direct_note_writer() -> LocalNoteWriteStack:
 
     config = ConfigManager().config
     _, session_maker = await db.get_or_create_db(config.database_path, config=config)
-    await ensure_project_registry(config)
+    await ensure_project_registry(config, bootstrap=False)
     return build_local_note_write_stack(config, session_maker)

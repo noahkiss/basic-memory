@@ -101,6 +101,12 @@ def app_callback(
         "show",
         "status",
         "sync",
+        # 'types' reaches the registry through `direct_project_refs`, which opens
+        # the database and calls ensure_project_registry itself — running
+        # initialize_app first was a second, slower copy of that work, and it was
+        # the one call left that still bootstrapped a project at ~/basic-memory
+        # under a native verb (GAPS U15).
+        "types",
         "project",
         "config",
         "tool",

@@ -174,7 +174,7 @@ async def reindex_restored_paths(paths: Sequence[str]) -> tuple[int, int]:
 
     config = ConfigManager().config
     _, session_maker = await db.get_or_create_db(config.database_path, config=config)
-    await ensure_project_registry(config)
+    await ensure_project_registry(config, bootstrap=False)
     async with db.scoped_session(session_maker) as session:
         projects = await ProjectRepository().get_active_projects(session)
 

@@ -46,7 +46,13 @@ async def fetch_project_list() -> ProjectList:
     """
     service = await direct_project_service()
     projects = await service.list_projects()
-    default_project = await service.get_default_project_name()
+    # Trigger: an empty registry, which nothing bootstraps away any more (GAPS U15).
+    # Why: `get_default_project_name` raises when no project is flagged default,
+    #     and an install with no projects at all has none — that is the honest
+    #     first-run state, not a fault, and it must render as "0 projects" rather
+    #     than as "Error listing projects: No default project configured".
+    # Outcome: skip the lookup; `ProjectList.default_project` is already optional.
+    default_project = await service.get_default_project_name() if projects else None
     return ProjectList(
         projects=[
             ProjectItem(

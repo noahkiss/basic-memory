@@ -232,7 +232,7 @@ async def _reindex_projects(app_config):
     )
 
     try:
-        await ensure_project_registry(app_config)
+        await ensure_project_registry(app_config, bootstrap=False)
 
         # Get database session (migrations already run if needed)
         _, session_maker = await db.get_or_create_db(
@@ -244,6 +244,16 @@ async def _reindex_projects(app_config):
             projects = await project_repository.get_active_projects(session)
 
         for project in projects:
+            # Same guard as `bm reindex` (GAPS U12): the scan walks this path, so a
+            # registered project whose directory has gone would otherwise abort the
+            # reset's rebuild with a raw traceback and leave the rest unindexed.
+            if not Path(project.path).is_dir():
+                console.print(
+                    f"  [yellow]skipped[/yellow] {project.name}: "
+                    f"directory is missing: {project.path}"
+                )
+                continue
+
             console.print(f"  Indexing [cyan]{project.name}[/cyan]...")
             logger.info(f"Starting project index for project: {project.name}")
             result = await run_local_project_index_for_project(
@@ -419,8 +429,10 @@ def reset(
         console.print("[green]Database reset complete[/green]")
 
         if reindex:
-            # No empty-registry branch: _reindex_projects bootstraps the registry
-            # first, so even a reset on a fresh install has a project to index.
+            # No empty-registry branch: `_restore_registry` above rewrites the rows
+            # the reset captured, so a reset with projects still has them. A reset
+            # on an install that never had one indexes nothing, which is correct —
+            # no verb invents a project any more (GAPS U15).
             console.print("Rebuilding search index...")
             # Note: _reindex_projects has its own cleanup, but run_with_cleanup
             # ensures db.shutdown_db() is called even if _reindex_projects changes
@@ -508,7 +520,7 @@ async def _reindex(
     from basic_memory.markdown.entity_parser import EntityParser
 
     try:
-        await ensure_project_registry(app_config)
+        await ensure_project_registry(app_config, bootstrap=False)
 
         _, session_maker = await db.get_or_create_db(
             db_path=app_config.database_path,
@@ -524,8 +536,25 @@ async def _reindex(
                 console.print(f"[red]Project '{project}' not found.[/red]")
                 raise typer.Exit(1)
 
+        # Projects whose directory has gone. Named at the end as well as inline,
+        # because a long reindex scrolls the skip line off the screen.
+        skipped: list[str] = []
+
         for proj in projects:
             console.print(f"\n[bold]Project: [cyan]{proj.name}[/cyan][/bold]")
+
+            # Trigger: a registered project whose directory no longer exists — what
+            # a moved or deleted working tree leaves behind (GAPS U12).
+            # Why: the project-index scan walks that path, so an unguarded run died
+            #     on a raw FileNotFoundError traceback and reindexed *nothing*,
+            #     healthy projects included. One absent directory must not be able
+            #     to silence a whole-registry verb (`bm brief` set that precedent).
+            # Outcome: name it, skip it, keep going, and fail at the end — the exit
+            #     code still says something was wrong.
+            if not Path(proj.path).is_dir():
+                console.print(f"  [yellow]skipped[/yellow] directory is missing: {proj.path}")
+                skipped.append(proj.name)
+                continue
 
             if search:
                 # Trigger: the project-index scan below reconciles deletes against
@@ -620,6 +649,13 @@ async def _reindex(
                     f"{stats['skipped']} skipped, "
                     f"{stats['errors']} errors"
                 )
+
+        if skipped:
+            console.print(
+                f"\n[yellow]Reindex incomplete:[/yellow] "
+                f"{len(skipped)} project(s) skipped — {', '.join(skipped)}"
+            )
+            raise typer.Exit(1)
 
         console.print("\n[green]Reindex complete![/green]")
     finally:

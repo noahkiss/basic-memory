@@ -111,7 +111,7 @@ async def initialize_database(app_config: BasicMemoryConfig) -> None:
         raise
 
 
-async def ensure_project_registry(app_config: BasicMemoryConfig) -> None:
+async def ensure_project_registry(app_config: BasicMemoryConfig, *, bootstrap: bool = True) -> None:
     """Populate the database project registry when it is empty (GAPS B2).
 
     The database is the sole owner of the registry, so this runs only against an
@@ -127,6 +127,16 @@ async def ensure_project_registry(app_config: BasicMemoryConfig) -> None:
     Most CLI commands skip ``ensure_initialization`` for startup latency, so
     this runs at first database touch (``cli.direct``, the prepared-ASGI seam)
     rather than only in the explicit init path.
+
+    Trigger: ``bootstrap=False``, which every native ``bm`` verb passes (GAPS U15).
+    Why: the fresh-install branch homes a project at ``~/basic-memory``, outside
+        the store, and this fork's projects are store-derived (AGENTS.md, D3). A
+        read verb silently creating a project there is upstream's "first run makes
+        you a project" behaviour surviving under a contract that forbids it.
+    Outcome: the legacy import still runs — importing projects a user already
+        declared is not invention — and the fresh-install branch is skipped, so
+        the registry stays empty. Reads then report an empty corpus and writes
+        refuse with ``NO_PROJECT_MESSAGE``. The MCP/API path keeps the default.
     """
     _, session_maker = await db.get_or_create_db(app_config.database_path)
     async with db.scoped_session(session_maker) as session:
@@ -141,6 +151,9 @@ async def ensure_project_registry(app_config: BasicMemoryConfig) -> None:
         logger.info(f"Importing {len(legacy_projects)} project(s) from legacy config.json")
         projects = legacy_projects
         default_name = legacy_default if legacy_default in legacy_projects else None
+    elif not bootstrap:
+        logger.info("Empty project registry and bootstrap disabled — leaving it empty")
+        return
     else:
         bootstrap_home = bootstrap_project_home()
         logger.info(f"Bootstrapping default project 'main' at {bootstrap_home}")
