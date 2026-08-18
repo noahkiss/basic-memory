@@ -7002,7 +7002,7 @@ Tests added (3): `tests/cli/test_no_project_bootstrap.py` — subprocess, temp H
 positive control that `ensure_project_registry` at its default *does* still create the directory.
 `tests/cli/test_native_command_import_guard.py` changed as described above. None removed.
 
-### U16 — `bm project add` on a fresh install still bootstraps a `main` project at `<home>/basic-memory` — **OPEN**
+### U16 — `bm project add` on a fresh install still bootstraps a `main` project at `<home>/basic-memory` — **FIXED 2026-08-18**
 
 **Found 2026-08-18** while closing U15, and it is the remaining half of it. U15 stopped every native
 verb from bootstrapping, by giving `ensure_project_registry` a `bootstrap=False` and passing it from
@@ -7023,7 +7023,15 @@ store-homed projects (D3), and it means a clean install cannot reach a state of 
 to create a project itself and needs no default one. Whether the local MCP server still wants the
 bootstrap is the separable question; if it does, the seam needs two callers rather than one policy.
 
-### U17 — `bm edit --body` wipes an existing `## Relations` section — **OPEN**
+**CLOSED 2026-08-18 — `be1fc834`.** The seam in `mcp/async_client.py` serves only client-routed
+CLI commands: a local ASGITransport does not run FastAPI lifespan, and the MCP server bootstraps in
+its own FastMCP lifespan (`mcp/server.py`), as the API server does in `api/app.py`. So the seam
+passes `bootstrap=False` and bootstrap survives only in the two server lifespans. `bm project add
+<name> --governed` on a fresh install leaves exactly the project asked for, and the service makes it
+the default because it is the only one. Test: `tests/cli/test_no_project_bootstrap.py::
+test_project_add_leaves_exactly_the_project_asked_for` (temp HOME + empty config dir).
+
+### U17 — `bm edit --body` wipes an existing `## Relations` section — **FIXED 2026-08-18**
 
 **Found 2026-08-18** while closing U14, and pre-existing — U14 only made it visible, by giving the
 relations a way to get there other than `--supersedes`.
@@ -7040,7 +7048,15 @@ longer exists is not a dangling relation.
 The alternative — refuse `--body` on a record that carries relations — is worse, because the whole
 point of `--body` is to fix prose.
 
-### U18 — `bm edit --rel` cannot touch a task or a finding, so U14's own example still cannot be linked afterwards — **OPEN**
+**CLOSED 2026-08-18 — `8b4fb433`.** `carry_relations` in `cli/record_notes.py`: `--body` replaces
+the prose and carries the existing `## Relations` section onto the end of it. A replacement that
+writes its own `## Relations` heading stands as written, so a file never carries two. The `$EDITOR`
+path is deliberately exempt — the editor opens on the whole body, relations included, so a saved
+buffer without them is a deletion the user made (tested with a truncating editor). Tests in
+`tests/cli/test_record_write_commands.py` (`test_edit_body_carries_the_relations_section_over`,
+`..._stands_as_written`, `test_edit_in_the_editor_replaces_relations_the_user_removed`).
+
+### U18 — `bm edit --rel` cannot touch a task or a finding, so U14's own example still cannot be linked afterwards — **FIXED 2026-08-18**
 
 **Found 2026-08-18** while closing U14. `_refuse_edit` allows `bm edit` only on the kept-current
 types, on the principle that a finding is evidence and a task is a record of what was decided —
@@ -7063,7 +7079,16 @@ wearing one name; (b) a separate `bm link <type> <from> <to>` that is never a do
 leave it, and accept that provenance must be known at write time. **Do not implement any of these
 without asking.**
 
-### U19 — `bm doctor` exits 0 even when it reports issues — **OPEN**
+**CLOSED 2026-08-18 — `8b4fb433`.** Decision taken under the user's delegation ("you decide"): a
+relations-only edit — `--rel` with no `--title`, `--body`, `--set`, and no editor — is allowed on
+every type, tasks and findings included. An edge adds a link and rewrites nothing the record claims,
+so the refusal that guards a task's closure and a finding's evidence does not apply; anything that
+rewrites the record keeps the refusal and writes nothing. `relations_only` gate before
+`_refuse_edit` in `cli/commands/record_write.py`; README's `bm edit` row says so. Tests:
+`test_edit_rel_alone_is_allowed_on_a_closed_type[task|finding]`,
+`test_edit_rel_with_a_title_on_a_finding_is_still_refused`.
+
+### U19 — `bm doctor` exits 0 even when it reports issues — **FIXED 2026-08-18**
 
 **Found 2026-08-18** while closing U10, and pre-existing. `bm doctor` prints its integrity and
 hygiene rows and its `N issues` count, and then exits 0 whether the count is zero or not:
@@ -7091,6 +7116,14 @@ that or only *integrity* — hygiene rows are advisory (an unfiled inbox record 
 resting state, per U5), so a doctor that exits 1 on hygiene alone would make the count unclosable
 again. The likely answer is integrity → exit 1, hygiene → exit 0 with the rows still printed, and
 `--strict` for anyone who wants both.
+
+**CLOSED 2026-08-18 — `cf329d74`.** `exit_code()` in `cli/commands/doctor.py`: integrity issues →
+1; hygiene-only → 0 (advisory — an unfiled inbox record is a legitimate resting state, U5);
+`--strict` → 1 on either; empty registry → 0; under `--only hygiene` the integrity group was never
+queried and contributes no verdict. The whole report prints before the exit. `--self-test` refuses
+`--strict` rather than ignoring it. Repo callers audited: nothing scripts the exit code except the
+tests (8 added in `tests/cli/test_doctor_command.py`). Gate for U16–U19: 3742 unit (3727 + 15),
+284 int, doctor pass.
 
 ### U20 — `bm doctor` does not judge relation *types* on records MCP or a hand edit wrote — **OPEN (design note, low priority)**
 
