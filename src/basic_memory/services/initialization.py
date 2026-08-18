@@ -136,7 +136,10 @@ async def ensure_project_registry(app_config: BasicMemoryConfig, *, bootstrap: b
     Outcome: the legacy import still runs — importing projects a user already
         declared is not invention — and the fresh-install branch is skipped, so
         the registry stays empty. Reads then report an empty corpus and writes
-        refuse with ``NO_PROJECT_MESSAGE``. The MCP/API path keeps the default.
+        refuse with ``NO_PROJECT_MESSAGE``. The client-routed CLI commands pass it
+        too, through the prepared-ASGI seam (GAPS U16). Bootstrap survives only in
+        the two server lifespans — ``mcp/server.py`` and ``api/app.py`` — which
+        genuinely do want a registry to exist before they serve.
     """
     _, session_maker = await db.get_or_create_db(app_config.database_path)
     async with db.scoped_session(session_maker) as session:

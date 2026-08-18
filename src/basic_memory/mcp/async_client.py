@@ -190,14 +190,29 @@ async def _prepared_local_asgi_database(app: "FastAPI") -> AsyncIterator[None]:
                 raise
             # Most CLI commands skip ensure_initialization for startup latency,
             # so on a fresh install the DB registry is never populated and every
-            # project-scoped command fails (GAPS B2). Bootstraps an empty
+            # project-scoped command fails (GAPS B2). Runs against an empty
             # registry only; a populated one is never touched.
+            #
+            # Trigger: `bootstrap=False`, so an empty registry stays empty here.
+            # Why: this seam serves the client-routed CLI commands only — a local
+            #     ASGITransport does not run FastAPI lifespan (see `_asgi_client`
+            #     below), and the MCP server bootstraps in its own FastMCP
+            #     lifespan (`mcp/server.py`), as the real API server does in
+            #     `api/app.py`. Bootstrapping here homed a project `main` at
+            #     ~/basic-memory, outside the store, so the first
+            #     `bm project add` on a fresh install left two projects behind
+            #     (GAPS U16, the remaining half of U15).
+            # Outcome: the legacy config.json import still runs, `bm project add`
+            #     creates exactly the project asked for and the service makes it
+            #     the default because it is the only one, and every other
+            #     client-routed command reports an empty registry instead of
+            #     inventing a project.
             from basic_memory.config import ConfigManager
             from basic_memory.services.initialization import (
                 ensure_project_registry,
             )
 
-            await ensure_project_registry(ConfigManager().config)
+            await ensure_project_registry(ConfigManager().config, bootstrap=False)
 
     try:
         yield

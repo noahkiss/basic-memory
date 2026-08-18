@@ -1,10 +1,12 @@
-"""No native verb may invent a project at ``~/basic-memory`` (GAPS U15).
+"""No `bm` command may invent a project at ``~/basic-memory`` (GAPS U15, U16).
 
 Upstream's first-run bootstrap creates a project rooted at ``$HOME/basic-memory``
 whenever the registry is empty. In this fork a project's path is store-derived
 (AGENTS.md, D3), so that path is outside the history repo: a record written there
 is committed nowhere and the only sign is one notice. A *read* verb creating it
-is worse — nothing was asked for and a directory appeared.
+is worse — nothing was asked for and a directory appeared. U15 covered the native
+verbs, which reach the registry through ``cli/direct.py``; U16 covers the
+client-routed ones, which reach it through the prepared-ASGI seam.
 
 The probe has to be a subprocess. ``ConfigManager`` caches config at module
 level, ``resolve_data_dir()`` reads the environment, and the bootstrap keys off
@@ -51,10 +53,10 @@ PROBE_SOURCE = textwrap.dedent(
 )
 
 
-def run_on_empty_registry(tmp_path, command):
-    """Run one command against a fresh install with no project registered."""
+def fresh_install_env(tmp_path):
+    """Build the environment of a genuinely fresh install, and its HOME."""
     home = tmp_path / "home"
-    home.mkdir()
+    home.mkdir(exist_ok=True)
 
     env = os.environ.copy()
     env.pop("BASIC_MEMORY_ENV", None)
@@ -63,7 +65,11 @@ def run_on_empty_registry(tmp_path, command):
     env.pop("BASIC_MEMORY_HOME", None)
     env["HOME"] = str(home)
     env["BASIC_MEMORY_CONFIG_DIR"] = str(tmp_path / "config")
+    return env, home
 
+
+def run_probe(env, home, command):
+    """Run one `bm` command in its own process under the given environment."""
     completed = subprocess.run(
         [sys.executable, "-c", PROBE_SOURCE, json.dumps(list(command))],
         capture_output=True,
@@ -77,6 +83,12 @@ def run_on_empty_registry(tmp_path, command):
     )
     assert completed.returncode == 0, completed.stderr
     return json.loads(completed.stdout.strip().splitlines()[-1])
+
+
+def run_on_empty_registry(tmp_path, command):
+    """Run one command against a fresh install with no project registered."""
+    env, home = fresh_install_env(tmp_path)
+    return run_probe(env, home, command)
 
 
 @pytest.mark.parametrize(
@@ -109,6 +121,36 @@ def test_read_verb_reports_an_empty_registry_without_creating_one(tmp_path, comm
 
     assert probe["exit_code"] == 0, probe["output"]
     assert not probe["bootstrapped"], probe["output"]
+
+
+def test_project_add_leaves_exactly_the_project_asked_for(tmp_path):
+    """`bm project add` on a fresh install creates one project, not two (GAPS U16).
+
+    This is the client-routed half of U15. `project add` reaches the registry
+    through the prepared-ASGI seam rather than `cli/direct.py`, and that seam
+    bootstrapped a project `main` at ``$HOME/basic-memory`` before creating the
+    one the caller asked for — so a clean install could not reach a state of
+    exactly one project.
+
+    Two processes, one HOME: the config manager caches config per process, so
+    reading the registry back in the same process would not prove the row
+    survived the first command's shutdown.
+    """
+    env, home = fresh_install_env(tmp_path)
+
+    added = run_probe(env, home, ["project", "add", "probe", "--governed"])
+    assert added["exit_code"] == 0, added["output"]
+    assert not added["bootstrapped"], added["output"]
+    # The service makes the first project the default (`ProjectService.add_project`),
+    # and the command says so rather than moving the default silently.
+    assert "is now the default project" in added["output"]
+
+    listed = run_probe(env, home, ["project", "list"])
+    assert listed["exit_code"] == 0, listed["output"]
+    assert not listed["bootstrapped"], listed["output"]
+    assert "1 projects" in listed["output"]
+    assert "probe" in listed["output"]
+    assert "(default)" in listed["output"]
 
 
 def test_probe_would_see_a_bootstrap(tmp_path):

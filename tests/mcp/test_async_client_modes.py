@@ -55,7 +55,7 @@ async def test_get_client_preinitializes_local_asgi_database(config_manager, mon
     # sync (GAPS B2) needs a real DB and is covered in test_initialization.
     from basic_memory.services import initialization as init_mod
 
-    async def fake_registry_sync(app_config):
+    async def fake_registry_sync(app_config, *, bootstrap=True):
         return None
 
     monkeypatch.setattr(init_mod, "ensure_project_registry", fake_registry_sync)
@@ -224,7 +224,7 @@ async def test_get_client_keeps_local_asgi_database_during_overlapping_contexts(
     # sync (GAPS B2) needs a real DB and is covered in test_initialization.
     from basic_memory.services import initialization as init_mod
 
-    async def fake_registry_sync(app_config):
+    async def fake_registry_sync(app_config, *, bootstrap=True):
         return None
 
     monkeypatch.setattr(init_mod, "ensure_project_registry", fake_registry_sync)
