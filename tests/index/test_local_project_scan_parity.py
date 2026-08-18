@@ -13,6 +13,7 @@ from basic_memory.index.local_project import (
     record_local_project_scan_walk_error,
     scan_local_project_index_files,
 )
+from basic_memory.index.project_indexing import ProjectIndexObservation
 from basic_memory.services import FileService
 
 
@@ -107,6 +108,41 @@ def test_scan_honors_project_root_bmignore(monkeypatch, tmp_path: Path) -> None:
     assert scan.file_paths == ("notes/a.md",)
 
 
+def test_scan_excludes_bm_derived_and_control_files(monkeypatch, tmp_path: Path) -> None:
+    """GAPS U8/U9: `headline.md` and `vocabulary.yml` at the root are never note content.
+
+    `headline.md` is rewritten on every write, so indexing it left `bm status`
+    reporting one permanently unindexed file; `vocabulary.yml` defines the corpus
+    and must not be in it.
+    """
+    monkeypatch.setenv("BASIC_MEMORY_CONFIG_DIR", str(tmp_path / "config"))
+    project_root = tmp_path / "project"
+    (project_root / "notes").mkdir(parents=True)
+    (project_root / "notes" / "a.md").write_text("# a\n", encoding="utf-8")
+    (project_root / "headline.md").write_text("next: ship it\n", encoding="utf-8")
+    (project_root / "vocabulary.yml").write_text("types: [finding]\n", encoding="utf-8")
+
+    scan = scan_local_project_index_files(project_root)
+
+    assert scan.file_paths == ("notes/a.md",)
+
+
+def test_scan_keeps_a_record_named_headline_below_the_root(monkeypatch, tmp_path: Path) -> None:
+    """The U8/U9 exclusion is root-relative: only bm's own copies are excluded.
+
+    Positive control for the test above — a note that happens to carry the same
+    filename in a subdirectory is a record and must still index.
+    """
+    monkeypatch.setenv("BASIC_MEMORY_CONFIG_DIR", str(tmp_path / "config"))
+    project_root = tmp_path / "project"
+    (project_root / "notes").mkdir(parents=True)
+    (project_root / "notes" / "headline.md").write_text("# a real note\n", encoding="utf-8")
+
+    scan = scan_local_project_index_files(project_root)
+
+    assert scan.file_paths == ("notes/headline.md",)
+
+
 def test_scan_local_project_index_files_records_unreadable_subdirectory(
     monkeypatch,
     tmp_path: Path,
@@ -192,6 +228,35 @@ def test_local_project_index_file_paths_skips_symlinked_files(tmp_path: Path) ->
         pytest.skip("symlinks not supported on this platform")
 
     assert local_project_index_file_paths(project_root, ignore_patterns=set()) == ("keep.md",)
+
+
+@pytest.mark.asyncio
+async def test_status_counts_exclude_bm_derived_and_control_files(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """GAPS U8: `bm status` counted bm's own `headline.md` as an unindexed file.
+
+    The count `bm status` prints is this observation's arithmetic, so asserting it
+    here proves the scan exclusion reaches the number the user reads.
+    """
+    monkeypatch.setenv("BASIC_MEMORY_CONFIG_DIR", str(tmp_path / "config"))
+    project_root = tmp_path / "project"
+    (project_root / "findings").mkdir(parents=True)
+    (project_root / "findings" / "a.md").write_text("# a\n", encoding="utf-8")
+    (project_root / "headline.md").write_text("next: ship it\n", encoding="utf-8")
+    (project_root / "vocabulary.yml").write_text("types: [finding]\n", encoding="utf-8")
+
+    observed = await LocalProjectIndexObservedFileSource(
+        FileService(project_root),
+    ).list_observed_index_files()
+    observation = ProjectIndexObservation(
+        observed_files=observed,
+        indexed_paths=frozenset({"findings/a.md"}),
+    )
+
+    assert observation.total_files == 1
+    assert observation.unindexed_files == ()
 
 
 @pytest.mark.asyncio

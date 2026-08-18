@@ -5,11 +5,19 @@ from pathlib import Path
 
 from basic_memory.ignore_utils import (
     DEFAULT_IGNORE_PATTERNS,
+    DERIVED_FILE_IGNORE_PATTERNS,
     get_bmignore_path,
     load_gitignore_patterns,
     should_ignore_path,
     filter_files,
 )
+
+
+# What `load_gitignore_patterns` returns before any file adds to it: the user's
+# defaults plus bm's own non-negotiable exclusions (GAPS U8/U9). The equality
+# assertions below are "nothing custom was picked up", so they measure this, not
+# the user-editable half alone.
+BASELINE_PATTERNS = DEFAULT_IGNORE_PATTERNS | DERIVED_FILE_IGNORE_PATTERNS
 
 
 def test_get_bmignore_path_honors_basic_memory_config_dir(tmp_path, monkeypatch):
@@ -36,8 +44,8 @@ def test_load_default_patterns_only():
 
         # Should include all default patterns
         assert DEFAULT_IGNORE_PATTERNS.issubset(patterns)
-        # Should only have default patterns (no custom ones)
-        assert patterns == DEFAULT_IGNORE_PATTERNS
+        # Should only have the baseline patterns (no custom ones)
+        assert patterns == BASELINE_PATTERNS
 
 
 def test_load_patterns_with_gitignore():
@@ -101,6 +109,22 @@ def test_load_patterns_with_project_bmignore():
         assert "# migrated verbatim, committed, not indexed" not in patterns
 
 
+def test_derived_files_are_ignored_at_the_project_root_only():
+    """GAPS U8/U9: bm's own `headline.md` and `vocabulary.yml` never index.
+
+    The patterns are root-relative, so a record that shares a filename deeper in
+    the tree still indexes — that half is the positive control.
+    """
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_path = Path(temp_dir)
+        patterns = load_gitignore_patterns(temp_path)
+
+        assert DERIVED_FILE_IGNORE_PATTERNS.issubset(patterns)
+        assert should_ignore_path(temp_path / "headline.md", temp_path, patterns)
+        assert should_ignore_path(temp_path / "vocabulary.yml", temp_path, patterns)
+        assert not should_ignore_path(temp_path / "tasks" / "headline.md", temp_path, patterns)
+
+
 def test_load_patterns_empty_gitignore():
     """Test loading patterns with empty .gitignore file."""
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -111,8 +135,8 @@ def test_load_patterns_empty_gitignore():
 
         patterns = load_gitignore_patterns(temp_path)
 
-        # Should only have default patterns
-        assert patterns == DEFAULT_IGNORE_PATTERNS
+        # Should only have the baseline patterns
+        assert patterns == BASELINE_PATTERNS
 
 
 def test_load_patterns_unreadable_gitignore():
@@ -137,8 +161,8 @@ def test_load_patterns_unreadable_gitignore():
                 # In this case, the patterns should include *.log
                 assert "*.log" in patterns
             except (PermissionError, OSError):
-                # File is actually unreadable, should fallback to default patterns only
-                assert patterns == DEFAULT_IGNORE_PATTERNS
+                # File is actually unreadable, should fall back to the baseline only
+                assert patterns == BASELINE_PATTERNS
                 assert "*.log" not in patterns
         finally:
             # Restore permissions for cleanup

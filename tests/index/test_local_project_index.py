@@ -15,6 +15,7 @@ from sqlalchemy import Select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from basic_memory import db
+from basic_memory.ignore_utils import DERIVED_FILE_IGNORE_PATTERNS
 from basic_memory.index.local_dependencies import LocalIndexProjectDependencies
 from basic_memory.index.local_project import (
     IndexedFileStat,
@@ -721,10 +722,43 @@ async def test_local_project_index_delete_path_verifier_confirms_only_probed_abs
 
     monkeypatch.setattr(Path, "stat", denying_stat)
 
-    verifier = LocalProjectIndexDeletePathVerifier(file_service=file_service)
+    # Empty patterns keep this test on the absence probe alone, and keep it off
+    # the real data dir: an omitted set is loaded from disk at call time.
+    verifier = LocalProjectIndexDeletePathVerifier(file_service=file_service, ignore_patterns=set())
     confirmed = await verifier.confirm_deleted_paths(("present.md", "absent.md", "denied.md"))
 
     assert confirmed == frozenset({"absent.md"})
+
+
+async def test_local_project_index_delete_path_verifier_confirms_newly_ignored_paths(
+    tmp_path: Path,
+) -> None:
+    """GAPS U8/U9: a path the scan no longer indexes is a confirmed delete.
+
+    The absence probe alone left every excluded file's row in place forever —
+    the scan stopped observing `vocabulary.yml`, so change detection planned the
+    delete on every reindex, and the verifier refused it on every reindex
+    because the file is still on disk. A record beside it is the positive
+    control: it exists, it is indexable, and it must not be deleted.
+    """
+    (tmp_path / "vocabulary.yml").write_text("types: [finding]\n", encoding="utf-8")
+    (tmp_path / "headline.md").write_text("next: ship it\n", encoding="utf-8")
+    (tmp_path / "kept.md").write_bytes(b"# Kept\n")
+    # On disk, so the confirmation can only come from the pattern — an absent
+    # path would prove nothing about the ignore branch.
+    (tmp_path / "secrets").mkdir()
+    (tmp_path / "secrets" / "token.md").write_bytes(b"# Token\n")
+
+    verifier = LocalProjectIndexDeletePathVerifier(
+        file_service=FileService(tmp_path),
+        ignore_patterns=set(DERIVED_FILE_IGNORE_PATTERNS) | {"secrets/"},
+    )
+
+    confirmed = await verifier.confirm_deleted_paths(
+        ("vocabulary.yml", "headline.md", "secrets/token.md", "kept.md", "gone.md")
+    )
+
+    assert confirmed == frozenset({"vocabulary.yml", "headline.md", "secrets/token.md", "gone.md"})
 
 
 @dataclass(slots=True)
@@ -800,6 +834,55 @@ async def test_local_project_index_delete_batch_spares_file_recreated_after_snap
 
     assert entity_after is not None
     assert entity_after.id == entity_before.id
+
+
+async def test_reindex_retires_a_row_whose_path_the_scan_no_longer_indexes(
+    test_project: Project,
+    project_config,
+    entity_repository,
+    session_maker: async_sessionmaker[AsyncSession],
+    config_manager,
+) -> None:
+    """GAPS U8/U9: the row for an excluded file must not outlive one reindex.
+
+    The row is seeded the way a real one was left behind — written when the file
+    was still indexable, and never observed again once it was excluded. Before
+    the verifier learned about ignore patterns this survived every reindex, so
+    `vocabulary.yml` stayed searchable and stayed counted. The note beside it is
+    the positive control.
+    """
+    del config_manager
+
+    (project_config.home / "vocabulary.yml").write_text("types: [finding]\n", encoding="utf-8")
+    (project_config.home / "kept.md").write_bytes(b"# Kept\n\nA real record.\n")
+
+    stamped = datetime.now(timezone.utc)
+    async with db.scoped_session(session_maker) as session:
+        await entity_repository.create(
+            session,
+            {
+                "project_id": entity_repository.project_id,
+                "title": "vocabulary",
+                # The real stale row carried a type, because the file was
+                # indexed as if it were note content — that is the defect.
+                "note_type": "note",
+                "permalink": "vocabulary",
+                "file_path": "vocabulary.yml",
+                "content_type": "text/yaml",
+                "created_at": stamped,
+                "updated_at": stamped,
+            },
+        )
+
+    await run_local_project_index_for_project(
+        test_project,
+        runtime_factory=LocalProjectIndexRuntimeFactory(batch_size=10),
+        force_full=True,
+    )
+
+    async with db.scoped_session(session_maker) as session:
+        assert await entity_repository.get_by_file_path(session, "vocabulary.yml") is None
+        assert await entity_repository.get_by_file_path(session, "kept.md") is not None
 
 
 @dataclass(slots=True)

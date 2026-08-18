@@ -68,6 +68,21 @@ DEFAULT_IGNORE_PATTERNS = {
 }
 
 
+# Files bm derives or governs itself, never note content (GAPS U8, U9). The store holds
+# three kinds of file — records, bm's own derived output, and the project's control file —
+# and only records are indexable. `headline.md` is rewritten on every write, so indexing it
+# leaves `bm status` reporting a permanently unindexed file on a healthy project; and
+# `vocabulary.yml` is the file that *defines* the corpus, so indexing it puts the control
+# file in the corpus it controls.
+#
+# Root-relative (leading `/`) so a record that happens to be named `headline.md` in a
+# subdirectory still indexes: only the project root copies are bm's own.
+# Names mirror `services.headline.HEADLINE_FILENAME` and
+# `vocabulary.model.VOCABULARY_FILENAME`, kept as literals here because importing either
+# module would pull the service/DB graph into every ignore-pattern load.
+DERIVED_FILE_IGNORE_PATTERNS = frozenset({"/headline.md", "/vocabulary.yml"})
+
+
 def get_bmignore_path() -> Path:
     """Get path to .bmignore file.
 
@@ -202,17 +217,20 @@ def load_gitignore_patterns(base_path: Path) -> Set[str]:
     """Load the ignore patterns that apply to files under base_path.
 
     Combines patterns from:
-    1. <basic-memory data dir>/.bmignore (user's global ignore patterns, honors
+    1. DERIVED_FILE_IGNORE_PATTERNS (bm's own derived and control files; not
+       user-editable, because indexing them is never correct)
+    2. <basic-memory data dir>/.bmignore (user's global ignore patterns, honors
        BASIC_MEMORY_CONFIG_DIR)
-    2. {base_path}/.bmignore (project-specific index exclusions — for files that
+    3. {base_path}/.bmignore (project-specific index exclusions — for files that
        stay committed in git but must not be indexed, e.g. verbatim `_import/`
        copies in a store repo, which .gitignore cannot express)
-    3. {base_path}/.gitignore (project-specific patterns)
+    4. {base_path}/.gitignore (project-specific patterns)
 
     Returns:
         Set of patterns to ignore
     """
-    patterns = load_bmignore_patterns()
+    patterns = set(DERIVED_FILE_IGNORE_PATTERNS)
+    patterns |= load_bmignore_patterns()
     patterns |= read_ignore_pattern_file(base_path / ".bmignore")
     patterns |= read_ignore_pattern_file(base_path / ".gitignore")
     return patterns

@@ -406,13 +406,42 @@ class LocalProjectIndexObservedFileSource(ProjectIndexObservedFileSource):
 
 @dataclass(frozen=True, slots=True)
 class LocalProjectIndexDeletePathVerifier(ProjectIndexDeletePathVerifier):
-    """Probe the local filesystem before applying scan-planned index deletes."""
+    """Confirm a scan-planned index delete against the local filesystem.
+
+    Two ways to earn a confirmation: the file is gone, or the file is no longer
+    something this project indexes. `ignore_patterns` defaults to loading the
+    same union the scan uses, so the two never disagree about what is indexable.
+    """
 
     file_service: FileService
+    ignore_patterns: LocalProjectIndexIgnorePatterns | None = None
 
     async def confirm_deleted_paths(self, paths: Sequence[str]) -> frozenset[str]:
+        base_path = self.file_service.base_path
+        # Patterns are loaded here rather than held on the runtime because a
+        # verifier only runs when a batch has deletes to apply, and the files
+        # behind these patterns are three small reads.
+        active_ignore_patterns = (
+            self.ignore_patterns
+            if self.ignore_patterns is not None
+            else load_gitignore_patterns(base_path)
+        )
         confirmed_paths: set[str] = set()
         for path in paths:
+            # Trigger: the path is on disk but the scan no longer indexes it —
+            # a newly ignored file, or one of bm's own derived/control files
+            # (GAPS U8/U9).
+            # Why: the question this verifier exists to answer is "is the index
+            # row still earned", and the absence probe below is only a proxy for
+            # it. An excluded file fails that probe forever, so its row survived
+            # every reindex — permanently searchable, and permanently counted.
+            # Outcome: an excluded path is a confirmed delete. No scan can ever
+            # re-observe it, so nothing is lost that a later pass would restore.
+            if local_relative_path_is_filtered(path) or should_ignore_path(
+                base_path / path, base_path, active_ignore_patterns
+            ):
+                confirmed_paths.add(path)
+                continue
             # Trigger: the existence probe itself fails (permission/mount error).
             # Why: without a positive confirmation of absence, deleting would
             # turn a transient storage error into destroyed entity rows.
@@ -422,7 +451,7 @@ class LocalProjectIndexDeletePathVerifier(ProjectIndexDeletePathVerifier):
             # Outcome: leave the path out of the confirmed set; the next scan
             # reconciles it once the probe works again.
             try:
-                (self.file_service.base_path / path).stat()
+                (base_path / path).stat()
                 still_absent = False
             except (FileNotFoundError, NotADirectoryError):
                 still_absent = True
