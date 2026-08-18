@@ -326,3 +326,22 @@ def test_combined_plugins():
     assert "relations" in text_token.meta
     link = text_token.meta["relations"][0]
     assert link["type"] == "links_to"
+
+
+def test_relation_plugin_ignores_wikilinks_inside_inline_code():
+    """GAPS U22: `[[x]]` in backticks is quotation, not an edge.
+
+    A migrated note said "supports `[[wikilinks]]`" and bm indexed a `links_to`
+    relation to "wikilinks", which `bm doctor` then reported as unresolved. The
+    bare link beside it is the positive control: prose outside the code span
+    still produces its edge.
+    """
+    md = MarkdownIt().use(relation_plugin)
+    content = "Roadmap: support `[[note title]]` syntax, and see [[Real Page]] for details."
+    token = [t for t in md.parse(content) if t.type == "inline"][0]
+    rels = token.meta.get("relations", [])
+    assert [r["target"] for r in rels] == ["Real Page"]
+
+    only_code = "Type `[[` to open the picker; `[[wikilinks]]` resolve on save."
+    token = [t for t in md.parse(only_code) if t.type == "inline"][0]
+    assert "relations" not in token.meta

@@ -7149,6 +7149,32 @@ parsed relation list today, so it would need the parser to record which relation
 section and which from prose. That is real work for a check nothing currently needs, which is why
 this is a note rather than a task.
 
+### U22 — `[[x]]` inside inline code is indexed as a `links_to` relation — **FIXED 2026-08-18**
+
+**Found 2026-08-18** by the batch-1 migration (briefcase). A finding's body read
+"8. `[[wikilinks]]` with a fuzzy dropdown on `[[`" — quotation, in backticks — and the index gained a
+`links_to` relation to a page called `wikilinks`, which `bm doctor` reported as
+`unresolved-relation -links_to-> [[wikilinks]]`. There was no way to quote a wikilink literally.
+
+```
+$ bm new finding "x" -p briefcase --body 'supports `[[wikilinks]]`' --quiet
+$ bm doctor -p briefcase --only integrity --quiet
+  findings/tnd-…  unresolved-relation  -links_to-> [[wikilinks]]
+```
+
+Cause: `relation_rule` in `markdown/plugins.py` read `token.content` — the inline token's raw text,
+backticks included — instead of its children. Fenced blocks are separate block tokens and never
+reached it, so inline code was the one gap.
+
+**CLOSED 2026-08-18.** `_prose_outside_inline_code(token)` joins the inline token's children with
+every `code_inline` span removed, and `relation_rule` parses relations from that. A token with no
+children (a plugin test feeding raw content) falls back to its text. Test:
+`tests/markdown/test_markdown_plugins.py::test_relation_plugin_ignores_wikilinks_inside_inline_code`
+— a bare `[[Real Page]]` beside the code span is the positive control. Gate: 3743 unit (3742 + 1),
+284 int, doctor pass. The already-written briefcase record clears on the next reindex once the
+release carrying this lands on the machine running the migration; until then the harness validator
+fails on any bare or backticked `[[…]]` that is not a `tnd-` id.
+
 ### Migrating a repo's tracking files
 
 The procedure the 2026-08-17 pass followed. Every entry above came out of it.

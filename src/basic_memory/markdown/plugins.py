@@ -149,6 +149,24 @@ def parse_relation(token: Token) -> Dict[str, Any] | None:
     return {"type": rel_type, "target": target, "context": context}
 
 
+def _prose_outside_inline_code(token: Any) -> str:
+    """The inline token's text with every `code_inline` span removed.
+
+    Trigger: the token has been through the inline ruler, so it carries children.
+    Why: `[[x]]` inside backticks is quotation, not an edge — a note that says
+        "supports `[[wikilinks]]`" is describing a feature, and indexing that as
+        a `links_to` relation to a page called "wikilinks" leaves a dangling
+        relation `bm doctor` reports forever (GAPS U22). Fenced blocks are
+        separate block tokens and never reach here, so inline code was the one
+        gap.
+    Outcome: relations are parsed from the remaining prose only. A token with
+        no children (a plugin test feeding raw content) falls back to its text.
+    """
+    if not token.children:
+        return token.tag or token.content
+    return "".join(child.content for child in token.children if child.type != "code_inline")
+
+
 def parse_inline_relations(content: str) -> List[Dict[str, Any]]:
     """Find wiki-style links in regular content."""
     relations = []
@@ -271,7 +289,7 @@ def relation_plugin(md: MarkdownIt) -> None:
 
                 # Always check for inline links in any text
                 else:
-                    content = token.tag or token.content
+                    content = _prose_outside_inline_code(token)
                     if "[[" in content:
                         rels = parse_inline_relations(content)
                         if rels:
