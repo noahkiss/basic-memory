@@ -177,8 +177,61 @@ def seed_project(
 
 
 def written_file(project: SeededProject, output: str) -> Path:
-    """The file `bm new` reported writing, taken from its payload line."""
-    return Path(output.strip().splitlines()[0].split("  ")[-1])
+    """The file `bm new` reported writing, taken from its payload line.
+
+    The payload carries a **project-relative** path (GAPS U11), so the project's
+    home is joined back on here — the verb no longer prints a path that differs
+    between machines.
+    """
+    return project.path / output.strip().splitlines()[0].split("  ")[-1]
+
+
+def create_record(project: str, note_type: str, title: str) -> str:
+    """Write one record with `bm new` and return its id, for another one to link to."""
+    result = runner.invoke(app, ["new", note_type, title, "-b", "seeded", "-p", project, "--quiet"])
+    assert result.exit_code == 0, result.output
+    return result.stdout.split()[0]
+
+
+def indexed_relations(project: SeededProject, record_id: str) -> list[tuple[str, str]]:
+    """Every outgoing edge the index holds for one record, as (type, target).
+
+    Only *resolved* edges are returned — a row with no target entity points at
+    nothing, which is the dangling relation `bm doctor` reports rather than a
+    connection between two records.
+
+    The target is read off the resolved entity's permalink, not off the relation's
+    `to_name` column: resolution rewrites `to_name` to the target's **title**
+    (`indexing/relation_resolution.py`, `target_name=resolved_entity.title`), so
+    the column holds a human-readable name and the identity lives on the row it
+    resolved to. `permalink == id` byte-for-byte (§2), so the permalink is the id.
+    """
+
+    async def _read() -> list[tuple[str, str]]:
+        from basic_memory import db
+        from basic_memory.config import ConfigManager
+        from basic_memory.repository.entity_repository import EntityRepository
+        from basic_memory.repository.project_repository import ProjectRepository
+
+        config = ConfigManager().config
+        _, session_maker = await db.get_or_create_db(config.database_path, config=config)
+        try:
+            async with db.scoped_session(session_maker) as session:
+                registered = await ProjectRepository().get_by_name(session, project.name)
+                assert registered is not None
+                entity = await EntityRepository(project_id=registered.id).get_by_permalink(
+                    session, record_id
+                )
+                assert entity is not None
+                return [
+                    (relation.relation_type, target.permalink)
+                    for relation in entity.outgoing_relations
+                    if (target := relation.to_entity) is not None and target.permalink is not None
+                ]
+        finally:
+            await db.shutdown_db()
+
+    return asyncio.run(_read())
 
 
 def written_frontmatter(path: Path) -> dict[str, Any]:
@@ -216,6 +269,29 @@ def test_new_creates_a_record_of_each_type(note_type: str, directory: str) -> No
     on_disk = project.path / directory / f"{record_id}--a-backup-question.md"
     assert on_disk.is_file()
     assert "Body text." in on_disk.read_text(encoding="utf-8")
+
+
+def test_new_prints_a_store_relative_path() -> None:
+    """GAPS U11: the payload names the file the way the history subject line does.
+
+    The absolute path was the one field guaranteed to differ between machines,
+    which made any captured `bm new` output non-portable. `bm path <id>` is still
+    the way to get the absolute one, so nothing is lost.
+    """
+    project = seed_project(GOVERNED)
+
+    result = runner.invoke(
+        app,
+        ["new", "finding", "Backups Failed", "-b", "Disk full.", "-p", GOVERNED, "--quiet"],
+    )
+
+    assert result.exit_code == 0, result.output
+    record_id, note_type, path = result.stdout.splitlines()[0].split("  ")
+    assert note_type == "finding"
+    assert path == f"findings/{record_id}--backups-failed.md"
+    # The store home is what U11 removed, so its absence is the claim.
+    assert str(project.path) not in result.stdout
+    assert (project.path / path).is_file()
 
 
 def test_new_writes_a_permalink_equal_to_the_id() -> None:
@@ -592,6 +668,97 @@ def test_new_records_a_supersedes_relation_on_a_finding() -> None:
     assert "superseded" not in written_file(project, first.stdout).read_text(encoding="utf-8")
 
 
+# --- Edges the writer states (GAPS U14) ---
+
+
+def test_new_writes_every_rel_and_the_index_resolves_them() -> None:
+    """`--rel` is repeatable, and each edge indexes as a resolved relation.
+
+    The resolved target is the claim, not just the bullet: a relation row with no
+    target entity is a dangling edge that `bm doctor` reports, so a row pointing
+    at the record whose id was typed is what proves the write *connected* two
+    records rather than leaving a link that merely looks like one.
+    """
+    project = seed_project(GOVERNED)
+    source = create_record(GOVERNED, "finding", "Where It Came From")
+    sibling = create_record(GOVERNED, "guide", "How To Do It")
+
+    result = runner.invoke(
+        app,
+        [
+            "new",
+            "task",
+            "Do The Thing",
+            "-b",
+            "x",
+            "--rel",
+            f"derived_from:{source}",
+            "--rel",
+            f"relates_to:{sibling}",
+            "-p",
+            GOVERNED,
+            "--quiet",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    record_id = result.stdout.split()[0]
+    body = written_file(project, result.stdout).read_text(encoding="utf-8")
+    assert f"- derived_from [[{source}]]" in body
+    assert f"- relates_to [[{sibling}]]" in body
+
+    indexed = indexed_relations(project, record_id)
+    assert ("derived_from", source) in indexed
+    assert ("relates_to", sibling) in indexed
+
+
+def test_new_supersedes_is_the_same_write_as_rel_supersedes() -> None:
+    """`--supersedes <id>` is sugar for `--rel supersedes:<id>` (GAPS U14).
+
+    One edge-writing path, so the two flags cannot drift into writing two
+    different bullets for the same claim.
+    """
+    project = seed_project(GOVERNED)
+    predecessor = create_record(GOVERNED, "finding", "Old Answer")
+
+    sugar = runner.invoke(
+        app,
+        [
+            "new",
+            "finding",
+            "By Flag",
+            "-b",
+            "b",
+            "--supersedes",
+            predecessor,
+            "-p",
+            GOVERNED,
+            "--quiet",
+        ],
+    )
+    general = runner.invoke(
+        app,
+        [
+            "new",
+            "finding",
+            "By Rel",
+            "-b",
+            "b",
+            "--rel",
+            f"supersedes:{predecessor}",
+            "-p",
+            GOVERNED,
+            "--quiet",
+        ],
+    )
+
+    assert sugar.exit_code == 0, sugar.output
+    assert general.exit_code == 0, general.output
+    line = f"- supersedes [[{predecessor}]]"
+    assert line in written_file(project, sugar.stdout).read_text(encoding="utf-8")
+    assert line in written_file(project, general.stdout).read_text(encoding="utf-8")
+
+
 def test_new_reads_the_body_from_stdin() -> None:
     """`--body -` takes the body from stdin, the way `git commit -F -` does (D11)."""
     project = seed_project(GOVERNED)
@@ -663,7 +830,7 @@ def test_new_files_an_unknown_type_as_inbox_and_says_so() -> None:
     assert metadata["type"] == "inbox"
     assert metadata["proposed-type"] == "runbook"
     assert "'runbook' is not a type this project declares" in result.stdout
-    assert str(project.path / "inbox") in result.stdout
+    assert f"inbox/{metadata['id']}--restart-the-thing.md" in result.stdout
 
 
 def test_new_refuses_an_undeclared_type_when_the_vocabulary_declares_no_inbox() -> None:
@@ -707,6 +874,75 @@ def test_new_on_an_ungoverned_project_writes_and_notices() -> None:
 
 
 # --- What it refuses ---
+
+
+def test_new_rejects_a_relation_type_the_project_does_not_declare() -> None:
+    """The relation type is closed vocabulary, the same as the record type (GAPS U14).
+
+    The positive control is the same project, the same target, and a declared
+    type — so the refusal is about the word, not about the flag being unusable.
+    """
+    project = seed_project(GOVERNED)
+    target = create_record(GOVERNED, "finding", "A Cause")
+
+    refused = runner.invoke(
+        app, ["new", "task", "A Task", "-b", "x", "--rel", f"caused_by:{target}", "-p", GOVERNED]
+    )
+
+    assert refused.exit_code == 1
+    assert "'caused_by' is not a relation type project 'governed' declares" in refused.stderr
+    assert "relates_to, derived_from, supersedes" in refused.stderr
+    assert refused.stdout.strip() == ""
+
+    allowed = runner.invoke(
+        app,
+        [
+            "new",
+            "task",
+            "A Task",
+            "-b",
+            "x",
+            "--rel",
+            f"relates_to:{target}",
+            "-p",
+            GOVERNED,
+            "--quiet",
+        ],
+    )
+    assert allowed.exit_code == 0, allowed.output
+    assert f"- relates_to [[{target}]]" in written_file(project, allowed.stdout).read_text(
+        encoding="utf-8"
+    )
+
+
+def test_new_rejects_a_rel_target_that_does_not_exist() -> None:
+    """An edge to a record that is not there is a typo every time (GAPS E1, U14)."""
+    project = seed_project(GOVERNED)
+
+    result = runner.invoke(
+        app,
+        ["new", "task", "A Task", "-b", "x", "--rel", "relates_to:tnd-aaaa1111", "-p", GOVERNED],
+    )
+
+    assert result.exit_code == 1
+    assert "--rel names 'tnd-aaaa1111'" in result.stderr
+    assert result.stdout.strip() == ""
+    # Refused before the write, not after it.
+    assert list((project.path / "tasks").glob("*.md")) == []
+
+
+@pytest.mark.parametrize("value", ["relates_to", "relates_to:", ":tnd-aaaa1111", "relates_to:note"])
+def test_new_rejects_a_malformed_rel_flag(value: str) -> None:
+    """`--rel` takes `<type>:<id>`, and an id that could not be a permalink is not one."""
+    seed_project(GOVERNED)
+
+    result = runner.invoke(
+        app, ["new", "task", "A Task", "-b", "x", "--rel", value, "-p", GOVERNED]
+    )
+
+    assert result.exit_code == 1
+    assert "--rel takes" in result.stderr
+    assert result.stdout.strip() == ""
 
 
 def test_new_rejects_supersedes_on_a_type_that_cannot_supersede() -> None:

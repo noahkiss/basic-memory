@@ -169,8 +169,20 @@ def create(project: str, note_type: str, title: str, body: str = "Original body.
 
 
 def payload_path(output: str) -> Path:
-    """The path a write verb reported, taken from its payload line."""
+    """An absolute path a verb printed, taken from its payload line.
+
+    `bm path` prints one; a write verb does not — see `written_path` (GAPS U11).
+    """
     return Path(output.strip().splitlines()[0].split("  ")[-1])
+
+
+def written_path(project: SeededProject, output: str) -> Path:
+    """The file a write verb reported, joined onto the project's home.
+
+    `bm edit` prints a **project-relative** path, the same form `bm new` prints
+    and the history subject line uses (GAPS U11), so the home goes back on here.
+    """
+    return project.path / output.strip().splitlines()[0].split("  ")[-1]
 
 
 def frontmatter_of(path: Path) -> dict[str, Any]:
@@ -185,7 +197,7 @@ def frontmatter_of(path: Path) -> dict[str, Any]:
 @pytest.mark.parametrize("note_type", ["guide", "profile", "state", "inbox"])
 def test_edit_replaces_the_body_of_each_kept_current_type(note_type: str) -> None:
     """The four kept-current types are rewritten in place — that is what they are for (§4)."""
-    seed_project()
+    project = seed_project()
     record_id = create(GOVERNED, note_type, "How To Restore")
 
     result = runner.invoke(
@@ -193,9 +205,33 @@ def test_edit_replaces_the_body_of_each_kept_current_type(note_type: str) -> Non
     )
 
     assert result.exit_code == 0, result.output
-    body = payload_path(result.stdout).read_text(encoding="utf-8")
+    body = written_path(project, result.stdout).read_text(encoding="utf-8")
     assert "Replacement body." in body
     assert "Original body." not in body
+
+
+def test_edit_prints_a_store_relative_path() -> None:
+    """GAPS U11: `bm edit`'s payload names the file the way `bm new`'s does.
+
+    `bm path` still prints the absolute path, and this asserts the two agree —
+    the relative form has to resolve to the file the verb actually wrote.
+    """
+    project = seed_project()
+    record_id = create(GOVERNED, "guide", "How To Restore")
+
+    result = runner.invoke(
+        app, ["edit", record_id, "--body", "Replacement body.", "-p", GOVERNED, "--quiet"]
+    )
+
+    assert result.exit_code == 0, result.output
+    printed_id, note_type, path = result.stdout.splitlines()[0].split("  ")
+    assert (printed_id, note_type) == (record_id, "guide")
+    assert path == f"guides/{record_id}--how-to-restore.md"
+    # The store home is what U11 removed, so its absence is the claim.
+    assert str(project.path) not in result.stdout
+    assert (project.path / path) == payload_path(
+        runner.invoke(app, ["path", record_id, "-p", GOVERNED]).stdout + "\n"
+    )
 
 
 def test_edit_leaves_the_file_ending_in_exactly_one_newline() -> None:
@@ -204,7 +240,7 @@ def test_edit_leaves_the_file_ending_in_exactly_one_newline() -> None:
     A replacement body with no newline of its own is the case that broke it: the
     edit path builds its content without passing through `dump_frontmatter`.
     """
-    seed_project()
+    project = seed_project()
     record_id = create(GOVERNED, "guide", "How To Restore")
 
     result = runner.invoke(
@@ -212,13 +248,13 @@ def test_edit_leaves_the_file_ending_in_exactly_one_newline() -> None:
     )
 
     assert result.exit_code == 0, result.output
-    written = payload_path(result.stdout).read_bytes()
+    written = written_path(project, result.stdout).read_bytes()
     assert written.endswith(b"no newline here\n"), written[-40:]
 
 
 def test_edit_replaces_the_title_and_keeps_the_file_path() -> None:
     """The file name carries the id other records link by, so a title change does not move it."""
-    seed_project()
+    project = seed_project()
     record_id = create(GOVERNED, "guide", "Old Title")
     before = payload_path(runner.invoke(app, ["path", record_id, "-p", GOVERNED]).stdout + "\n")
 
@@ -227,7 +263,7 @@ def test_edit_replaces_the_title_and_keeps_the_file_path() -> None:
     )
 
     assert result.exit_code == 0, result.output
-    after = payload_path(result.stdout)
+    after = written_path(project, result.stdout)
     assert after == before
     assert frontmatter_of(after)["title"] == "New Title"
     assert "Original body." in after.read_text(encoding="utf-8")
@@ -235,7 +271,7 @@ def test_edit_replaces_the_title_and_keeps_the_file_path() -> None:
 
 def test_edit_keeps_every_field_set_at_creation() -> None:
     """Only the title and the body move; `id`, `permalink`, `type` and `source` are set once (§4)."""
-    seed_project()
+    project = seed_project()
     record_id = create(GOVERNED, "guide", "A Guide")
     before = frontmatter_of(
         payload_path(runner.invoke(app, ["path", record_id, "-p", GOVERNED]).stdout + "\n")
@@ -244,14 +280,14 @@ def test_edit_keeps_every_field_set_at_creation() -> None:
     result = runner.invoke(app, ["edit", record_id, "-b", "New text.", "-p", GOVERNED, "--quiet"])
 
     assert result.exit_code == 0, result.output
-    after = frontmatter_of(payload_path(result.stdout))
+    after = frontmatter_of(written_path(project, result.stdout))
     for field in ("id", "permalink", "type", "source", "review-by"):
         assert after[field] == before[field]
 
 
 def test_edit_reads_the_body_from_stdin() -> None:
     """`--body -` takes the replacement from stdin (D11)."""
-    seed_project()
+    project = seed_project()
     record_id = create(GOVERNED, "state", "Disk Usage")
 
     result = runner.invoke(
@@ -259,7 +295,7 @@ def test_edit_reads_the_body_from_stdin() -> None:
     )
 
     assert result.exit_code == 0, result.output
-    assert "Piped body." in payload_path(result.stdout).read_text(encoding="utf-8")
+    assert "Piped body." in written_path(project, result.stdout).read_text(encoding="utf-8")
 
 
 def test_edit_opens_the_editor_on_the_current_body(
@@ -272,13 +308,13 @@ def test_edit_opens_the_editor_on_the_current_body(
     surviving is the evidence that it was handed the record rather than a blank
     buffer — and it runs as a real subprocess, not a stub.
     """
-    seed_project()
+    project = seed_project()
     record_id = create(GOVERNED, "guide", "A Guide")
 
     result = runner.invoke(app, ["edit", record_id, "-p", GOVERNED, "--quiet"])
 
     assert result.exit_code == 0, result.output
-    body = payload_path(result.stdout).read_text(encoding="utf-8")
+    body = written_path(project, result.stdout).read_text(encoding="utf-8")
     assert "Original body." in body
     assert "appended by the editor" in body
 
@@ -293,7 +329,7 @@ def test_edit_with_a_title_only_leaves_the_editor_shut(
     depending on whether a terminal happened to be attached — the non-terminal
     branch changes only the title.
     """
-    seed_project()
+    project = seed_project()
     record_id = create(GOVERNED, "guide", "Old Title")
 
     result = runner.invoke(
@@ -301,10 +337,10 @@ def test_edit_with_a_title_only_leaves_the_editor_shut(
     )
 
     assert result.exit_code == 0, result.output
-    body = payload_path(result.stdout).read_text(encoding="utf-8")
+    body = written_path(project, result.stdout).read_text(encoding="utf-8")
     assert "appended by the editor" not in body
     assert "Original body." in body
-    assert frontmatter_of(payload_path(result.stdout))["title"] == "New Title"
+    assert frontmatter_of(written_path(project, result.stdout))["title"] == "New Title"
 
 
 def test_edit_on_a_task_names_done_and_mark() -> None:
@@ -333,6 +369,71 @@ def test_edit_on_a_finding_names_supersession() -> None:
     assert "Original body." in payload_path(
         runner.invoke(app, ["path", record_id, "-p", GOVERNED]).stdout + "\n"
     ).read_text(encoding="utf-8")
+
+
+# --- bm edit --rel (GAPS U14) ---
+
+
+def test_edit_appends_a_relation_and_leaves_the_title_and_body_alone() -> None:
+    """`--rel` adds an edge and changes nothing else about the record.
+
+    Appending is the whole claim: a second `--rel` on the same record joins the
+    first under one `## Relations` heading rather than replacing it, because the
+    edges already there are facts somebody recorded.
+    """
+    project = seed_project()
+    guide = create(GOVERNED, "guide", "How To Restore")
+    first_target = create(GOVERNED, "finding", "Where It Came From")
+    second_target = create(GOVERNED, "state", "How Things Stand")
+
+    first = runner.invoke(
+        app,
+        ["edit", guide, "--rel", f"derived_from:{first_target}", "-p", GOVERNED, "--quiet"],
+    )
+    assert first.exit_code == 0, first.output
+
+    second = runner.invoke(
+        app,
+        ["edit", guide, "--rel", f"relates_to:{second_target}", "-p", GOVERNED, "--quiet"],
+    )
+    assert second.exit_code == 0, second.output
+
+    body = written_path(project, second.stdout).read_text(encoding="utf-8")
+    assert body.count("## Relations") == 1
+    assert f"- derived_from [[{first_target}]]" in body
+    assert f"- relates_to [[{second_target}]]" in body
+    # Nothing else moved: the title and the body are what `bm new` wrote.
+    assert "Original body." in body
+    assert frontmatter_of(written_path(project, second.stdout))["title"] == "How To Restore"
+
+
+def test_edit_rejects_a_relation_type_the_project_does_not_declare() -> None:
+    """The relation type is closed vocabulary here too, with the same message."""
+    seed_project()
+    guide = create(GOVERNED, "guide", "How To Restore")
+    target = create(GOVERNED, "finding", "A Cause")
+
+    result = runner.invoke(app, ["edit", guide, "--rel", f"caused_by:{target}", "-p", GOVERNED])
+
+    assert result.exit_code == 1
+    assert f"'caused_by' is not a relation type project '{GOVERNED}' declares" in result.stderr
+    assert result.stdout.strip() == ""
+
+
+def test_edit_rejects_a_rel_target_that_does_not_exist() -> None:
+    """An edge to a record the project does not hold is refused before the write."""
+    seed_project()
+    guide = create(GOVERNED, "guide", "How To Restore")
+
+    result = runner.invoke(app, ["edit", guide, "--rel", "relates_to:tnd-aaaa1111", "-p", GOVERNED])
+
+    assert result.exit_code == 1
+    assert "--rel names 'tnd-aaaa1111'" in result.stderr
+    assert result.stdout.strip() == ""
+    unchanged = payload_path(
+        runner.invoke(app, ["path", guide, "-p", GOVERNED]).stdout + "\n"
+    ).read_text(encoding="utf-8")
+    assert "## Relations" not in unchanged
 
 
 def test_edit_with_nothing_to_change_is_an_error() -> None:
@@ -408,7 +509,7 @@ def test_edit_sets_declared_fields_on_a_profile_and_merges_later_ones() -> None:
     )
 
     assert first.exit_code == 0, first.output
-    path = payload_path(first.stdout)
+    path = written_path(project, first.stdout)
     metadata = frontmatter_of(path)
     assert metadata["owner"] == "platform"
     assert metadata["tier"] == "gold"
@@ -421,7 +522,7 @@ def test_edit_sets_declared_fields_on_a_profile_and_merges_later_ones() -> None:
     )
 
     assert second.exit_code == 0, second.output
-    after = frontmatter_of(payload_path(second.stdout))
+    after = frontmatter_of(written_path(project, second.stdout))
     assert after["owner"] == "storage"
     assert after["tier"] == "gold"
 

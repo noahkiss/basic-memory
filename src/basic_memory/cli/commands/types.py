@@ -39,6 +39,7 @@ from basic_memory.project_marker import MarkerError
 from basic_memory.vocabulary.glossary import (
     field_meaning,
     picking_question,
+    relation_meaning,
     type_fields,
     type_summary,
 )
@@ -138,6 +139,25 @@ def render_declared_fields(vocabulary: Vocabulary) -> list[str]:
     return lines
 
 
+def render_relations(vocabulary: Vocabulary) -> list[str]:
+    """The edges this project allows, each with what writing it claims (GAPS U14).
+
+    Printed with prose rather than as a bare list, unlike `statuses` and `areas`:
+    a status name says what it means, and `derived_from` versus `relates_to` is
+    exactly the choice an agent gets wrong without one line of guidance.
+    """
+    lines = ["relations"]
+    if not vocabulary.relations:
+        lines.append(f"  {NONE_DECLARED}")
+        return lines
+
+    width = max(len(name) for name in vocabulary.relations)
+    for name in vocabulary.relations:
+        meaning = relation_meaning(name)
+        lines.append(f"  {name:<{width + LABEL_GAP}}{meaning}" if meaning else f"  {name}")
+    return lines
+
+
 def render(project_name: str, vocabulary: Vocabulary, path_note: str = "") -> str:
     """Render the whole report: type sections, then the rest of the vocabulary.
 
@@ -157,6 +177,7 @@ def render(project_name: str, vocabulary: Vocabulary, path_note: str = "") -> st
 
     sections.append(["statuses", f"  {', '.join(vocabulary.statuses) or NONE_DECLARED}"])
     sections.append(["areas", f"  {', '.join(vocabulary.areas) or NONE_DECLARED}"])
+    sections.append(render_relations(vocabulary))
     sections.append(
         [
             "review-by",
@@ -250,8 +271,10 @@ def types(
         elif pinned:
             typer.echo(
                 f"\nEdit {vocabulary_path(refs[0].external_id)} "
-                "to add a type, status, area, or field."
+                "to add a type, status, area, relation, or field."
             )
         else:
-            typer.echo("\nEdit a project's vocabulary.yml to add a type, status, area, or field.")
+            typer.echo(
+                "\nEdit a project's vocabulary.yml to add a type, status, area, relation, or field."
+            )
     emit_notices(scope, quiet=quiet, command="types")

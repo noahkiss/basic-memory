@@ -32,7 +32,7 @@ verbs must not pay for (AGENTS.md, "Measured baseline").
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Mapping, Optional
+from typing import TYPE_CHECKING, Any, Mapping, Optional, Sequence
 
 import yaml
 from pydantic import computed_field
@@ -40,14 +40,12 @@ from pydantic import computed_field
 from basic_memory.project_marker import resolve_cli_project
 from basic_memory.schemas.base import Entity as EntitySchema
 
-# Re-exported: the schema's supersession relation name lives with the rest of its
-# fixed vocabulary, and the two record-writing verbs import it from this module.
-from basic_memory.vocabulary.glossary import SUPERSEDES_RELATION
 from basic_memory.vocabulary.ids import (
     MAX_ID_ATTEMPTS,
     SEPARATOR,
     TYPE_DIRS,
     IdAllocationError,
+    is_record_id,
     new_record_id,
     record_slug,
 )
@@ -60,6 +58,9 @@ if TYPE_CHECKING:  # pragma: no cover
 
 # The heading a record's relations live under (`.forked/schema.md` §5/§12).
 RELATIONS_HEADING = "## Relations"
+
+# One outgoing edge: the relation type, and the id of the record it points at.
+type Relation = tuple[str, str]
 
 # The type an undeclared proposal is filed as — W4's escape hatch, and the one
 # type a governed project cannot do without (GAPS E2).
@@ -260,6 +261,107 @@ def body_from_editor(text: str) -> str:
         scratch.unlink(missing_ok=True)
 
 
+# --- The edges a record carries (GAPS U14) ---
+
+
+def relation_line(relation: Relation) -> str:
+    """One `## Relations` bullet: the form the markdown parser reads as an edge."""
+    name, target = relation
+    return f"- {name} [[{target}]]"
+
+
+def parse_relations(values: Sequence[str]) -> tuple[Relation, ...]:
+    """Turn every `--rel <type>:<id>` argument into the edge it writes.
+
+    Shape only. Whether the type is one the project declares and whether the
+    target exists are both questions about a project, and they are answered where
+    the project is open — here there is neither a vocabulary nor a session.
+
+    The id is checked against `is_record_id` for the reason `--supersedes` checks
+    it: the edge is written as `[[<value>]]` and resolves by permalink, so a value
+    that cannot be a permalink lands as a dangling relation that reads as a real
+    edge until `bm doctor` reports it (GAPS E1).
+    """
+    relations: list[Relation] = []
+    for value in values:
+        name, separator, target = value.partition(":")
+        name, target = name.strip(), target.strip()
+        if not separator or not name or not target:
+            raise ValueError(f"--rel takes '<type>:<id>', got '{value}'")
+        if not is_record_id(target):
+            raise ValueError(f"--rel takes a record id after the type, got '{target}'")
+        relations.append((name, target))
+    return tuple(relations)
+
+
+def check_relation_types(
+    relations: Sequence[Relation], vocabulary: Vocabulary | None, *, project: str
+) -> None:
+    """Refuse a relation type the project's vocabulary does not declare.
+
+    An absent vocabulary means ungoverned, never "use the defaults" (GAPS W4), so
+    there is nothing to measure the edge against and it is written unchecked —
+    the rule `bm mark` already follows for a status.
+
+    **Enforced at the flag, not as a `vocabulary/checker.py` rule.** The checker's
+    relation rules read a record's *parsed* relation types, and an inline
+    `[[…]]` anywhere in a body parses to a `links_to` relation
+    (`markdown/plugins.py`). A checker rule over that list would therefore reject
+    every note whose body links to another note — the closed vocabulary governs
+    what a verb may *write*, not how prose may link.
+    """
+    if vocabulary is None:
+        return
+    for name, _ in relations:
+        if name not in vocabulary.relations:
+            raise ValueError(
+                f"'{name}' is not a relation type project '{project}' declares. "
+                f"Allowed values: {', '.join(vocabulary.relations)}."
+            )
+
+
+def append_relations(body: str, relations: Sequence[Relation]) -> str:
+    """Add relation bullets to a body, under its `## Relations` heading.
+
+    The heading is created at the end of the body when the record has none, which
+    is where `record_markdown` puts it. When one is already there the bullets join
+    it rather than starting a second section — two `## Relations` headings in one
+    file is not a shape anything in this tree writes or expects to read.
+
+    A bullet the body already carries is skipped: `bm edit --rel` run twice is a
+    re-run, not a request for a duplicate edge.
+    """
+    lines = body.rstrip().splitlines()
+    wanted = [
+        relation_line(relation)
+        for relation in relations
+        if relation_line(relation) not in {line.strip() for line in lines}
+    ]
+    if not wanted:
+        return body
+
+    if RELATIONS_HEADING not in {line.strip() for line in lines}:
+        return "\n".join([*lines, "", RELATIONS_HEADING, *wanted]) + "\n"
+
+    # Insert at the end of the existing section rather than at the end of the
+    # file: a hand-edited record may carry prose after its relations, and a
+    # bullet stranded under a later heading is not an edge that section owns.
+    start = next(index for index, line in enumerate(lines) if line.strip() == RELATIONS_HEADING)
+    end = start + 1
+    for index in range(start + 1, len(lines)):
+        if _is_bullet(lines[index]):
+            end = index + 1
+        elif lines[index].strip():
+            # Any other non-blank line — a heading or prose — ends the section.
+            break
+    return "\n".join([*lines[:end], *wanted, *lines[end:]]) + "\n"
+
+
+def _is_bullet(line: str) -> bool:
+    """True for a list item, which is the only line shape a relations section holds."""
+    return line.lstrip().startswith("- ")
+
+
 # --- What a record's file says ---
 
 
@@ -267,7 +369,7 @@ def record_markdown(
     frontmatter_fields: Mapping[str, str],
     body: str,
     *,
-    supersedes: str | None = None,
+    relations: Sequence[Relation] = (),
 ) -> str:
     """Render one record's file: its frontmatter block, its body, its relations.
 
@@ -282,8 +384,9 @@ def record_markdown(
     """
     block = yaml.safe_dump(dict(frontmatter_fields), sort_keys=False, allow_unicode=True)
     sections = [f"---\n{block}---", body.strip()]
-    if supersedes is not None:
-        sections.append(f"{RELATIONS_HEADING}\n- {SUPERSEDES_RELATION} [[{supersedes}]]")
+    if relations:
+        lines = "\n".join(relation_line(relation) for relation in relations)
+        sections.append(f"{RELATIONS_HEADING}\n{lines}")
     # One blank line between sections and one trailing newline: the file is
     # compared byte-for-byte by the history, so its shape is fixed here.
     return "\n\n".join(part for part in sections if part) + "\n"

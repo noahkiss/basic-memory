@@ -262,6 +262,41 @@ def test_default_vocabulary_matches_the_schema_block():
     assert DEFAULT_VOCABULARY.areas == ()
     assert DEFAULT_VOCABULARY.review_months == 12
     assert DEFAULT_VOCABULARY.fields == {}
+    assert DEFAULT_VOCABULARY.relations == ("relates_to", "derived_from", "supersedes")
+
+
+# --- Relations (GAPS U14) ---
+
+
+def test_a_declared_relations_list_replaces_the_default(data_dir: Path):
+    """`relations:` is a project's own closed list, the way `types:` is."""
+    write_vocabulary("relations: [relates_to]\n")
+
+    loaded = load_vocabulary(EXTERNAL_ID)
+
+    assert loaded is not None
+    assert loaded.relations == ("relates_to",)
+
+
+def test_an_absent_relations_key_means_the_default_three(data_dir: Path):
+    """Every vocabulary file written before U14 omits the key.
+
+    Reading that omission as "no edges allowed" would turn `--rel` off for every
+    project that already exists, which is not what those files said.
+    """
+    write_vocabulary("areas: [ops]\n")
+
+    loaded = load_vocabulary(EXTERNAL_ID)
+
+    assert loaded is not None
+    assert loaded.relations == DEFAULT_VOCABULARY.relations
+
+
+def test_a_malformed_relations_list_names_the_key(data_dir: Path):
+    write_vocabulary("relations: relates_to\n")
+
+    with pytest.raises(VocabularyError, match="'relations' must be a list"):
+        load_vocabulary(EXTERNAL_ID)
 
 
 # --- default_review_by ---

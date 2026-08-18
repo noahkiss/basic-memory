@@ -155,6 +155,38 @@ def test_declared_fields_show_their_kind_and_enum_values(
     assert "owner      string" in result.stdout
 
 
+def test_relations_are_listed_with_what_each_one_claims(
+    runner, config_home, stub_project, write_vocabulary
+):
+    """GAPS U14: `--rel` types are vocabulary, so the verb that teaches it lists them.
+
+    `FULL_VOCABULARY` declares no `relations:` key, which is the state every file
+    written before U14 is in — so this also proves the default three are what an
+    older file means.
+    """
+    write_vocabulary(FULL_VOCABULARY)
+
+    result = runner.invoke(app, ["types", "--project", PROJECT])
+
+    assert result.exit_code == 0, result.output
+    assert "relations" in result.stdout
+    assert "derived_from  This record came out of that one" in result.stdout
+    assert "relates_to    These two belong together" in result.stdout
+
+
+def test_a_relation_the_glossary_does_not_know_still_appears(
+    runner, config_home, stub_project, write_vocabulary
+):
+    """The anti-drift guarantee again: the live file decides what is listed."""
+    write_vocabulary("types: [task]\nrelations: [blocks]\n")
+
+    result = runner.invoke(app, ["types", "--project", PROJECT])
+
+    assert result.exit_code == 0, result.output
+    assert "  blocks" in result.stdout
+    assert "relates_to" not in result.stdout
+
+
 def test_quiet_drops_the_affordance_and_keeps_the_payload(
     runner, config_home, stub_project, write_vocabulary
 ):

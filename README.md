@@ -72,14 +72,14 @@ id. `bm` is the short name for `basic-memory`; both run the same commands.
 
 | Command | What it does |
 |---|---|
-| `bm new <type> "<title>"` | Write a record and print its id. A type this project does not declare is filed as an inbox note proposing it — unless the project declares no `inbox` type, when the write is refused and says so. |
+| `bm new <type> "<title>"` | Write a record and print its id. `--rel type:id` links it to a record the project already holds, repeatably. A type this project does not declare is filed as an inbox note proposing it — unless the project declares no `inbox` type, when the write is refused and says so. |
 | `bm ls` | List records: id, type, status, title. Filter with `--type`, `--status`, `--area`. A record some other record supersedes reads `superseded` in the status column. |
 | `bm show <id>` | Print a record's file, exactly as it is on disk. |
 | `bm path <id>` | Print a record's file path and nothing else, for `$EDITOR "$(bm path <id>)"`. |
-| `bm edit <id>` | Change a record that is kept current: a guide, profile, state, or inbox note. `--set name=value` writes a field the project declares, on a profile. |
+| `bm edit <id>` | Change a record that is kept current: a guide, profile, state, or inbox note. `--set name=value` writes a field the project declares, on a profile; `--rel type:id` adds a link to another record. |
 | `bm mark <id> <status>` | Set a task's status. |
 | `bm done <id>` | Close a task. Exactly `bm mark <id> done`. |
-| `bm types` | Show the types, statuses, and areas this project allows. |
+| `bm types` | Show the types, statuses, areas, and relation types this project allows. |
 | `bm brief` | Print what is open, as a session-start orientation (below). |
 | `bm mine "<text>"` | Find where something was said in this project's Claude Code transcripts. |
 | `bm history dirty` | List note files whose changes are not recorded yet. |

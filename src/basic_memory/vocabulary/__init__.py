@@ -17,6 +17,7 @@ from basic_memory.vocabulary.checker import (
     has_errors,
 )
 from basic_memory.vocabulary.model import (
+    DEFAULT_RELATIONS,
     DEFAULT_VOCABULARY,
     TERMINAL_STATUSES,
     VOCABULARY_FILENAME,
@@ -34,6 +35,7 @@ from basic_memory.vocabulary.model import (
 )
 
 __all__ = [
+    "DEFAULT_RELATIONS",
     "DEFAULT_VOCABULARY",
     "HISTORY_DERIVED_RULES",
     "RELATION_DERIVED_RULES",

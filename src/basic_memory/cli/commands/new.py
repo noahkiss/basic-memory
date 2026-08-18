@@ -49,6 +49,7 @@ from basic_memory.vocabulary.glossary import (
     DATE_SOURCES,
     PICKING_QUESTIONS,
     REF_BEARING_SOURCES,
+    SUPERSEDES_RELATION,
 )
 
 # Static affordance (GAPS W19 item 5). Static is the requirement, not a
@@ -260,6 +261,7 @@ class NewRecordOutcome:
 
     record_id: str
     note_type: str
+    # Project-relative — `findings/tnd-…--slug.md`, not the absolute path (U11).
     path: str
     project: str
     notices: tuple[str, ...]
@@ -321,6 +323,7 @@ async def create_record(
     source: str,
     area: Optional[str],
     supersedes: Optional[str],
+    relations: tuple[tuple[str, str], ...],
     dates: DateOptions,
 ) -> NewRecordOutcome:
     """Allocate an id, render the record, and write it through the local stack.
@@ -328,6 +331,11 @@ async def create_record(
     One database bootstrap for the whole verb: the write stack owns the engine
     and the session maker, and the id allocation borrows the same session maker
     rather than opening a second one (the pool holds one connection).
+
+    ``supersedes`` is sugar for ``--rel supersedes:<id>`` and joins ``relations``
+    here, so there is one edge-writing path rather than two (GAPS U14). It keeps
+    its own flag name in every refusal, because the writer typed that flag and
+    not the other one.
     """
     # Deferred: the write stack and the record schema pull SQLAlchemy and
     # Pydantic, which must not load at CLI import time (AGENTS.md, baseline).
@@ -336,6 +344,7 @@ async def create_record(
         UNGOVERNED_NOTICE,
         RecordNote,
         allocate_record_id,
+        check_relation_types,
         record_directory,
         record_exists,
         record_markdown,
@@ -350,27 +359,39 @@ async def create_record(
     async with db.scoped_session(stack.session_maker) as session:
         project = await resolve_write_project(session, project_name)
 
-        # Trigger: --supersedes names a well-formed id no record in this project holds.
+        vocabulary = load_vocabulary(project.external_id)
+
+        # An edge's *type* is the project's vocabulary to declare (GAPS U14),
+        # judged before the database is asked anything about its target.
+        #
+        # `--supersedes` is exempt, and only `--supersedes` is: supersession is
+        # *schema* vocabulary (`glossary.SUPERSEDES_RELATION`), already governed
+        # by the checker's `supersedes-not-on-type` rule, so a project that
+        # narrowed its `relations:` list has not thereby turned the flag off.
+        check_relation_types(relations, vocabulary, project=project.name)
+        edges: list[tuple[str, tuple[str, str]]] = [("--rel", edge) for edge in relations]
+        if supersedes is not None:
+            edges.insert(0, ("--supersedes", (SUPERSEDES_RELATION, supersedes)))
+
+        # Trigger: --rel or --supersedes names a well-formed id no record in this
+        #     project holds.
         # Why: the funnel's supersession rule judges the *type* of the record being
         #     written, not whether the target exists, so a typo writes
         #     `- supersedes [[tnd-aaaa1111]]` and exits 0. The edge then reads as a
         #     real chain until `bm doctor` reports it as dangling — the author is
         #     told at the wrong moment, about a mistake only they can still
         #     remember making (GAPS E1).
-        # Outcome: refuse before writing. A successor to a record that does not
-        #     exist is a typo every time.
-        if supersedes is not None and not await record_exists(
-            session, project.project_id, supersedes
-        ):
-            raise ValueError(
-                f"--supersedes names '{supersedes}', which is not a record in "
-                f"project '{project.name}'"
-            )
+        # Outcome: refuse before writing. An edge to a record that does not exist
+        #     is a typo every time.
+        for flag, (_, target) in edges:
+            if not await record_exists(session, project.project_id, target):
+                raise ValueError(
+                    f"{flag} names '{target}', which is not a record in project '{project.name}'"
+                )
 
         # Resolved before an id is drawn: a type this project cannot file is a
         # refusal, and spending an id on a write that never happens leaves a gap
         # in the sequence for no reason (GAPS E2).
-        vocabulary = load_vocabulary(project.external_id)
         note_type, proposed_type = resolve_note_type(
             requested_type, vocabulary, project=project.name
         )
@@ -395,7 +416,7 @@ async def create_record(
             dates=stamped_dates,
         ),
         body,
-        supersedes=supersedes,
+        relations=[edge for _, edge in edges],
     )
     result = await stack.write_note(
         project_external_id=project.external_id,
@@ -420,7 +441,12 @@ async def create_record(
     return NewRecordOutcome(
         record_id=record_id,
         note_type=note_type,
-        path=f"{project.path}/{result.file_path}",
+        # Store-relative, the form the history subject line already uses (GAPS
+        # U11). The absolute path was the longest field on the payload line, the
+        # one field guaranteed to differ between machines, and one the reader
+        # never chose — a project's home is store-derived. `bm path <id>` is the
+        # way to get the absolute one.
+        path=result.file_path,
         project=project.name,
         notices=tuple(notices),
     )
@@ -449,6 +475,17 @@ def new(
     supersedes: Annotated[
         Optional[str],
         typer.Option("--supersedes", help="The finding this one replaces, by id."),
+    ] = None,
+    rel: Annotated[
+        Optional[list[str]],
+        typer.Option(
+            "--rel",
+            metavar="TYPE:ID",
+            help=(
+                "Link this record to another one, e.g. --rel derived_from:tnd-q8w3e1r5. "
+                "Repeatable; run 'bm types' to see the relation types this project declares."
+            ),
+        ),
     ] = None,
     opened: Annotated[
         Optional[str],
@@ -524,13 +561,17 @@ def new(
     error: the record is filed as `inbox` proposing that type, for a human to
     promote.
 
+    Link it to what it came out of with `--rel <type>:<id>`, repeated as often as
+    it takes. The relation types are the ones this project declares, and the
+    target has to be a record this project already holds.
+
     Dates: state the real one when you know it — `--opened` on a task,
     `--event-date` on a finding — and say where it came from with
     `--date-source`. With no date flag the record gets today's date declared
     `inferred`, which is what puts it in `bm doctor`'s review pile rather than
     passing a guess off as a date read from the source.
     """
-    from basic_memory.cli.record_notes import DEFAULT_SOURCE, write_project_name
+    from basic_memory.cli.record_notes import DEFAULT_SOURCE, parse_relations, write_project_name
     from basic_memory.vocabulary.ids import is_record_id
 
     # Trigger: --supersedes given a value that is not a record id.
@@ -540,6 +581,12 @@ def new(
     # Outcome: refuse before writing, naming the shape expected.
     if supersedes is not None and not is_record_id(supersedes):
         raise fail(f"Error: --supersedes takes a record id, got '{supersedes}'")
+
+    # `--rel` is a flag-shape error the same way: refused before a database opens.
+    try:
+        relations = parse_relations(rel or ())
+    except ValueError as exc:
+        raise fail(f"Error: {exc}")
 
     dates = DateOptions(
         opened=opened,
@@ -573,6 +620,7 @@ def new(
                 source=source if source is not None else DEFAULT_SOURCE,
                 area=area,
                 supersedes=supersedes,
+                relations=relations,
                 dates=dates,
             )
         )

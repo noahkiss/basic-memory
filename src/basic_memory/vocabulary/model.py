@@ -31,11 +31,27 @@ VOCABULARY_FILENAME = "vocabulary.yml"
 type FieldKind = Literal["string", "date", "enum"]
 
 _FIELD_KINDS: frozenset[str] = frozenset({"string", "date", "enum"})
-_ALLOWED_KEYS: frozenset[str] = frozenset({"types", "statuses", "areas", "review_months", "fields"})
+_ALLOWED_KEYS: frozenset[str] = frozenset(
+    {"types", "statuses", "areas", "relations", "review_months", "fields"}
+)
 _ALLOWED_FIELD_KEYS: frozenset[str] = frozenset({"kind", "values"})
 
 # A field name is a frontmatter key, so it may not carry whitespace.
 _FIELD_NAME = re.compile(r"[^\s]+")
+
+# The edges a project may write when it declares none of its own (GAPS U14).
+#
+# Three, and deliberately few: a relation type is read by an agent choosing how
+# to connect two records, and a long menu there produces a corpus where the same
+# link is spelled four ways. `supersedes` is already schema vocabulary
+# (`glossary.SUPERSEDES_RELATION`) and is listed so `--rel supersedes:<id>` and
+# `--supersedes <id>` are the same write. `derived_from` carries provenance —
+# this finding came out of that source record — and `relates_to` is the honest
+# unlabelled edge, which is better written than left in prose.
+#
+# It is a *default*, not a floor: a project's `relations:` key replaces this list
+# outright, the way `types:` and `statuses:` do.
+DEFAULT_RELATIONS: tuple[str, ...] = ("relates_to", "derived_from", "supersedes")
 
 
 class VocabularyError(ValueError):
@@ -59,13 +75,18 @@ class DeclaredField:
 
 @dataclass(frozen=True, slots=True)
 class Vocabulary:
-    """What one project allows: its types, statuses, areas, and declared extras."""
+    """What one project allows: its types, statuses, areas, edges, declared extras."""
 
     types: tuple[str, ...]
     statuses: tuple[str, ...]
     areas: tuple[str, ...]
     review_months: int
     fields: Mapping[str, DeclaredField] = field(default_factory=lambda: MappingProxyType({}))
+    # The relation types `bm new --rel` and `bm edit --rel` may write (GAPS U14).
+    # Defaulted rather than positional: every vocabulary file written before U14
+    # omits the key, and a project that says nothing about edges gets the same
+    # three every other project starts with.
+    relations: tuple[str, ...] = DEFAULT_RELATIONS
 
 
 # What `bm project add --governed` WRITES into a project's first vocabulary file
@@ -85,6 +106,7 @@ DEFAULT_VOCABULARY = Vocabulary(
     areas=(),
     review_months=12,
     fields=MappingProxyType({}),
+    relations=DEFAULT_RELATIONS,
 )
 
 
@@ -173,6 +195,10 @@ def parse_vocabulary(raw: Mapping[str, Any], *, source: Path | str) -> Vocabular
         areas=_string_tuple(raw, "areas", DEFAULT_VOCABULARY.areas, source),
         review_months=_review_months(raw, source),
         fields=_parse_fields(raw.get("fields", {}), source),
+        # Absent means the default three, not "no edges allowed": every file
+        # written before GAPS U14 omits the key, and reading that as a refusal
+        # would turn `--rel` off for every project that already exists.
+        relations=_string_tuple(raw, "relations", DEFAULT_VOCABULARY.relations, source),
     )
 
 
@@ -190,6 +216,7 @@ def vocabulary_document(vocabulary: Vocabulary) -> dict[str, object]:
         "types": list(vocabulary.types),
         "statuses": list(vocabulary.statuses),
         "areas": list(vocabulary.areas),
+        "relations": list(vocabulary.relations),
         "review_months": vocabulary.review_months,
         "fields": {
             name: (

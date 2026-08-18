@@ -45,6 +45,22 @@ def type_choice(name: str) -> str:
 SUPERSEDES_RELATION = "supersedes"
 
 
+# What each default relation type is for, in the register `bm types` prints in:
+# what you are claiming by writing the edge, not what the graph does with it.
+# Keyed by name and every lookup tolerates a miss, exactly like the type prose —
+# a relation a human added to their `vocabulary.yml` appears under its bare name.
+RELATION_MEANINGS: Mapping[str, str] = {
+    "relates_to": "These two belong together. Use it when no stronger word is true.",
+    "derived_from": "This record came out of that one — a source, a transcript, a finding.",
+    SUPERSEDES_RELATION: "This record replaces that one. Only a finding supersedes another.",
+}
+
+
+def relation_meaning(name: str) -> str | None:
+    """What a relation type claims, or None for one this glossary does not know."""
+    return RELATION_MEANINGS.get(name)
+
+
 # --- The date-provenance ladders (`.forked/schema.md` §2) ---
 #
 # Fixed by the schema, not by a project's `vocabulary.yml`: a project declares

@@ -14,6 +14,10 @@ what they print. What differs is one rule each, and each rule is a decision:
   accretes facts, and its project's declared fields are where they land. Every
   set-once field is refused by name, so the flag cannot become a way back into
   the fields `bm new` owns.
+- **`--rel <type>:<id>` adds an edge and removes none** (GAPS U14). The edge lands
+  in the body's `## Relations` section, which is where `bm new` writes one and
+  where the markdown parser reads one; the relation type is the project's
+  vocabulary to declare, and the target must be a record the project holds.
 - **`bm mark` sets `status`, on a `task`, and nothing else** (D5). Status is one
   of exactly four mutable things in the schema; widening `mark` to any other
   field reopens set-once through the back door.
@@ -88,6 +92,8 @@ class WriteOutcome:
 
     record_id: str
     note_type: str
+    # What the verb changed: `bm edit` puts the record's project-relative path
+    # here (GAPS U11), `bm mark` and `bm done` put the new status.
     detail: str
     project: str
     notices: tuple[str, ...]
@@ -289,16 +295,29 @@ async def edit_record(
     title: Optional[str],
     body: Optional[str],
     fields: Sequence[str] = (),
+    relations: Sequence[tuple[str, str]] = (),
 ) -> WriteOutcome:
     """Replace a kept-current record's title, body and declared fields.
 
     Only a `profile` has declared fields, and `fields` is the only frontmatter
     this verb writes — every set-once field stays as `bm new` wrote it.
+
+    `--rel` edges are *appended* to the body's `## Relations` section rather than
+    replacing anything (GAPS U14): a record's existing edges are facts somebody
+    recorded, and an edit that stated one new link is not a statement about the
+    others.
     """
     from pathlib import Path
 
-    from basic_memory.cli.record_notes import RecordNote
+    from basic_memory import db
+    from basic_memory.cli.record_notes import (
+        RecordNote,
+        append_relations,
+        check_relation_types,
+        record_exists,
+    )
     from basic_memory.file_utils import remove_frontmatter
+    from basic_memory.vocabulary.model import load_vocabulary
 
     stack, project, record = await _open_record(project_name, record_id)
     _refuse_edit(record)
@@ -306,6 +325,22 @@ async def edit_record(
     updates = parse_field_assignments(fields)
     if updates:
         _refuse_field_updates(record, project, updates)
+
+    if relations:
+        vocabulary = load_vocabulary(project.external_id)
+        try:
+            check_relation_types(relations, vocabulary, project=project.name)
+        except ValueError as exc:
+            raise RecordVerbError(str(exc)) from exc
+        # The same refusal `bm new` makes, for the same reason: an edge to a
+        # record that does not exist reads as real until `bm doctor` reports it
+        # dangling, long after the author could still remember the typo (E1).
+        async with db.scoped_session(stack.session_maker) as session:
+            for _, target in relations:
+                if not await record_exists(session, project.project_id, target):
+                    raise RecordVerbError(
+                        f"--rel names '{target}', which is not a record in project '{project.name}'"
+                    )
 
     on_disk = Path(project.path, record.file_path)
     # Trigger: the record is indexed but its file is not on disk.
@@ -317,6 +352,15 @@ async def edit_record(
         raise RecordVerbError(f"{record.record_id} is indexed but its file is missing: {on_disk}")
 
     current = remove_frontmatter(on_disk.read_text(encoding="utf-8"))
+    # `not relations`: a run that stated an edge and nothing else has said what it
+    # came for, and opening an editor on the body would make the same command mean
+    # two things depending on whether a terminal happened to be attached.
+    next_body = _next_body(
+        current, body, may_open_editor=title is None and not updates and not relations
+    )
+    if relations:
+        next_body = append_relations(next_body, relations)
+
     result = await stack.update_note(
         project_external_id=project.external_id,
         entity_external_id=record.entity_external_id,
@@ -329,7 +373,7 @@ async def edit_record(
             note_type=record.note_type,
             directory=Path(record.file_path).parent.as_posix(),
             record_file_path=record.file_path,
-            content=_next_body(current, body, may_open_editor=title is None and not updates),
+            content=next_body,
             # Merged over the record's existing frontmatter by
             # `prepare_update_entity_content`, so an unmentioned field keeps the
             # value it had. `None` rather than `{}`: an empty mapping would still
@@ -340,7 +384,12 @@ async def edit_record(
     return WriteOutcome(
         record_id=record.record_id,
         note_type=record.note_type,
-        detail=f"{project.path}/{result.file_path}",
+        # Project-relative, the form the history subject line uses and the form
+        # `bm new` prints (GAPS U11). The absolute path was the longest field on
+        # the line and the one field guaranteed to differ between machines; the
+        # project's home is store-derived, so the reader never chose it. `bm path
+        # <id>` is the way to get the absolute one.
+        detail=result.file_path,
         project=project.name,
         notices=(*result.notices, *_ungoverned_notices(project.external_id)),
     )
@@ -375,6 +424,17 @@ def edit(
             ),
         ),
     ] = None,
+    rel: Annotated[
+        Optional[list[str]],
+        typer.Option(
+            "--rel",
+            metavar="TYPE:ID",
+            help=(
+                "Add a link to another record, e.g. --rel derived_from:tnd-q8w3e1r5. "
+                "Repeatable; run 'bm types' to see the relation types this project declares."
+            ),
+        ),
+    ] = None,
     project: Annotated[
         Optional[str],
         typer.Option("--project", "-p", help="Project to write to. Defaults to .bm.yml."),
@@ -386,24 +446,31 @@ def edit(
 ) -> None:
     """Change a record that is kept current: a guide, profile, state, or inbox note.
 
-    The title and the body move, and `--set` writes a declared field on a
-    profile. Every field set at creation stays set — a task is closed with
-    `bm done`, and a finding is replaced by a successor written with
-    `bm new --supersedes`.
+    The title and the body move, `--set` writes a declared field on a profile,
+    and `--rel <type>:<id>` adds a link to another record. Every field set at
+    creation stays set — a task is closed with `bm done`, and a finding is
+    replaced by a successor written with `bm new --supersedes`.
     """
-    from basic_memory.cli.record_notes import write_project_name
+    from basic_memory.cli.record_notes import parse_relations, write_project_name
 
     try:
         project_name = write_project_name(project)
     except ValueError as exc:
         raise fail(f"Error: {exc}")
 
-    # Trigger: no --title, --body or --set, and no terminal to open $EDITOR on.
+    # A flag-shape error, refused before a database opens — the same place
+    # `bm new` refuses it.
+    try:
+        relations = parse_relations(rel or ())
+    except ValueError as exc:
+        raise fail(f"Error: {exc}")
+
+    # Trigger: no --title, --body, --set or --rel, and no terminal to open $EDITOR on.
     # Why: the edit would rewrite the record with exactly what it already says,
     #     which is a no-op write the caller did not ask for and cannot see.
     # Outcome: an addressing failure naming every way to state the change.
-    if title is None and body is None and not set_fields and not sys.stdin.isatty():
-        raise fail("Error: nothing to change — pass --title, --body or --set")
+    if title is None and body is None and not set_fields and not rel and not sys.stdin.isatty():
+        raise fail("Error: nothing to change — pass --title, --body, --set or --rel")
 
     outcome = _write(
         edit_record(
@@ -412,6 +479,7 @@ def edit(
             title=title,
             body=body,
             fields=set_fields or (),
+            relations=relations,
         ),
         quiet=quiet,
     )
