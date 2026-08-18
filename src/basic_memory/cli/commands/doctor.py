@@ -188,6 +188,36 @@ def render(reports: "list[ProjectDoctorReport]", groups: tuple[str, ...]) -> str
     return "\n\n".join("\n".join(section) for section in sections)
 
 
+def exit_code(reports: "list[ProjectDoctorReport]", groups: tuple[str, ...], strict: bool) -> int:
+    """The verdict `bm doctor` returns, over the groups it was asked to print.
+
+    Trigger: any integrity issue, or any issue at all under ``--strict``.
+    Why: W2 made doctor the gate, and the migration procedure ends with it as an
+        acceptance command. A gate that always exits 0 cannot gate anything —
+        a hook, a `just` recipe or a CI step would have to parse the text, which
+        this contract does not promise to keep stable (GAPS U19).
+    Why hygiene does not count by default: hygiene rows are advisory. An unfiled
+        inbox record is a legitimate resting state (GAPS U5), so exiting 1 on
+        hygiene alone would make the count unclosable again. ``--strict`` is for
+        the caller who wants both.
+    Outcome: integrity issues → 1, hygiene-only issues → 0, ``--strict`` → 1 on
+        either. An empty registry has no reports, so it is 0.
+
+    ``groups`` is what was printed: under ``--only hygiene`` the integrity group
+    was never queried, so it cannot contribute a verdict about a corpus nobody
+    looked at.
+    """
+    integrity_issues = (
+        sum(report.integrity.issue_count for report in reports) if INTEGRITY in groups else 0
+    )
+    hygiene_issues = (
+        sum(report.hygiene.issue_count for report in reports) if HYGIENE in groups else 0
+    )
+    if integrity_issues or (strict and hygiene_issues):
+        return 1
+    return 0
+
+
 def render_affordances() -> str:
     """The static next-verb list (GAPS W19 item 5)."""
     width = max(len(command) for command, _ in AFFORDANCES)
@@ -420,6 +450,13 @@ def doctor(
             "instead of checking your notes.",
         ),
     ] = False,
+    strict: Annotated[
+        bool,
+        typer.Option(
+            "--strict",
+            help="Exit 1 on any issue, hygiene included, not just integrity.",
+        ),
+    ] = False,
     quiet: Annotated[
         bool,
         typer.Option("--quiet", help="Hide the next-step hints."),
@@ -429,10 +466,18 @@ def doctor(
 
     Integrity problems have right answers; hygiene problems need a decision. With
     no project named, every project is checked.
+
+    Exits 1 when integrity found something, so a script can gate on it; hygiene
+    alone exits 0 because those rows are advisory. `--strict` exits 1 on either.
     """
     if self_test:
         if only is not None:
             raise fail("Error: --self-test takes no --only group.")
+        # Refused rather than ignored: the self-test's exit code already reports
+        # whether this install can write a note and read it back, and a flag that
+        # silently does nothing is worse than one that says so.
+        if strict:
+            raise fail("Error: --self-test takes no --strict; it already exits 1 on failure.")
         run_self_test()
         return
 
@@ -462,9 +507,6 @@ def doctor(
         raise fail(f"Error: {exc}")
 
     typer.echo(render(reports, groups))
-    # Violations are corpus state, not command failure: doctor reports them and
-    # exits 0, so a script over an imperfect corpus keeps working (GAPS W5-B).
-    #
     # The call is here, and it prints nothing, on purpose. `doctor` is the one
     # command the notice suppresses — it has just printed every row the notice
     # would summarize — and stating that at the call site is what keeps the
@@ -472,3 +514,11 @@ def doctor(
     emit_notices(scope, quiet=quiet, command="doctor")
     if not quiet:
         typer.echo(f"\n{render_affordances()}")
+
+    # The verdict is the last thing that happens: the whole report, its notices
+    # and its hints are already on stdout, so exit 1 says "issues found" without
+    # withholding the rows that name them (GAPS U19; contract rule 6's
+    # partial-corpus clause has the same shape).
+    verdict = exit_code(reports, groups, strict)
+    if verdict:
+        raise typer.Exit(verdict)

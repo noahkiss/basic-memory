@@ -88,6 +88,11 @@ FULL_REPORT = ProjectDoctorReport(
 )
 
 
+# A corpus whose only problems need a decision rather than a repair. This is the
+# case the verdict has to distinguish: it prints rows and still exits 0 (GAPS U19).
+HYGIENE_ONLY_REPORT = ProjectDoctorReport(project_name="alpha", hygiene=FULL_REPORT.hygiene)
+
+
 @pytest.fixture(autouse=True)
 def unmarked_working_directory(tmp_path, monkeypatch):
     """Run every test from a directory with no `.bm.yml` above it.
@@ -130,7 +135,10 @@ def test_doctor_integrity_section_lists_every_check(stub_report):
 
     result = runner.invoke(app, ["doctor", "--only", "integrity", "--quiet"])
 
-    assert result.exit_code == 0, result.output
+    # Integrity found something, so the verdict is 1 (GAPS U19). The rows are
+    # still on stdout — the exit code says there is a problem, it does not
+    # withhold what the problem is.
+    assert result.exit_code == 1, result.output
     lines = result.stdout.strip().splitlines()
     assert lines[0] == "integrity  project 'alpha'"
     assert "notes/a.md  unresolved-relation  -supersedes-> [[Ghost Note]]" in lines[1]
@@ -195,7 +203,7 @@ def test_doctor_prints_both_groups_in_order(stub_report):
 
     result = runner.invoke(app, ["doctor", "--quiet"])
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == 1, result.output
     headings = [line for line in result.stdout.splitlines() if line and not line.startswith(" ")]
     assert headings == ["integrity  project 'alpha'", "hygiene  project 'alpha'"]
 
@@ -217,7 +225,7 @@ def test_doctor_only_integrity_does_not_run_the_hygiene_queries(stub_report):
 
     result = runner.invoke(app, ["doctor", "--only", "integrity", "--quiet"])
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == 1, result.output
     assert calls == [{"project_names": None, "include_integrity": True, "include_hygiene": False}]
 
 
@@ -342,7 +350,7 @@ def test_doctor_reports_a_record_whose_file_is_gone(stub_report):
 
     result = runner.invoke(app, ["doctor", "--only", "integrity", "--quiet"])
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == 1, result.output
     lines = result.stdout.strip().splitlines()
     assert lines[1] == (
         "  findings/tnd-pdem7knd--delete-me-a.md  missing-file  permalink=tnd-pdem7knd"
@@ -374,6 +382,107 @@ def test_doctor_empty_registry_is_a_result(stub_report):
 
     assert result.exit_code == 0, result.output
     assert result.stdout.strip() == "No projects to check."
+
+
+# --- The verdict (GAPS U19) ---
+#
+# W2 made doctor the gate, and a gate that always exits 0 gates nothing. The
+# split is integrity vs hygiene: integrity problems have right answers, so they
+# fail the run; hygiene problems need a decision and an unfiled inbox record is a
+# legitimate resting state (GAPS U5), so they do not. `--strict` fails on either.
+
+
+def test_doctor_exits_one_when_integrity_found_something(stub_report):
+    """Integrity issues fail the run, so a hook or a `just` recipe can gate on it."""
+    stub_report([FULL_REPORT])
+
+    result = runner.invoke(app, ["doctor", "--quiet"])
+
+    assert result.exit_code == 1, result.output
+
+
+def test_doctor_exits_zero_on_hygiene_issues_alone(stub_report):
+    """Advisory rows print and the run still passes."""
+    stub_report([HYGIENE_ONLY_REPORT])
+
+    result = runner.invoke(app, ["doctor", "--quiet"])
+
+    assert result.exit_code == 0, result.output
+    # Positive control: the rows really are there, so exit 0 is a judgment about
+    # them rather than a report that found nothing.
+    assert "  6 issues" in result.stdout
+
+
+def test_doctor_strict_exits_one_on_hygiene_alone(stub_report):
+    """--strict is for the caller who wants every issue to fail the run."""
+    stub_report([HYGIENE_ONLY_REPORT])
+
+    result = runner.invoke(app, ["doctor", "--strict", "--quiet"])
+
+    assert result.exit_code == 1, result.output
+
+
+def test_doctor_strict_on_a_clean_corpus_exits_zero(stub_report):
+    """--strict raises the bar; it does not fail a corpus with nothing wrong."""
+    stub_report([ProjectDoctorReport(project_name="alpha")])
+
+    result = runner.invoke(app, ["doctor", "--strict", "--quiet"])
+
+    assert result.exit_code == 0, result.output
+
+
+def test_doctor_only_hygiene_never_fails_on_integrity_it_did_not_query(stub_report):
+    """--only narrows the question, so it narrows the verdict with it.
+
+    Under `--only hygiene` the integrity queries never ran, so the stub's
+    integrity rows describe a corpus this invocation did not look at. A verdict
+    about them would be a claim nobody checked.
+    """
+    stub_report([FULL_REPORT])
+
+    result = runner.invoke(app, ["doctor", "--only", "hygiene", "--quiet"])
+
+    assert result.exit_code == 0, result.output
+
+
+def test_doctor_empty_registry_exits_zero_under_strict(stub_report):
+    """No projects is still a result, however strict the caller asked to be."""
+    stub_report([])
+
+    result = runner.invoke(app, ["doctor", "--strict", "--quiet"])
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout.strip() == "No projects to check."
+
+
+def test_doctor_prints_the_whole_report_before_exiting_one(stub_report):
+    """Exit 1 is a verdict on the payload, not a substitute for it.
+
+    Contract rule 6 normally keeps stdout empty on the error path; this is the
+    partial-corpus shape instead (rule 6's clause, GAPS O10) — the command did
+    its job, and the exit code is what says the corpus failed.
+    """
+    stub_report([FULL_REPORT])
+
+    result = runner.invoke(app, ["doctor"])
+
+    assert result.exit_code == 1, result.output
+    lines = result.stdout.strip().splitlines()
+    assert lines[0] == "integrity  project 'alpha'"
+    assert "  4 issues" in result.stdout
+    # The hints still close the report, after the payload (contract rule 4).
+    assert lines[-3] == "next:"
+
+
+def test_doctor_self_test_rejects_strict(stub_report):
+    """--strict grades a corpus; the self-test checks the install and already exits 1."""
+    stub_report([FULL_REPORT])
+
+    result = runner.invoke(app, ["doctor", "--self-test", "--strict"])
+
+    assert result.exit_code == 1
+    assert "--self-test takes no --strict" in result.stderr
+    assert result.stdout == ""
 
 
 # --- Affordances (GAPS W19 item 5) ---

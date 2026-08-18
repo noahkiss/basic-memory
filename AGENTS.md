@@ -466,7 +466,8 @@ separate `get_client()` + `get_active_project()` pair inside an MCP tool.
 ### Basic Memory Commands
 
 - Sync status: `basic-memory status` · corpus check: `basic-memory doctor` (integrity and
-  hygiene, `--only <group>`; `--self-test` checks the file ↔ DB loop instead)
+  hygiene, `--only <group>`, exit 1 on integrity issues, `--strict` for any; `--self-test` checks the
+  file ↔ DB loop instead)
 - Projects: `project list` / `project ls` / `project add "name" ~/path` / `project info` /
   `project default` / `project move` / `project remove`
 - Config: `config list` (effective values, env overrides marked) / `config get <key>` /
