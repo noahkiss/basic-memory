@@ -90,6 +90,22 @@ def appending_editor(tmp_path, monkeypatch):
     return script
 
 
+@pytest.fixture
+def truncating_editor(tmp_path, monkeypatch):
+    """Point `$EDITOR` at a script that *replaces* whatever it is handed.
+
+    The counterpart to `appending_editor`, and the only way to test the GAPS U17
+    exception: the editor opens on the whole body, relations included, so a user
+    who saves a buffer without them meant to delete them.
+    """
+    script = tmp_path / "truncating-editor.sh"
+    script.write_text('#!/bin/sh\nprintf "Only prose now.\\n" > "$1"\n', encoding="utf-8")
+    script.chmod(0o755)
+    monkeypatch.delenv("VISUAL", raising=False)
+    monkeypatch.setenv("EDITOR", str(script))
+    return script
+
+
 # --- Seeding ---
 
 
@@ -166,6 +182,51 @@ def create(project: str, note_type: str, title: str, body: str = "Original body.
     )
     assert result.exit_code == 0, result.output
     return result.stdout.split()[0]
+
+
+def indexed_relations(project: SeededProject, record_id: str) -> list[tuple[str, str]]:
+    """Every *resolved* outgoing edge the index holds for one record, as (type, target).
+
+    A bullet in the file is not yet an edge: a relation row with no target entity
+    points at nothing, which is the dangling relation `bm doctor` reports rather
+    than a connection between two records. Only resolved rows are returned, so a
+    non-empty result is the claim that the write indexed.
+
+    The target is read off the resolved entity's permalink rather than the
+    relation's `to_name` column, which resolution rewrites to the target's
+    **title** (`indexing/relation_resolution.py`). `permalink == id` byte-for-byte
+    (`.forked/schema.md` §2), so the permalink is the id.
+
+    Duplicated from `test_new_command.py` for the reason the `$EDITOR` fixtures
+    above are: it belongs to the two modules that assert about edges, not to
+    every CLI test.
+    """
+
+    async def _read() -> list[tuple[str, str]]:
+        from basic_memory import db
+        from basic_memory.config import ConfigManager
+        from basic_memory.repository.entity_repository import EntityRepository
+        from basic_memory.repository.project_repository import ProjectRepository
+
+        config = ConfigManager().config
+        _, session_maker = await db.get_or_create_db(config.database_path, config=config)
+        try:
+            async with db.scoped_session(session_maker) as session:
+                registered = await ProjectRepository().get_by_name(session, project.name)
+                assert registered is not None
+                entity = await EntityRepository(project_id=registered.id).get_by_permalink(
+                    session, record_id
+                )
+                assert entity is not None
+                return [
+                    (relation.relation_type, target.permalink)
+                    for relation in entity.outgoing_relations
+                    if (target := relation.to_entity) is not None and target.permalink is not None
+                ]
+        finally:
+            await db.shutdown_db()
+
+    return asyncio.run(_read())
 
 
 def payload_path(output: str) -> Path:
@@ -432,6 +493,117 @@ def test_edit_rejects_a_rel_target_that_does_not_exist() -> None:
     assert result.stdout.strip() == ""
     unchanged = payload_path(
         runner.invoke(app, ["path", guide, "-p", GOVERNED]).stdout + "\n"
+    ).read_text(encoding="utf-8")
+    assert "## Relations" not in unchanged
+
+
+# --- bm edit --body keeps the edges (GAPS U17) ---
+
+
+def test_edit_body_carries_the_relations_section_over() -> None:
+    """A body edit restates the prose, not the edges: `## Relations` survives it."""
+    project = seed_project()
+    guide = create(GOVERNED, "guide", "How To Restore")
+    target = create(GOVERNED, "finding", "Where It Came From")
+    linked = runner.invoke(
+        app, ["edit", guide, "--rel", f"derived_from:{target}", "-p", GOVERNED, "--quiet"]
+    )
+    assert linked.exit_code == 0, linked.output
+
+    result = runner.invoke(
+        app, ["edit", guide, "--body", "Only prose now.", "-p", GOVERNED, "--quiet"]
+    )
+
+    assert result.exit_code == 0, result.output
+    body = written_path(project, result.stdout).read_text(encoding="utf-8")
+    # Positive control: the prose really was replaced.
+    assert "Only prose now." in body
+    assert "Original body." not in body
+    assert body.count("## Relations") == 1
+    assert f"- derived_from [[{target}]]" in body
+    assert (("derived_from", target)) in indexed_relations(project, guide)
+
+
+def test_edit_body_that_writes_its_own_relations_section_stands_as_written() -> None:
+    """A replacement that carries a `## Relations` heading says what it means; nothing is
+    carried over it, so the file never ends up with two headings."""
+    project = seed_project()
+    guide = create(GOVERNED, "guide", "How To Restore")
+    old_target = create(GOVERNED, "finding", "Where It Came From")
+    new_target = create(GOVERNED, "state", "How Things Stand")
+    linked = runner.invoke(
+        app, ["edit", guide, "--rel", f"derived_from:{old_target}", "-p", GOVERNED, "--quiet"]
+    )
+    assert linked.exit_code == 0, linked.output
+
+    replacement = f"New prose.\n\n## Relations\n- relates_to [[{new_target}]]\n"
+    result = runner.invoke(app, ["edit", guide, "--body", replacement, "-p", GOVERNED, "--quiet"])
+
+    assert result.exit_code == 0, result.output
+    body = written_path(project, result.stdout).read_text(encoding="utf-8")
+    assert body.count("## Relations") == 1
+    assert f"- relates_to [[{new_target}]]" in body
+    assert f"[[{old_target}]]" not in body
+
+
+@pytest.mark.usefixtures("stdin_looks_like_a_terminal", "truncating_editor")
+def test_edit_in_the_editor_replaces_relations_the_user_removed() -> None:
+    """The editor opens on the whole body, relations included: a saved buffer without
+    them is a deletion the user made, and nothing is carried back over it."""
+    project = seed_project()
+    guide = create(GOVERNED, "guide", "How To Restore")
+    target = create(GOVERNED, "finding", "Where It Came From")
+    linked = runner.invoke(
+        app, ["edit", guide, "--rel", f"derived_from:{target}", "-p", GOVERNED, "--quiet"]
+    )
+    assert linked.exit_code == 0, linked.output
+
+    result = runner.invoke(app, ["edit", guide, "-p", GOVERNED, "--quiet"])
+
+    assert result.exit_code == 0, result.output
+    body = written_path(project, result.stdout).read_text(encoding="utf-8")
+    assert "Only prose now." in body
+    assert "## Relations" not in body
+
+
+# --- a relations-only edit is allowed on every type (GAPS U18) ---
+
+
+@pytest.mark.parametrize("note_type", ["task", "finding"])
+def test_edit_rel_alone_is_allowed_on_a_closed_type(note_type: str) -> None:
+    """An edge adds a link and rewrites nothing the record claims, so the type
+    refusal that guards a task's closure and a finding's evidence does not apply."""
+    project = seed_project()
+    record_id = create(GOVERNED, note_type, "The Record")
+    target = create(GOVERNED, "finding", "Where It Came From")
+
+    result = runner.invoke(
+        app, ["edit", record_id, "--rel", f"derived_from:{target}", "-p", GOVERNED, "--quiet"]
+    )
+
+    assert result.exit_code == 0, result.output
+    body = written_path(project, result.stdout).read_text(encoding="utf-8")
+    assert f"- derived_from [[{target}]]" in body
+    assert "Original body." in body
+    assert ("derived_from", target) in indexed_relations(project, record_id)
+
+
+def test_edit_rel_with_a_title_on_a_finding_is_still_refused() -> None:
+    """The exemption is for a relations-only edit; anything that rewrites the record
+    keeps the refusal, and nothing is written."""
+    seed_project()
+    record_id = create(GOVERNED, "finding", "What We Learned")
+    target = create(GOVERNED, "finding", "Where It Came From")
+
+    result = runner.invoke(
+        app,
+        ["edit", record_id, "--rel", f"derived_from:{target}", "--title", "New", "-p", GOVERNED],
+    )
+
+    assert result.exit_code == 1
+    assert f"--supersedes {record_id}" in result.stderr
+    unchanged = payload_path(
+        runner.invoke(app, ["path", record_id, "-p", GOVERNED]).stdout + "\n"
     ).read_text(encoding="utf-8")
     assert "## Relations" not in unchanged
 

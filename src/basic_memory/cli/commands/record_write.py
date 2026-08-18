@@ -4,11 +4,14 @@ They share a module because they share everything that matters: the write-chain
 scope, the identity-verified lookup, the local write stack, and the shape of
 what they print. What differs is one rule each, and each rule is a decision:
 
-- **`bm edit` accepts only the kept-current types** — `guide`, `profile`,
-  `state`, `inbox` (`.forked/schema.md` §4, VERBS_PLAN D12). On a `task` it names
-  `bm done`/`bm mark`; on a `finding` it names supersession. A finding is
-  provisional by construction, so correcting one in place destroys the evidence
-  the record existed to hold.
+- **`bm edit` changes *content* only on the kept-current types** — `guide`,
+  `profile`, `state`, `inbox` (`.forked/schema.md` §4, VERBS_PLAN D12). On a
+  `task` it names `bm done`/`bm mark`; on a `finding` it names supersession. A
+  finding is provisional by construction, so correcting one in place destroys the
+  evidence the record existed to hold. A **relations-only** run — `--rel` with no
+  `--title`, `--body` or `--set` — is exempt and accepted on every type (GAPS
+  U18): an edge is a link, not a claim the record makes, and the pair worth
+  linking is usually spotted after both records are written.
 - **`--set name=value` writes a declared field, and only on a `profile`**
   (`.forked/schema.md` §4 item 4, GAPS V-J1). A profile is the one type that
   accretes facts, and its project's declared fields are where they land. Every
@@ -18,6 +21,10 @@ what they print. What differs is one rule each, and each rule is a decision:
   in the body's `## Relations` section, which is where `bm new` writes one and
   where the markdown parser reads one; the relation type is the project's
   vocabulary to declare, and the target must be a record the project holds.
+  Nothing else removes an edge either: `--body` replaces the prose and carries
+  that section across (GAPS U17), because a body edit says nothing about the
+  links. `$EDITOR` is the one exception, and deliberately — it opens on the whole
+  body, relations included, so what the user saved is what they meant.
 - **`bm mark` sets `status`, on a `task`, and nothing else** (D5). Status is one
   of exactly four mutable things in the schema; widening `mark` to any other
   field reopens set-once through the back door.
@@ -173,28 +180,38 @@ def _write_scope(outcome: WriteOutcome) -> ReadScope:
 
 
 def _refuse_edit(record: "ExistingRecord") -> None:
-    """Refuse an edit to a type that is not kept current, naming what to do instead.
+    """Refuse a *content* edit to a type that is not kept current, naming what to do instead.
 
-    Both refusals point at a verb rather than at a rule. An agent that reads
+    Only reached for an edit that changes what the record says — `--title`,
+    `--body`, `--set`, or an `$EDITOR` session. A relations-only `--rel` run
+    never gets here: it is allowed on every type (GAPS U18), because it adds an
+    edge and rewrites no evidence.
+
+    All three refusals point at a verb rather than at a rule. An agent that reads
     "a finding is immutable" files the correction somewhere else; one that reads
-    the exact `bm new --supersedes` line writes the successor.
+    the exact `bm new --supersedes` line writes the successor. Each also names
+    `--rel`, because the reader has just been told this record cannot be edited
+    and the one edit it *can* take is the one they most often want next.
     """
     if record.note_type in KEPT_CURRENT_TYPES:
         return
     if record.note_type == "task":
         raise RecordVerbError(
             f"'{record.record_id}' is a task, and a task is closed rather than edited — "
-            f"use 'bm done {record.record_id}' or 'bm mark {record.record_id} <status>'"
+            f"use 'bm done {record.record_id}' or 'bm mark {record.record_id} <status>'; "
+            f"'bm edit {record.record_id} --rel <type>:<id>' on its own adds a link"
         )
     if record.note_type == "finding":
         raise RecordVerbError(
             f"'{record.record_id}' is a finding, and a finding is never rewritten — "
             f"record what replaced it with "
-            f"'bm new finding \"<title>\" --supersedes {record.record_id}'"
+            f"'bm new finding \"<title>\" --supersedes {record.record_id}'; "
+            f"'bm edit {record.record_id} --rel <type>:<id>' on its own adds a link"
         )
     raise RecordVerbError(
-        f"'bm edit' changes records that are kept current "
-        f"({', '.join(KEPT_CURRENT_TYPES)}); '{record.record_id}' is a {record.note_type}"
+        f"'bm edit' changes the content of records that are kept current "
+        f"({', '.join(KEPT_CURRENT_TYPES)}); '{record.record_id}' is a {record.note_type} — "
+        f"'bm edit {record.record_id} --rel <type>:<id>' on its own adds a link"
     )
 
 
@@ -297,15 +314,17 @@ async def edit_record(
     fields: Sequence[str] = (),
     relations: Sequence[tuple[str, str]] = (),
 ) -> WriteOutcome:
-    """Replace a kept-current record's title, body and declared fields.
+    """Replace a kept-current record's title, body and declared fields, or add an edge.
 
     Only a `profile` has declared fields, and `fields` is the only frontmatter
     this verb writes — every set-once field stays as `bm new` wrote it.
 
-    `--rel` edges are *appended* to the body's `## Relations` section rather than
-    replacing anything (GAPS U14): a record's existing edges are facts somebody
-    recorded, and an edit that stated one new link is not a statement about the
-    others.
+    A record's edges are facts somebody recorded, so nothing here removes one:
+
+    - `--rel` *appends* to the body's `## Relations` section rather than replacing
+      it (GAPS U14), and a relations-only run is accepted on every type, including
+      a task and a finding (GAPS U18);
+    - `--body` replaces the prose and carries that section over (GAPS U17).
     """
     from pathlib import Path
 
@@ -313,6 +332,7 @@ async def edit_record(
     from basic_memory.cli.record_notes import (
         RecordNote,
         append_relations,
+        carry_relations,
         check_relation_types,
         record_exists,
     )
@@ -320,7 +340,19 @@ async def edit_record(
     from basic_memory.vocabulary.model import load_vocabulary
 
     stack, project, record = await _open_record(project_name, record_id)
-    _refuse_edit(record)
+
+    # Trigger: `--rel` and nothing else — no `--title`, no `--body`, no `--set`.
+    # Why: the type refusal exists because a task is closed rather than revised
+    #     and a finding is evidence rather than a draft (D12). An edge states
+    #     neither: it adds a link and rewrites nothing the record claims, and
+    #     provenance is usually noticed on the read-back, after both records are
+    #     written (GAPS U18). `fields` is read raw rather than parsed, so a
+    #     malformed `--set` still reaches the type refusal it used to.
+    # Outcome: a relations-only edit is allowed on every type; every other edit
+    #     keeps the refusal.
+    relations_only = bool(relations) and title is None and body is None and not fields
+    if not relations_only:
+        _refuse_edit(record)
 
     updates = parse_field_assignments(fields)
     if updates:
@@ -358,6 +390,14 @@ async def edit_record(
     next_body = _next_body(
         current, body, may_open_editor=title is None and not updates and not relations
     )
+    # Trigger: `--body` (or `--body -`) stated a replacement for the prose.
+    # Why: the record's edges live in that same body, and a body edit says nothing
+    #     about them (GAPS U17). The `$EDITOR` path is deliberately not here: the
+    #     editor opens on the whole body, relations included, so what the user
+    #     saved is what they meant.
+    # Outcome: the existing `## Relations` section is carried onto the new prose.
+    if body is not None:
+        next_body = carry_relations(current, next_body)
     if relations:
         next_body = append_relations(next_body, relations)
 
@@ -408,8 +448,9 @@ def edit(
             "--body",
             "-b",
             help=(
-                "Replace the body. Use '-' to read it from stdin; omit both "
-                "--title and --body to open $EDITOR."
+                "Replace the body, keeping the record's '## Relations' section. "
+                "Use '-' to read it from stdin; omit both --title and --body to "
+                "open $EDITOR."
             ),
         ),
     ] = None,
@@ -431,7 +472,9 @@ def edit(
             metavar="TYPE:ID",
             help=(
                 "Add a link to another record, e.g. --rel derived_from:tnd-q8w3e1r5. "
-                "Repeatable; run 'bm types' to see the relation types this project declares."
+                "On its own it works on every record type, including a task and a "
+                "finding. Repeatable; run 'bm types' to see the relation types this "
+                "project declares."
             ),
         ),
     ] = None,
@@ -444,12 +487,14 @@ def edit(
         typer.Option("--quiet", help="Hide the notices and the next-step hints."),
     ] = False,
 ) -> None:
-    """Change a record that is kept current: a guide, profile, state, or inbox note.
+    """Change a record that is kept current, or add a link to any record.
 
-    The title and the body move, `--set` writes a declared field on a profile,
-    and `--rel <type>:<id>` adds a link to another record. Every field set at
-    creation stays set — a task is closed with `bm done`, and a finding is
-    replaced by a successor written with `bm new --supersedes`.
+    The title and the body move on a guide, profile, state or inbox note, and
+    `--set` writes a declared field on a profile. `--rel <type>:<id>` on its own
+    adds a link to another record and works on every type, a task and a finding
+    included. Every field set at creation stays set — a task is closed with
+    `bm done`, and a finding is replaced by a successor written with
+    `bm new --supersedes`.
     """
     from basic_memory.cli.record_notes import parse_relations, write_project_name
 

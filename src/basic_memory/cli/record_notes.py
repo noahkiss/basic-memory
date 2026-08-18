@@ -340,21 +340,69 @@ def append_relations(body: str, relations: Sequence[Relation]) -> str:
     if not wanted:
         return body
 
-    if RELATIONS_HEADING not in {line.strip() for line in lines}:
+    span = relations_span(lines)
+    if span is None:
         return "\n".join([*lines, "", RELATIONS_HEADING, *wanted]) + "\n"
 
     # Insert at the end of the existing section rather than at the end of the
     # file: a hand-edited record may carry prose after its relations, and a
     # bullet stranded under a later heading is not an edge that section owns.
-    start = next(index for index, line in enumerate(lines) if line.strip() == RELATIONS_HEADING)
+    _, end = span
+    return "\n".join([*lines[:end], *wanted, *lines[end:]]) + "\n"
+
+
+def carry_relations(previous: str, replacement: str) -> str:
+    """Keep a record's `## Relations` section across a wholesale body replacement (GAPS U17).
+
+    `bm edit --body` replaces the prose. The edges live in that same body as
+    bullets under `## Relations`, so a replacement that said nothing about them
+    used to drop every one — silently, because a relation that no longer exists
+    is not a dangling relation and `bm doctor` cannot see it. An edit that
+    restates the prose is not a statement about the edges, which is the rule
+    `--rel` already follows in the other direction by appending rather than
+    replacing.
+
+    Trigger: the replacement body already carries a `## Relations` heading.
+    Why: the caller wrote the section by hand, so it says what they mean, and
+        carrying the old one over would leave two headings in one file — a shape
+        nothing in this tree writes or reads.
+    Outcome: the replacement stands as written and nothing is carried.
+
+    The carried section lands at the end of the new prose. Its position in the
+    old body is not preserved, because the prose it sat between is gone.
+    """
+    prose = replacement.rstrip().splitlines()
+    if relations_span(prose) is not None:
+        return replacement
+
+    span = relations_span(previous.rstrip().splitlines())
+    if span is None:
+        return replacement
+
+    start, end = span
+    section = previous.rstrip().splitlines()[start:end]
+    return "\n".join([*prose, "", *section] if prose else section) + "\n"
+
+
+def relations_span(lines: Sequence[str]) -> tuple[int, int] | None:
+    """The half-open line range a body's `## Relations` section occupies, or None.
+
+    The section runs from its heading to its last bullet. Any other non-blank
+    line — a later heading, or prose — ends it, so a record that carries text
+    after its edges keeps that text outside the span.
+    """
+    start = next(
+        (index for index, line in enumerate(lines) if line.strip() == RELATIONS_HEADING), None
+    )
+    if start is None:
+        return None
     end = start + 1
     for index in range(start + 1, len(lines)):
         if _is_bullet(lines[index]):
             end = index + 1
         elif lines[index].strip():
-            # Any other non-blank line — a heading or prose — ends the section.
             break
-    return "\n".join([*lines[:end], *wanted, *lines[end:]]) + "\n"
+    return start, end
 
 
 def _is_bullet(line: str) -> bool:

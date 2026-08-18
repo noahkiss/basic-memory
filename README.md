@@ -76,7 +76,7 @@ id. `bm` is the short name for `basic-memory`; both run the same commands.
 | `bm ls` | List records: id, type, status, title. Filter with `--type`, `--status`, `--area`. A record some other record supersedes reads `superseded` in the status column. |
 | `bm show <id>` | Print a record's file, exactly as it is on disk. |
 | `bm path <id>` | Print a record's file path and nothing else, for `$EDITOR "$(bm path <id>)"`. |
-| `bm edit <id>` | Change a record that is kept current: a guide, profile, state, or inbox note. `--set name=value` writes a field the project declares, on a profile; `--rel type:id` adds a link to another record. |
+| `bm edit <id>` | Change a record that is kept current: a guide, profile, state, or inbox note (`--rel` alone is allowed on any type — an edge rewrites nothing). `--body` replaces the prose and keeps the record's `## Relations` section. `--set name=value` writes a field the project declares, on a profile. `--rel type:id` adds a link to another record, and on its own works on every type — a task and a finding included. |
 | `bm mark <id> <status>` | Set a task's status. |
 | `bm done <id>` | Close a task. Exactly `bm mark <id> done`. |
 | `bm types` | Show the types, statuses, areas, and relation types this project allows. |
@@ -85,7 +85,7 @@ id. `bm` is the short name for `basic-memory`; both run the same commands.
 | `bm history dirty` | List note files whose changes are not recorded yet. |
 | `bm history commit` | Record note changes that `bm` did not make itself. |
 | `bm undo` | Put the note store back to the content it held before its last change. |
-| `bm doctor` | Check the notes against the index and report what needs a person. |
+| `bm doctor` | Check the notes against the index and report what needs a person. Exits 1 when integrity found something; hygiene alone exits 0, `--strict` exits 1 on either. |
 | `bm status` | Report what is indexed and what is not. |
 | `bm project list` | List projects. `project add` creates one; `project info` describes one. |
 
