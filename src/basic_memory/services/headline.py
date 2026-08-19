@@ -1,49 +1,56 @@
-"""The per-project headline file (GAPS W9, verbs item D).
+"""The per-project headline file (GAPS W9 item D, revised by GAPS U24).
 
 `bm` replaces the hand-written `STATUS.local.md` that a statusline, a
 projects-overview script, and a notify script all read. Those consumers re-render
 constantly and the measured floor for *any* `bm` command is 0.15 s, so they
 cannot call `bm`: the write path leaves a small file behind and they read that.
 
-Three constraints, all from W9, and each one is a failure that already happened:
+The value is **composed, never derived** (GAPS U24). The file used to carry the
+most recent open task's title, truncated — which produced mush like "Decide
+whether the transcript-s", and could not say anything a task list did not
+already say. `bm headline` writes the line deliberately instead, and the agent
+that just closed a task is the thing that knows what is actually next. No task
+write touches this file any more.
+
+Three constraints survive from W9, and each one is a failure that already
+happened:
 
 - **The shape is fixed by the strictest parser.** The statusline requires
   `lines[0] == "---"` **and** `lines[1].startswith("headline:")`; the other two
   read line 2 with no check at all. A malformed write fails silently in one
   consumer and displays wrong text in the other two.
 - **mtime is a staleness signal, so a no-op must not write.** The overview script
-  reads the file's mtime to decide whether a project has gone quiet. A regen that
+  reads the file's mtime to decide whether a project has gone quiet. A set that
   rewrites unconditionally makes every stale project read as fresh — the precise
   silent failure the flat file was kept for. Hence read-compare-skip.
 - **The file lives in the store** (`store/<external_id>/headline.md`, decision
   D6). Writing next to a working directory's `.bm.yml` would be `bm` editing
   someone else's tree.
 
-The value is derived, not stored: the most recently updated `task` that is
-neither closed nor shelved, its title truncated to the statusline's limit. No new
-frontmatter field, so no set-once surface is widened.
+A fourth is new with U24: **over-limit is an error, never a truncation.** The
+30-char cut is what made derived headlines mush; a composed headline that does
+not fit is a line its author has to rewrite, not one the tool may silently maim.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from sqlalchemy import or_, select
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from basic_memory.models import Entity, Project
 from basic_memory.store.history import store_path
-from basic_memory.vocabulary.model import inactive_statuses, load_vocabulary
 
 HEADLINE_FILENAME = "headline.md"
 
-# The statusline truncates past this, so truncating here is what keeps the file
-# and the display in agreement.
+# The statusline truncates past this. A derived headline used to be cut to fit;
+# a composed one is refused instead, so the file and the display always agree.
 MAX_HEADLINE_CHARS = 30
 
-# The record type whose title becomes the headline. Only `task` has a lifecycle,
-# so it is the only type whose most recent member answers "what is next".
-HEADLINE_NOTE_TYPE = "task"
+# What line 2 of the file starts with — the whole of what the strictest
+# consumer checks after the `---` above it.
+HEADLINE_KEY = "headline: "
+
+
+class HeadlineError(ValueError):
+    """A headline that cannot be written, with the message the verb prints."""
 
 
 def headline_path(project_external_id: str) -> Path:
@@ -57,73 +64,72 @@ def render_headline(text: str) -> str:
     Line 1 is `---` and line 2 starts `headline:`, which is the whole of what the
     strictest consumer checks.
     """
-    return f"---\nheadline: {text}\n---\n"
+    return f"---\n{HEADLINE_KEY}{text}\n---\n"
 
 
-def headline_text(title: str) -> str:
-    """Truncate a task title to what the statusline can show.
+def read_headline(project_external_id: str) -> str | None:
+    """The project's current headline, or None when none is set.
 
-    Right-stripped after the cut so a truncation that lands on a space does not
-    leave a trailing one, which reads as a rendering bug in a fixed-width bar.
+    Reads the same two lines the consumers read. A file that does not parse is
+    reported as unset rather than raised on: every caller here is composing a
+    hint or a footer, and none of them can act on a parse error.
     """
-    return title[:MAX_HEADLINE_CHARS].rstrip()
+    path = headline_path(project_external_id)
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+    if len(lines) < 2 or lines[0] != "---" or not lines[1].startswith(HEADLINE_KEY):
+        return None
+    return lines[1].removeprefix(HEADLINE_KEY)
 
 
-async def refresh_headline(session: AsyncSession, project: Project) -> bool:
-    """Rewrite the project's headline file, and report whether anything changed.
+def check_headline(text: str) -> str:
+    """Validate a headline someone composed, returning the exact text to write.
 
-    Takes the caller's ``session``: a per-write lookup that opens its own session
-    waits on a connection the caller already holds, and the pool is one
-    connection (GAPS W4). Returns True when the file was written or removed, so
-    the caller knows whether it has a path to commit.
+    Raises `HeadlineError` rather than repairing: a silent strip-and-truncate
+    would put a line on the statusline that nobody wrote (GAPS U24). Whitespace
+    at the ends is the one thing forgiven — it renders identically, so refusing
+    over it would be pedantry.
     """
-    title = await _current_task_title(session, project)
-    path = headline_path(project.external_id)
+    cleaned = text.strip()
+    if not cleaned:
+        raise HeadlineError("a headline cannot be empty — 'bm headline \"\"' clears it instead")
+    if "\n" in cleaned:
+        raise HeadlineError("a headline is one line; it cannot contain a newline")
+    if len(cleaned) > MAX_HEADLINE_CHARS:
+        raise HeadlineError(
+            f"headline is {len(cleaned)} chars; the statusline shows at most "
+            f"{MAX_HEADLINE_CHARS}. Rewrite it shorter rather than letting it truncate."
+        )
+    return cleaned
 
-    # No open work is a real answer, and an empty headline is not: the consumers
-    # would render a blank bar rather than falling back to their own default.
-    if title is None:
-        if not path.exists():
-            return False
-        path.unlink()
-        return True
 
-    content = render_headline(headline_text(title))
-    # The no-op skip, which is the entire reason this file is written by a
-    # function rather than by a template: mtime is a consumer's staleness check.
+def set_headline(project_external_id: str, text: str) -> bool:
+    """Write the project's headline, and report whether the file changed.
+
+    Validation is `check_headline`'s; the write keeps the read-compare-skip
+    rule because mtime is a consumer's staleness check — setting the same line
+    twice must not make a quiet project read as fresh.
+    """
+    content = render_headline(check_headline(text))
+    path = headline_path(project_external_id)
     if path.is_file() and path.read_text(encoding="utf-8") == content:
         return False
-
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
     return True
 
 
-async def _current_task_title(session: AsyncSession, project: Project) -> str | None:
-    """The most recently updated open task's title, if there is one.
+def clear_headline(project_external_id: str) -> bool:
+    """Remove the project's headline file, and report whether one existed.
 
-    Open here means neither terminal nor parked — see `inactive_statuses`.
+    No work to point at is a real answer, and an empty headline is not: the
+    consumers would render a blank bar rather than falling back to their own
+    default. Absence is how the file says "nothing is next".
     """
-    status = Entity.entity_metadata["status"].as_string()
-    query = (
-        select(Entity.title)
-        .where(
-            Entity.project_id == project.id,
-            Entity.note_type == HEADLINE_NOTE_TYPE,
-        )
-        # Ties break on file path so an unchanged corpus derives the same
-        # headline twice, which is what makes the no-op skip reachable.
-        .order_by(Entity.updated_at.desc(), Entity.file_path.asc())
-        .limit(1)
-    )
-
-    if inactive := inactive_statuses(load_vocabulary(project.external_id)):
-        # A task with no status counts as open. Hiding open work because its
-        # frontmatter is incomplete would suppress the thing the file exists to
-        # show, over a fault `bm doctor` already reports.
-        #
-        # Parked as well as terminal (GAPS U23): a shelved task is not what is
-        # next, so the headline skips it and shows the next open one instead.
-        query = query.where(or_(status.is_(None), status.not_in(sorted(inactive))))
-
-    return await session.scalar(query)
+    path = headline_path(project_external_id)
+    if not path.exists():
+        return False
+    path.unlink()
+    return True

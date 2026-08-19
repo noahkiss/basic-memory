@@ -116,8 +116,8 @@ DEFAULT_VOCABULARY = Vocabulary(
 # marks none of them terminal, so which names *mean* closed is type knowledge no
 # project file can carry. It lives here, once, because every caller that asks
 # "is this task still open" has to get the same answer — `bm brief` and the
-# headline file disagreeing about it would read as a bug in whichever the reader
-# checked second.
+# `bm done`/`bm mark` headline prompt disagreeing about it would read as a bug
+# in whichever the reader checked second.
 TERMINAL_STATUSES: frozenset[str] = frozenset({"done", "dropped"})
 
 

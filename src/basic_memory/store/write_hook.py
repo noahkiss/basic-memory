@@ -26,7 +26,6 @@ exists.
 from __future__ import annotations
 
 import os
-from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -121,24 +120,21 @@ def record_note_write(
     note_path: str,
     operation: WriteOperation,
     actor: str | None,
-    extra_paths: Sequence[Path] = (),
 ) -> HistoryOutcome:
-    """Commit the files one write touched and report what else is dirty.
+    """Commit the file one write touched and report what else is dirty.
 
-    ``note_path`` is project-relative and is what the commit message names.
-    ``extra_paths`` are absolute paths elsewhere in the store that the same write
-    produced — the headline file (GAPS W9) is the one caller. They are staged in
-    the same commit rather than left behind, because a store file nobody commits
-    reports as dirty on every later write.
+    ``note_path`` is project-relative and is what the commit message names. The
+    headline file used to ride in here as an extra path; since GAPS U24 the
+    headline is written only by `bm headline`, which commits through
+    `record_headline_change` below.
     """
     store_note_path = store_relative_path(project_path, note_path)
     if store_note_path is None:
         return HistoryOutcome(sha=None, notices=(OFF_STORE_NOTICE,))
 
-    store_paths = [store_note_path, *_within_store(extra_paths)]
     try:
         result = commit_paths(
-            store_paths,
+            [store_note_path],
             commit_message(operation, store_note_path),
             actor=actor,
             session_id=session_id(),
@@ -183,21 +179,32 @@ def session_id() -> str | None:
     return value or None
 
 
-def _within_store(paths: Sequence[Path]) -> list[str]:
-    """Store-relative forms of ``paths``, dropping any that sit outside the store.
+def record_headline_change(project_external_id: str) -> HistoryOutcome:
+    """Commit one project's headline file after `bm headline` changed it.
 
-    A path outside the worktree cannot be staged, and staging is not what a
-    caller asked for anyway: it handed over files it wrote and let this module
-    decide which of them the repository can see.
+    The headline lives at `store/<external_id>/headline.md` regardless of where
+    the project's notes sit, so this commits even for an off-store project — the
+    file is always in the worktree. A failed commit is a notice, never a raise:
+    the file is a convenience for the statusline, nothing was destroyed, and the
+    set the user asked for has already happened on disk (the same degradation
+    W3-A gives a create).
+
+    The filename mirrors `services.headline.HEADLINE_FILENAME` rather than
+    importing it: the store layer sits below services, and `ignore_utils` keeps
+    the same mirror for the same reason.
     """
-    store = store_path().resolve()
-    relative: list[str] = []
-    for path in paths:
-        try:
-            relative.append(path.resolve().relative_to(store).as_posix())
-        except ValueError:
-            continue
-    return relative
+    headline_store_path = f"{project_external_id}/headline.md"
+    try:
+        result = commit_paths(
+            [headline_store_path],
+            f"headline {headline_store_path}",
+            actor="cli",
+            session_id=session_id(),
+        )
+    except HistoryError as exc:
+        notice = f"note: the headline changed but was not recorded in the note history. {exc}"
+        return HistoryOutcome(sha=None, notices=(notice,))
+    return NO_HISTORY if result is None else HistoryOutcome(sha=result.sha)
 
 
 # --- Messages ---

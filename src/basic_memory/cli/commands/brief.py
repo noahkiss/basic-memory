@@ -70,8 +70,8 @@ MAX_BRIEF_CHARS = 10_000
 MAX_ROWS = 5
 
 # The statuses that take a task out of "what is open" live in `vocabulary/model.py`, which
-# is their one home: a brief and a headline file that disagreed about whether a task is
-# still open would read as a bug in whichever the reader checked second. Read through
+# is their one home: two readers that disagreed about whether a task is still
+# open would read as a bug in whichever the reader checked second. Read through
 # `inactive_statuses()` at the query site, unnarrowed — brief's rows span every in-scope
 # project, and there is no single project's vocabulary to narrow by. Inactive covers both
 # the terminal statuses and the parked one, so a shelved task is neither listed as open nor
@@ -189,6 +189,12 @@ class Brief:
     sections: tuple[Section, ...] = ()
     query: Optional[str] = None
     skipped: tuple[str, ...] = ()
+    # The pinned project's composed headline (GAPS U24). `headline_resolved`
+    # distinguishes "no headline set" from "no single project to ask": only a
+    # pinned, section-shaped brief carries one, and the verb prints the footer
+    # for both states of a resolved headline but never for an unscoped roll-up.
+    headline: Optional[str] = None
+    headline_resolved: bool = False
 
     @property
     def is_empty(self) -> bool:
@@ -336,13 +342,31 @@ async def query(session_maker, scope: ReadScope, query_text: Optional[str] = Non
                 query=query_text,
             )
 
+        # A pinned brief carries the project's composed headline (GAPS U24): the
+        # session-start injection is where an agent learns the current line and
+        # the 30-char rule before it can trip on either. An unscoped roll-up has
+        # no single "what's next" to show, so it carries none.
+        headline: Optional[str] = None
+        headline_resolved = False
+        if scope.project is not None and projects:
+            # Deferred with the other leaf imports; a pure file read, no session.
+            from basic_memory.services.headline import read_headline
+
+            headline = read_headline(projects[0].external_id)
+            headline_resolved = True
+
         # The vocabulary decides which sections exist, so it is read before the
         # rows. A project whose file is malformed drops out here and takes only
         # its own rows with it (GAPS W8 F1).
         scan = read_vocabularies(projects)
         project_ids = [project.id for project in scan.projects]
         if not project_ids:
-            return Brief(project=scope.project, skipped=scan.skipped)
+            return Brief(
+                project=scope.project,
+                skipped=scan.skipped,
+                headline=headline,
+                headline_resolved=headline_resolved,
+            )
 
         # No `.limit()` here: the caller adds it after the ordering, so the same
         # predicate can be counted unlimited first (GAPS U4). A heading that
@@ -423,7 +447,13 @@ async def query(session_maker, scope: ReadScope, query_text: Optional[str] = Non
                 Section(heading=rule.heading, rows=_rows(found), total=total or 0, parked=parked)
             )
 
-        return Brief(project=scope.project, sections=tuple(sections), skipped=scan.skipped)
+        return Brief(
+            project=scope.project,
+            sections=tuple(sections),
+            skipped=scan.skipped,
+            headline=headline,
+            headline_resolved=headline_resolved,
+        )
 
 
 async def search_pointers(
@@ -575,6 +605,28 @@ def empty_brief_line(scope: ReadScope) -> str:
     return f"nothing open in {where}"
 
 
+def headline_line(brief: Brief) -> Optional[str]:
+    """The pinned project's headline footer, or None off the pinned path (GAPS U24).
+
+    Payload, not a hint: the hook that injects a brief runs `--quiet`, and this
+    line is where an agent learns the current headline and the 30-char limit
+    before it can trip on either. Both states print — "(none set)" is a prompt,
+    not an absence — but an unscoped roll-up has no single line to show.
+    """
+    from basic_memory.services.headline import MAX_HEADLINE_CHARS
+
+    if not brief.headline_resolved:
+        return None
+    if brief.headline is None:
+        return (
+            f'Headline: (none set) — bm headline "<text>" sets it (max {MAX_HEADLINE_CHARS} chars)'
+        )
+    return (
+        f'Headline: "{brief.headline}" — still right? bm headline "<text>" updates it '
+        f"(max {MAX_HEADLINE_CHARS} chars)"
+    )
+
+
 def render(brief: Brief) -> str:
     """Render to markdown, or to the empty string when there is nothing to report."""
     if brief.is_empty:
@@ -704,6 +756,14 @@ def brief(
             if verbose:
                 # The payload names the scope; only this names where it came from.
                 typer.echo(f"brief: nothing open — {scope.describe()}", err=True)
+
+        # The headline footer follows the payload on a pinned brief (GAPS U24),
+        # sections and empty alike — it is what keeps the composed headline
+        # visible at session start. A --query brief carries none: the hits are
+        # what was asked for.
+        footer = headline_line(result)
+        if footer is not None:
+            typer.echo(footer)
 
         # A project the brief could not read is reported whether or not the rest
         # of the brief had anything to say: the sections it would have

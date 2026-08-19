@@ -100,7 +100,7 @@ Consequences, all deliberate:
 **Naming:** `tend` is a **codename for the design, not a command.** There is no `tend` binary and no
 `bm tend` namespace — the verbs ship flat under `bm` (`bm ls`, `bm new`, `bm edit`, `bm path`,
 `bm mine`, `bm done`, `bm show`, `bm history`, `bm undo`, `bm mark`, `bm types`, `bm brief`,
-`bm doctor`, `bm status`, `bm project`). **There is no `bm check`** —
+`bm headline`, `bm doctor`, `bm status`, `bm project`). **There is no `bm check`** —
 the schema and integrity checks land inside the existing `bm doctor` (see `GAPS.md` W5), because a
 second checking command would immediately be the one nobody runs.
 
@@ -136,7 +136,8 @@ tool layer.** `basic_memory.mcp.tools` and `basic_memory.api.app` are each secon
 The boundary is structural now, not aspirational: `basic_memory.cli.direct` is the supported way
 for a native command to reach the service layer, and
 `tests/cli/test_native_command_import_guard.py` runs each native verb — `project list`, `types`,
-`mine`, `doctor`, `brief`, `ls`, `show`, `path`, `new`, `edit`, `mark`, `done`, `undo` — in a
+`mine`, `doctor`, `brief`, `ls`, `show`, `path`, `new`, `headline`, `edit`, `mark`, `done`,
+`undo` — in a
 subprocess, cold and warm, and fails if
 `api.app`, `mcp.tools`, `mcp.async_client`, `mcp.clients`, `fastapi`, or `dateparser` ever enter
 `sys.modules`. Model new fast verbs on `fetch_project_list` in `cli/commands/project.py`.

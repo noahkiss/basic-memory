@@ -270,6 +270,8 @@ PROBE_SOURCE = (
 # `project mark` prints labelled lines rather than a count, and the last one is
 # the marker it wrote, so its tail is the marker's filename (GAPS U21).
 # `ls` seeds exactly one record, so its count line is singular (GAPS U13).
+# `headline` sets a line, so its payload — the line it wrote back — is last
+# under --quiet; the file it writes needs no seeding (GAPS U24).
 # `show` matches the seeded file's last body line and
 # `path` its file path, because neither verb prints a count (VERBS_PLAN D9).
 NATIVE_COMMANDS = (
@@ -283,6 +285,7 @@ NATIVE_COMMANDS = (
     (["show", RECORD_ID, "--quiet"], "seeded for the import guard"),
     (["path", RECORD_ID], RECORD_FILE),
     (["new", "task", "Guard record", "--body", "seeded", "--quiet"], "1 record"),
+    (["headline", "guard headline", "--quiet"], 'headline: "guard headline"'),
     (["edit", SEEDED, "--title", "Renamed", "--quiet"], "1 record"),
     (["mark", SEEDED, "doing", "--quiet"], "1 record"),
     (["done", SEEDED, "--quiet"], "1 record"),
@@ -334,6 +337,7 @@ def _probe(tmp_path, banned, command=("project", "list"), tail=" projects"):
         "show",
         "path",
         "new",
+        "headline",
         "edit",
         "mark",
         "done",

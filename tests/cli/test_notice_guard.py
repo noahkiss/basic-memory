@@ -163,6 +163,7 @@ def test_the_verbs_the_notice_covers_are_the_ones_w5_named() -> None:
     assert covered == {
         ("brief.py", "brief"),
         ("doctor.py", "doctor"),
+        ("headline.py", "headline"),
         ("history.py", "dirty"),
         ("history.py", "commit"),
         ("new.py", "new"),

@@ -872,17 +872,65 @@ def test_done_is_exactly_mark_done() -> None:
     assert frontmatter_of(path)["status"] == "done"
 
 
-def test_closing_the_last_open_task_clears_the_headline() -> None:
-    """The headline follows the write it came from (GAPS W9), through the verb."""
+def test_closing_a_task_leaves_the_headline_alone_and_asks_about_it() -> None:
+    """GAPS U24: the headline is composed, never derived — closing work prompts instead."""
+    from basic_memory.services.headline import set_headline
+
+    project = seed_project()
+    set_headline(project.external_id, "ship the verbs")
+    record_id = create(GOVERNED, "task", "The Only Task")
+
+    result = runner.invoke(app, ["done", record_id, "-p", GOVERNED])
+
+    assert result.exit_code == 0, result.output
+    # The file is untouched: no task write derives it any more.
+    lines = headline_path(project.external_id).read_text(encoding="utf-8").splitlines()
+    assert lines == ["---", "headline: ship the verbs", "---"]
+    # The verb asks whether the line is still right, quoting it.
+    assert 'headline: "ship the verbs" — still right?' in result.stdout
+
+
+def test_a_task_write_creates_no_headline() -> None:
+    """The other half of GAPS U24: `bm new` no longer mints a derived headline."""
+    project = seed_project()
+    create(GOVERNED, "task", "The Only Task")
+
+    assert not headline_path(project.external_id).exists()
+
+
+def test_closing_with_no_headline_set_nudges_toward_setting_one() -> None:
+    """The prompt teaches the 30-char limit before an agent can trip on it."""
     project = seed_project()
     record_id = create(GOVERNED, "task", "The Only Task")
-    assert "The Only Task" in headline_path(project.external_id).read_text(encoding="utf-8")
+    assert not headline_path(project.external_id).exists()
+
+    result = runner.invoke(app, ["mark", record_id, "shelved", "-p", GOVERNED])
+
+    assert result.exit_code == 0, result.output
+    assert "no headline set" in result.stdout
+    assert "max 30 chars" in result.stdout
+
+
+def test_marking_a_task_doing_asks_nothing_about_the_headline() -> None:
+    """`doing` leaves the task open, so nothing about "what is next" changed."""
+    seed_project()
+    record_id = create(GOVERNED, "task", "The Only Task")
+
+    result = runner.invoke(app, ["mark", record_id, "doing", "-p", GOVERNED])
+
+    assert result.exit_code == 0, result.output
+    assert "headline" not in result.stdout
+
+
+def test_quiet_hides_the_headline_prompt() -> None:
+    """--quiet is the hint switch, and the prompt is a hint (contract rule 4)."""
+    seed_project()
+    record_id = create(GOVERNED, "task", "The Only Task")
 
     result = runner.invoke(app, ["done", record_id, "-p", GOVERNED, "--quiet"])
 
     assert result.exit_code == 0, result.output
-    # No open task left, so the file is removed rather than left saying nothing.
-    assert not headline_path(project.external_id).exists()
+    assert "headline" not in result.stdout
 
 
 # --- What they print ---

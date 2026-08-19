@@ -21,6 +21,7 @@ from basic_memory.store.write_hook import (
     check_can_record,
     commit_message,
     project_store_prefix,
+    record_headline_change,
     record_note_write,
     store_relative_path,
 )
@@ -211,43 +212,43 @@ def test_an_unchanged_write_records_nothing(project_dir: Path) -> None:
     assert len(git(store_path(), "log", "--format=%H").splitlines()) == 1
 
 
-def test_extra_paths_ride_in_the_same_commit(project_dir: Path) -> None:
-    """The headline file is written by the same call and must not stay dirty."""
-    relative = write_note_file(project_dir, "tasks/tnd-abc--ship-it.md", "body\n")
-    headline = project_dir / "headline.md"
-    headline.write_text("---\nheadline: Ship it\n---\n", encoding="utf-8")
+def test_a_headline_change_commits_the_headline_file_alone(project_dir: Path) -> None:
+    """`bm headline` owns the headline's history entry (GAPS U24)."""
+    (project_dir / "headline.md").write_text("---\nheadline: Ship it\n---\n", encoding="utf-8")
 
-    outcome = record_note_write(
-        project_path=str(project_dir),
-        note_path=relative,
-        operation="create",
-        actor="cli",
-        extra_paths=[headline],
-    )
-
-    assert outcome.notices == ()
-    committed = git(store_path(), "show", "--name-only", "--format=", "HEAD").split()
-    assert sorted(committed) == sorted([f"{PROJECT_ID}/{relative}", f"{PROJECT_ID}/headline.md"])
-
-
-def test_extra_paths_outside_the_store_are_left_alone(project_dir: Path, tmp_path: Path) -> None:
-    """A path git cannot see is not staged, and does not fail the commit."""
-    relative = write_note_file(project_dir, "tasks/tnd-abc--ship-it.md", "body\n")
-    stray = tmp_path / "stray.md"
-    stray.write_text("elsewhere\n", encoding="utf-8")
-
-    outcome = record_note_write(
-        project_path=str(project_dir),
-        note_path=relative,
-        operation="create",
-        actor="cli",
-        extra_paths=[stray],
-    )
+    outcome = record_headline_change(PROJECT_ID)
 
     assert outcome.sha is not None
+    assert outcome.notices == ()
     assert git(store_path(), "show", "--name-only", "--format=", "HEAD").strip() == (
-        f"{PROJECT_ID}/{relative}"
+        f"{PROJECT_ID}/headline.md"
     )
+    assert git(store_path(), "log", "-1", "--format=%s").strip() == (
+        f"headline {PROJECT_ID}/headline.md"
+    )
+
+
+def test_a_headline_clear_commits_the_deletion(project_dir: Path) -> None:
+    """A cleared headline must not report as someone else's dirty file forever."""
+    headline = project_dir / "headline.md"
+    headline.write_text("---\nheadline: Ship it\n---\n", encoding="utf-8")
+    record_headline_change(PROJECT_ID)
+
+    headline.unlink()
+    outcome = record_headline_change(PROJECT_ID)
+
+    assert outcome.sha is not None
+    assert git(store_path(), "status", "--porcelain", "-uall").strip() == ""
+
+
+def test_a_headline_commit_failure_is_a_notice_not_a_raise(data_dir: Path) -> None:
+    """Nothing was destroyed — the set already happened — so the verb only warns."""
+    break_store_repo()
+
+    outcome = record_headline_change(PROJECT_ID)
+
+    assert outcome.sha is None
+    assert any("not recorded in the note history" in notice for notice in outcome.notices)
 
 
 def test_the_write_hook_leaves_the_dirty_report_to_the_command_notice(project_dir: Path) -> None:

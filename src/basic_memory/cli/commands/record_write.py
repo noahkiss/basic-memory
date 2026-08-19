@@ -37,9 +37,11 @@ recognizes as metadata-only and applies without touching the note's text. A
 status change that reflowed the body would show up in the history as a content
 edit nobody made.
 
-Every write here goes through `LocalNoteWriteStack`, so the history commit, the
-headline refresh, and the vocabulary funnel all happen exactly once, in the
-place item A put them.
+Every write here goes through `LocalNoteWriteStack`, so the history commit and
+the vocabulary funnel happen exactly once, in the place item A put them. The
+headline is deliberately not refreshed by any write (GAPS U24): it is composed
+with `bm headline`, and a closing `bm mark`/`bm done` prints a prompt about it
+instead of deriving it.
 """
 
 from __future__ import annotations
@@ -59,6 +61,7 @@ from basic_memory.cli.scope import ReadScope
 if TYPE_CHECKING:  # pragma: no cover
     from basic_memory.cli.record_notes import ExistingRecord, WriteProject
     from basic_memory.index.local_write_stack import LocalNoteWriteStack
+    from basic_memory.vocabulary.model import Vocabulary
 
 # Static affordances (GAPS W19 item 5) — a fixed list per verb, never derived
 # from what just happened.
@@ -104,6 +107,11 @@ class WriteOutcome:
     detail: str
     project: str
     notices: tuple[str, ...]
+    # The headline prompt a closing write earns (GAPS U24). The headline is
+    # composed rather than derived, so the moment work stops being open is the
+    # moment its one-liner may have gone stale — and the agent closing the task
+    # is standing right there. None on every write that leaves the task open.
+    headline_footer: Optional[str] = None
 
 
 class RecordVerbError(Exception):
@@ -579,6 +587,31 @@ async def mark_record(*, project_name: str, record_id: str, status: str) -> Writ
         detail=status,
         project=project.name,
         notices=(*result.notices, *_ungoverned_notices(project.external_id)),
+        headline_footer=_headline_footer(project.external_id, status, vocabulary),
+    )
+
+
+def _headline_footer(
+    external_id: str, status: str, vocabulary: "Vocabulary | None"
+) -> Optional[str]:
+    """The headline prompt a write that takes a task out of "open" earns (GAPS U24).
+
+    Only a closing status asks: marking a task `doing` changes nothing about
+    what is next, while `done`, `dropped` and `shelved` are exactly the moments
+    the composed headline goes stale. An ungoverned project judges "closing" by
+    the default statuses, the same reading `bm brief`'s shelved count uses.
+    """
+    from basic_memory.services.headline import MAX_HEADLINE_CHARS, read_headline
+    from basic_memory.vocabulary.model import inactive_statuses
+
+    if status not in inactive_statuses(vocabulary):
+        return None
+    current = read_headline(external_id)
+    if current is None:
+        return f'no headline set — bm headline "<text>" (max {MAX_HEADLINE_CHARS} chars)'
+    return (
+        f'headline: "{current}" — still right? bm headline "<text>" updates it, '
+        f'bm headline "" clears it'
     )
 
 
@@ -615,6 +648,10 @@ def mark(
     )
     emit_notices(_write_scope(outcome), quiet=quiet, command="mark")
     if not quiet:
+        # Closing work is the moment the composed headline may have gone stale,
+        # and this line is what keeps it fresh without derivation (GAPS U24).
+        if outcome.headline_footer:
+            typer.echo(outcome.headline_footer)
         typer.echo(MARK_AFFORDANCE)
 
 
@@ -647,4 +684,7 @@ def done(
     )
     emit_notices(_write_scope(outcome), quiet=quiet, command="done")
     if not quiet:
+        # Same prompt `bm mark` prints on a closing status: `done` always is one.
+        if outcome.headline_footer:
+            typer.echo(outcome.headline_footer)
         typer.echo(MARK_AFFORDANCE)

@@ -481,7 +481,7 @@ def test_the_write_stack_imports_no_banned_module():
     assert completed.stdout.strip() == "[]"
 
 
-# --- The history hookup and the headline (verbs items C and D) ---
+# --- The history hookup (verbs item C; the headline left with GAPS U24) ---
 
 
 def task_content(body: str, **fields: Any) -> str:
@@ -524,7 +524,7 @@ def store_git(*args: str) -> str:
 
 
 @pytest.mark.asyncio
-async def test_a_store_write_commits_the_note_and_its_headline(write_stack, store_project):
+async def test_a_store_write_commits_the_note(write_stack, store_project):
     """W3's hookup: the write path is the first caller of `commit_paths`."""
     result = await write_stack.write_note(
         project_external_id=store_project.external_id,
@@ -542,21 +542,25 @@ async def test_a_store_write_commits_the_note_and_its_headline(write_stack, stor
     assert "Actor: cli" in message
     # splitlines, not split: a note title contains spaces, so whitespace
     # splitting would shred one path into three.
-    committed = sorted(store_git("show", "--name-only", "--format=", "HEAD").splitlines())
-    assert committed == sorted(
-        [
-            f"{store_project.external_id}/{result.file_path}",
-            f"{store_project.external_id}/headline.md",
-        ]
-    )
-    # The store is clean afterwards: a headline left out of the commit would
-    # report as someone else's dirty file on every later write.
+    committed = store_git("show", "--name-only", "--format=", "HEAD").splitlines()
+    assert committed == [f"{store_project.external_id}/{result.file_path}"]
+    # The store is clean afterwards: the note is the only file this write made.
     assert store_git("status", "--porcelain", "-uall").strip() == ""
 
 
 @pytest.mark.asyncio
-async def test_a_store_write_leaves_the_headline_a_consumer_can_parse(write_stack, store_project):
-    """W9's three-line shape, written by the same call that wrote the note."""
+async def test_a_task_write_never_touches_the_headline(write_stack, store_project):
+    """GAPS U24 reversed W9's derivation: the headline is composed by `bm headline`.
+
+    The divergence is deliberate — a task title truncated to 30 chars was mush,
+    and only the agent closing work knows what is actually next. So the write
+    path leaves the file alone in both directions: it neither creates one nor
+    rewrites one somebody composed.
+    """
+    from basic_memory.services.headline import set_headline
+
+    set_headline(store_project.external_id, "composed by hand")
+
     await write_stack.write_note(
         project_external_id=store_project.external_id,
         data=EntitySchema(
@@ -567,7 +571,7 @@ async def test_a_store_write_leaves_the_headline_a_consumer_can_parse(write_stac
     )
 
     lines = headline_path(store_project.external_id).read_text(encoding="utf-8").splitlines()
-    assert lines == ["---", "headline: Ship The Verbs", "---"]
+    assert lines == ["---", "headline: composed by hand", "---"]
 
 
 @pytest.mark.asyncio
@@ -717,28 +721,3 @@ async def test_an_update_that_creates_is_not_refused_by_a_broken_history(
     assert Path(store_project.path, result.file_path).is_file()
     assert result.history_sha is None
     assert "not recorded in the note history" in result.notices[0]
-
-
-@pytest.mark.asyncio
-async def test_a_headline_that_cannot_be_written_is_a_notice_not_a_failure(
-    write_stack, store_project
-):
-    """The note already succeeded, so a convenience file must not fail the write.
-
-    A directory where the headline file belongs is a real filesystem refusal, so
-    no mock is needed to produce one.
-    """
-    headline_path(store_project.external_id).mkdir(parents=True)
-
-    result = await write_stack.write_note(
-        project_external_id=store_project.external_id,
-        data=EntitySchema(
-            title="Ship The Verbs",
-            directory="tasks",
-            content=task_content("Body."),
-        ),
-    )
-
-    assert Path(store_project.path, result.file_path).is_file()
-    assert result.history_sha is not None
-    assert any("headline file could not be updated" in notice for notice in result.notices)

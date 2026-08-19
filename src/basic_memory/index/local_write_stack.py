@@ -22,11 +22,9 @@ task that never runs. Relation resolution back-resolves inbound forward
 references that name the new note, and vector sync keeps semantic search current;
 both run inline here rather than being scheduled.
 
-**Every write ends in the store's history** (GAPS W3, verbs item C) and refreshes
-the project's headline file (GAPS W9, item D). The headline is derived from the
-state the write just produced, so it is written first and committed alongside the
-note: both files live in the store's worktree, and a store file nobody commits
-reports as someone else's dirty work forever after.
+**Every write ends in the store's history** (GAPS W3, verbs item C). The
+headline file is no longer touched here: it stopped being derived from task
+state with GAPS U24, and `bm headline` owns both the write and its commit.
 """
 
 from __future__ import annotations
@@ -71,7 +69,6 @@ from basic_memory.schemas.base import Entity as EntitySchema
 from basic_memory.schemas.request import EditEntityRequest
 from basic_memory.services.entity_service import EntityService
 from basic_memory.services.file_service import FileService
-from basic_memory.services.headline import headline_path, refresh_headline
 from basic_memory.services.link_resolver import LinkResolver
 from basic_memory.services.note_content_writes import (
     NoteContentMutationService,
@@ -299,42 +296,21 @@ class LocalNoteWriteStack:
         operation: WriteOperation,
         actor: str,
     ) -> LocalNoteWriteResult:
-        """Refresh the headline, then commit both files as one history entry.
+        """Commit the written note as one history entry (GAPS W3).
 
-        Order matters: the headline is derived from the state this write just
-        produced, and it lives inside the store's worktree. Committing the note
-        first would leave the headline uncommitted, and every later write would
-        then report it as someone else's dirty file (GAPS W3-B).
+        The headline used to be refreshed and committed here; since GAPS U24 it
+        is composed by `bm headline` and no note write touches it.
         """
-        headline_notices: tuple[str, ...] = ()
-        try:
-            async with db.scoped_session(self.session_maker) as session:
-                headline_changed = await refresh_headline(session, project)
-        except OSError as error:
-            # Trigger: the headline file itself is unwritable. Why it degrades:
-            # the note is already written, materialized and indexed, so failing
-            # the whole write here would report a success as a failure. The
-            # headline is a convenience for the statusline (GAPS W9), and
-            # `cli/notices.py` states the same rule for the same reason.
-            headline_changed = False
-            headline_notices = (f"note: the headline file could not be updated. {error}",)
-
-        # A removed headline is staged too: git matches a deleted path against
-        # the index, and every headline this stack writes was committed by the
-        # write that created it.
-        extra_paths = [headline_path(project.external_id)] if headline_changed else []
-
         try:
             outcome = record_note_write(
                 project_path=project.path,
                 note_path=result.file_path,
                 operation=operation,
                 actor=actor,
-                extra_paths=extra_paths,
             )
         except HistoryError as error:
             raise LocalNoteWriteError(str(error)) from error
-        return _with_history(result, outcome, headline_notices)
+        return _with_history(result, outcome)
 
     async def _project_bundle(self, project_external_id: str) -> _ProjectWriteBundle:
         """Compose this project's write stack, or refuse an unknown project."""
@@ -460,21 +436,9 @@ def _refuse_unrecordable(project_path: str, target: str, operation: WriteOperati
         raise LocalNoteWriteError(str(error)) from error
 
 
-def _with_history(
-    result: LocalNoteWriteResult,
-    outcome: HistoryOutcome,
-    extra_notices: tuple[str, ...] = (),
-) -> LocalNoteWriteResult:
-    """Attach the history commit and every notice the write produced.
-
-    The headline's notice comes first: it explains a file the history notice may
-    then say is missing from the commit.
-    """
-    return replace(
-        result,
-        history_sha=outcome.sha,
-        notices=(*extra_notices, *outcome.notices),
-    )
+def _with_history(result: LocalNoteWriteResult, outcome: HistoryOutcome) -> LocalNoteWriteResult:
+    """Attach the history commit and every notice the write produced."""
+    return replace(result, history_sha=outcome.sha, notices=outcome.notices)
 
 
 def local_note_write_result(

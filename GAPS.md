@@ -7266,6 +7266,46 @@ so `bm mark <id> shelved` is refused there. Humans extend the vocabulary; `bm` m
 file (W4). So the refusal names the fix instead: `'shelved' is not a status project 'x' declares.
 Allowed: …. Add it to <store>/<id>/vocabulary.yml to enable.`
 
+### U24 — the headline was derived from task titles, so it was mush nobody wrote — **FOUND + FIXED 2026-08-19**
+
+**Found 2026-08-19** (user decision, designing the harness cutover): the headline file W9 ships —
+`store/<id>/headline.md`, the one line a statusline shows — was *derived*: the most recently
+touched open task's title, truncated to 30 chars. That produced lines like
+`Decide whether the transcript-s`, and it could not say anything the task list did not already
+say. The real headline is often unrelated to any open task, and the thing that knows what is next
+is the agent in the session, not a recency query. U23's complaint — a shelved task taking the
+headline — was a symptom of the same root: derivation puts a line on the statusline that nobody
+composed.
+
+**Fixed 2026-08-19.** The headline is **composed, never derived**:
+
+- **`bm headline "<text>"`** sets it; **`bm headline ""`** clears it (absence is the honest
+  "nothing is next" — consumers fall back to their own default on a missing file, exactly as the
+  derived no-open-work case behaved); bare **`bm headline`** prints it and teaches the shape. A
+  native verb on the fast path, covered by the import guard.
+- **Over-limit is a hard error, never a truncation** (`services/headline.py`,
+  `MAX_HEADLINE_CHARS = 30`): the 30-char cut is what made derived headlines mush, and a line
+  nobody wrote must not reach the statusline. The limit is taught *before* it can be hit — the
+  bare verb, the brief footer, and the no-headline nudge all name it.
+- **No task write touches the file any more.** `refresh_headline` and its
+  `local_write_stack._record` hookup are deleted; `record_note_write` lost its `extra_paths`
+  parameter (the headline was its one caller). `bm headline` commits its own change through
+  `store/write_hook.record_headline_change` — the headline always sits in the store worktree, so
+  it commits even for an off-store project, and a failed commit degrades to a notice.
+- **Freshness comes from prompts, not derivation.** `bm done` and `bm mark`, when the new status
+  is closing (`inactive_statuses`: done, dropped, shelved), print the current headline and ask:
+  `headline: "…" — still right? bm headline "<text>" updates it, bm headline "" clears it` (or a
+  set-one nudge when none exists). `bm brief`, pinned, ends with a
+  `Headline: "…" — still right? …` payload line — payload, not a hint, because the session hook
+  runs `--quiet` and this line is how every session starts knowing the current line and the limit.
+- The mtime rule survives: read-compare-skip, so an unchanged set never makes a stale project read
+  as fresh, and now *only* deliberate updates move the mtime — a better staleness signal than the
+  derived file ever was.
+
+Zero migration: the composed value lives in the same file the derived value did, so existing
+headline files simply stop being overwritten. Stale ones stay accurate-as-of-mtime, which the
+overview script already reads.
+
 ## Docs swept
 
 **2026-07-26.** A ten-reader sweep reconciled the following into this file. The gaps they contained

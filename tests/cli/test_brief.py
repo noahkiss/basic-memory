@@ -28,6 +28,7 @@ from basic_memory.cli.commands.brief import (
     Section,
     UnknownProject,
     fence,
+    headline_line,
     query,
     render,
 )
@@ -926,3 +927,62 @@ async def test_a_brief_with_only_shelved_work_is_empty(session_maker, test_proje
 
     assert result.is_empty
     assert render(result) == ""
+
+
+# --- The headline footer (GAPS U24) ---
+
+
+@pytest.mark.asyncio
+async def test_a_pinned_brief_carries_the_composed_headline(
+    session_maker, test_project, config_home
+):
+    """The session-start injection is where an agent learns the current line."""
+    from basic_memory.services.headline import set_headline
+
+    _govern(test_project)
+    set_headline(test_project.external_id, "cut over the statusline")
+
+    brief = await query(session_maker, _scope(test_project.name))
+
+    assert brief.headline_resolved is True
+    assert brief.headline == "cut over the statusline"
+
+
+@pytest.mark.asyncio
+async def test_a_pinned_brief_with_no_headline_still_resolves(
+    session_maker, test_project, config_home
+):
+    """ "(none set)" is a prompt, not an absence — the footer must still print."""
+    _govern(test_project)
+
+    brief = await query(session_maker, _scope(test_project.name))
+
+    assert brief.headline_resolved is True
+    assert brief.headline is None
+
+
+@pytest.mark.asyncio
+async def test_an_unscoped_brief_carries_no_headline(session_maker, test_project, config_home):
+    """A roll-up spans projects, so there is no single "what's next" to show."""
+    _govern(test_project)
+
+    brief = await query(session_maker, _scope(None))
+
+    assert brief.headline_resolved is False
+    assert headline_line(brief) is None
+
+
+def test_headline_line_quotes_the_line_and_names_the_limit():
+    brief = Brief(project="p", headline="ship it", headline_resolved=True)
+    line = headline_line(brief)
+    assert line is not None
+    assert '"ship it"' in line
+    assert "max 30 chars" in line
+
+
+def test_headline_line_prompts_when_none_is_set():
+    brief = Brief(project="p", headline=None, headline_resolved=True)
+    line = headline_line(brief)
+    assert line is not None
+    assert "(none set)" in line
+    assert "max 30 chars" in line
