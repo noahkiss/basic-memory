@@ -299,3 +299,40 @@ def test_statuses_that_speak_for_themselves_get_no_prose(
     assert result.exit_code == 0, result.output
     statuses = result.stdout.split("statuses\n", 1)[1]
     assert statuses.startswith("  open, doing, done\n\n")
+
+
+def test_aliases_are_listed_with_their_targets(runner, config_home, stub_project, write_vocabulary):
+    """The aliases section mirrors `statuses`: aligned names, one target each (GAPS U25)."""
+    write_vocabulary("types: [task, finding]\naliases: {decision: finding, todo: task}\n")
+
+    result = runner.invoke(app, ["types", "--project", PROJECT])
+
+    assert result.exit_code == 0, result.output
+    assert "aliases" in result.stdout
+    assert "decision" in result.stdout
+    assert "an alias for finding" in result.stdout
+    assert "an alias for task" in result.stdout
+
+
+def test_default_aliases_appear_when_the_file_declares_none(
+    runner, config_home, stub_project, write_vocabulary
+):
+    """A file with no `aliases:` key still reports the narrowed defaults —
+    that is what the write path will actually accept."""
+    write_vocabulary(FULL_VOCABULARY)
+
+    result = runner.invoke(app, ["types", "--project", PROJECT])
+
+    assert result.exit_code == 0, result.output
+    assert "an alias for finding" in result.stdout
+
+
+def test_no_aliases_says_none_declared(runner, config_home, stub_project, write_vocabulary):
+    """An explicit empty mapping prints the same honest line the other sections use."""
+    write_vocabulary("types: [task]\naliases: {}\n")
+
+    result = runner.invoke(app, ["types", "--project", PROJECT])
+
+    assert result.exit_code == 0, result.output
+    aliases_section = result.stdout.split("aliases\n", 1)[1]
+    assert aliases_section.lstrip().startswith("(this project declares none)")

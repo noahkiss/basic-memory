@@ -49,7 +49,7 @@ from basic_memory.vocabulary.ids import (
     new_record_id,
     record_slug,
 )
-from basic_memory.vocabulary.model import Vocabulary
+from basic_memory.vocabulary.model import DEFAULT_VOCABULARY, Vocabulary
 
 if TYPE_CHECKING:  # pragma: no cover
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -183,18 +183,43 @@ def record_path(note_type: str, record_id: str, title: str) -> str:
     return f"{record_directory(note_type)}/{record_id}{SEPARATOR}{record_slug(title)}.md"
 
 
+@dataclass(frozen=True, slots=True)
+class ResolvedType:
+    """What one requested type resolves to on the write path (GAPS W4, U25)."""
+
+    # The type the record is written and stamped as — never an alias.
+    note_type: str
+    # The undeclared name an inbox record proposes, when the hatch fired.
+    proposed_type: str | None = None
+    # The alias the writer typed, when one resolved. Notice material only.
+    alias_of: str | None = None
+
+
+def declared_types(vocabulary: Vocabulary | None) -> tuple[str, ...]:
+    """The types a project can be measured against.
+
+    An ungoverned project has no declared list, so the closed set is the only
+    yardstick it has.
+    """
+    return vocabulary.types if vocabulary is not None else tuple(TYPE_DIRS)
+
+
 def resolve_note_type(
     requested: str, vocabulary: Vocabulary | None, *, project: str
-) -> tuple[str, str | None]:
-    """Return the type to write and the type to record as *proposed*, if any.
+) -> ResolvedType:
+    """Resolve the requested type: declared name, alias, or the inbox hatch.
 
-    An unknown type is the W4 escape hatch, never an error: the record is filed
+    A declared type wins outright (the parser refuses an alias that shadows
+    one, so the two never compete). An alias resolves to its canonical type and
+    the record stamps that type, never the alias (GAPS U25) — the vocabulary
+    stays closed; the reaching just lands. An ungoverned project resolves
+    against the default aliases the same way it is measured against the closed
+    set.
+
+    Everything else is the W4 escape hatch, never an error: the record is filed
     as `inbox` carrying `proposed-type: <requested>`, which is what makes
     `bm doctor`'s "N inbox records propose type X" report non-empty. Agents
     propose a type; only a human enables one.
-
-    An ungoverned project has no declared list, so the closed six are the only
-    types it can be measured against.
 
     Trigger: the project's vocabulary declares no `inbox` type (GAPS E2).
     Why: the hatch files the record as `inbox`, and the checker then rejects a
@@ -206,9 +231,18 @@ def resolve_note_type(
         project and the fix. The vocabulary is the human's to shape, so the verb
         states the consequence rather than the tree forbidding the edit.
     """
-    allowed = vocabulary.types if vocabulary is not None else tuple(TYPE_DIRS)
+    allowed = declared_types(vocabulary)
     if requested in allowed:
-        return requested, None
+        return ResolvedType(note_type=requested)
+
+    aliases = vocabulary.aliases if vocabulary is not None else DEFAULT_VOCABULARY.aliases
+    target = aliases.get(requested)
+    # The parser guarantees a target is declared; the guard is for the
+    # ungoverned path, where the default aliases meet the closed set instead of
+    # a validated file.
+    if target is not None and target in allowed:
+        return ResolvedType(note_type=target, alias_of=requested)
+
     if INBOX_TYPE not in allowed:
         raise ValueError(
             f"'{requested}' is not a type project '{project}' declares, and its vocabulary "
@@ -216,7 +250,7 @@ def resolve_note_type(
             f"'{INBOX_TYPE}' to its vocabulary.yml or pick a declared type; "
             f"run 'bm types' to see the set"
         )
-    return INBOX_TYPE, requested
+    return ResolvedType(note_type=INBOX_TYPE, proposed_type=requested)
 
 
 # --- Editing a body by hand ---

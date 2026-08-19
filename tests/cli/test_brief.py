@@ -986,3 +986,36 @@ def test_headline_line_prompts_when_none_is_set():
     assert line is not None
     assert "(none set)" in line
     assert "max 30 chars" in line
+
+
+# --- The types hint line (GAPS U25) ---
+
+
+def test_types_line_is_built_from_the_glossary():
+    """One copy of the vocabulary's language: the glossary feeds the line."""
+    from basic_memory.cli.commands.brief import types_line
+
+    line = types_line()
+
+    assert line.startswith("types: task (do it)")
+    assert "finding (learned it)" in line
+    assert "inbox (can't tell)" in line
+    assert line.endswith("bm types for detail")
+
+
+def test_types_line_names_the_default_aliases():
+    """The aliases ride along, so `bm new decision` is learned before it is typed."""
+    from basic_memory.cli.commands.brief import types_line
+
+    line = types_line()
+
+    assert "decision→finding" in line
+    assert "todo→task" in line
+    assert "idea→inbox" in line
+
+
+def test_types_line_is_one_line():
+    """The hint budget is one line; a wrap here is a regression, not styling."""
+    from basic_memory.cli.commands.brief import types_line
+
+    assert "\n" not in types_line()

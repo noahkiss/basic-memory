@@ -7306,6 +7306,35 @@ Zero migration: the composed value lives in the same file the derived value did,
 headline files simply stop being overwritten. Stale ones stay accurate-as-of-mtime, which the
 overview script already reads.
 
+### U25 — the closed vocabulary had no aliases, so `bm new decision` quietly became inbox — **FOUND + FIXED 2026-08-19**
+
+**Found 2026-08-19** in the session that shipped U24. An agent recording a user decision wrote
+`bm new decision "…" --quiet` in the governed `basic-memory` project and the record landed as
+`inbox`. Not a bug in the hatch — W4's escape hatch worked exactly as designed, the record carried
+`proposed-type: decision`, and a notice existed — but the notice was `--quiet`-gated and the only
+un-gated signal was the type column of the payload line. The user's framing: the fix is
+vocabulary, not more warning — *decision*, *todo*, *idea* are the words people and agents actually
+reach for, and a closed vocabulary should catch the reach, not file it as a proposal.
+
+**Fixed 2026-08-19.** Three pieces:
+
+- **Aliases are vocabulary** (`vocabulary/model.py`): `DEFAULT_ALIASES` maps `decision → finding`,
+  `todo → task`, `idea → inbox`; a project's `aliases:` key in `vocabulary.yml` replaces the
+  default outright, the way `types:` does, and is validated — a target must be a declared type,
+  and an alias may not shadow one, because a name that is both makes `bm new <name>` mean two
+  writes. Absent, the defaults apply narrowed to the types the project declares. Humans extend;
+  agents still only select — an alias only ever lands on a declared type.
+- **The write resolves, the record stamps the canonical type, and a notice teaches**
+  (`record_notes.resolve_note_type`, now returning a `ResolvedType`): `bm new decision` writes a
+  `finding` and prints `finding recorded (alias: decision is an alias for finding)`. The hatch
+  still catches everything else, and its notice now names the declared set inline —
+  `no type 'foo' — filed as inbox proposing it (types: … · bm types for detail)` — so the writer
+  does not need a second command to learn what would have landed as itself.
+- **The surfaces report it**: `bm types` gains an `aliases` section beside `statuses`, and
+  `bm brief` closes with one line of tool context built from the glossary —
+  `types: task (do it) · … · aliases: decision→finding, … — bm types for detail` — because the
+  session-start brief is where an agent learns the tool it is about to write with.
+
 ## Docs swept
 
 **2026-07-26.** A ten-reader sweep reconciled the following into this file. The gaps they contained

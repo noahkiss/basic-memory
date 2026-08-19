@@ -19,6 +19,9 @@ are load-bearing and none of them may be relaxed later:
   hatch exists to prevent. The one exception is a project whose vocabulary
   declares no `inbox` type at all: there is nowhere to file the proposal, so the
   verb refuses and says so rather than failing in the checker (GAPS E2).
+  Before the hatch fires, an *alias* the vocabulary declares resolves to its
+  canonical type and the record stamps that type (GAPS U25) — `bm new decision`
+  writes a `finding`, with a notice naming the alias.
 
 Scope is the **write** chain — `--project`, then the nearest `.bm.yml`, then the
 default project (`project_marker.resolve_cli_project`). Reads go unscoped when
@@ -345,6 +348,7 @@ async def create_record(
         RecordNote,
         allocate_record_id,
         check_relation_types,
+        declared_types,
         record_directory,
         record_exists,
         record_markdown,
@@ -392,9 +396,8 @@ async def create_record(
         # Resolved before an id is drawn: a type this project cannot file is a
         # refusal, and spending an id on a write that never happens leaves a gap
         # in the sequence for no reason (GAPS E2).
-        note_type, proposed_type = resolve_note_type(
-            requested_type, vocabulary, project=project.name
-        )
+        resolved = resolve_note_type(requested_type, vocabulary, project=project.name)
+        note_type, proposed_type = resolved.note_type, resolved.proposed_type
 
         # Resolved before an id is drawn, for E2's reason: a date flag the record's
         # type cannot carry is a refusal, and the type is only known once the
@@ -430,10 +433,20 @@ async def create_record(
     )
 
     notices = list(result.notices)
-    if proposed_type is not None:
+    # An alias resolved: say so once, so the writer learns the canonical name
+    # without being corrected (GAPS U25). The record itself stamped the type.
+    if resolved.alias_of is not None:
         notices.append(
-            f"note: '{proposed_type}' is not a type this project declares — filed as "
-            f"inbox proposing it; run 'bm types' to see the set"
+            f"{note_type} recorded (alias: {resolved.alias_of} is an alias for {note_type})"
+        )
+    if proposed_type is not None:
+        # Name the declared set inline (GAPS U25): the fallback is deliberate,
+        # but a writer who only sees `inbox` in the payload line should not need
+        # a second command to learn what would have landed as itself.
+        names = ", ".join(name for name in declared_types(vocabulary) if name != note_type)
+        notices.append(
+            f"no type '{proposed_type}' — filed as inbox proposing it "
+            f"(types: {names} · bm types for detail)"
         )
     if vocabulary is None:
         notices.append(UNGOVERNED_NOTICE)

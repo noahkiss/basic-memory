@@ -829,7 +829,11 @@ def test_new_files_an_unknown_type_as_inbox_and_says_so() -> None:
     metadata = written_frontmatter(written_file(project, result.stdout))
     assert metadata["type"] == "inbox"
     assert metadata["proposed-type"] == "runbook"
-    assert "'runbook' is not a type this project declares" in result.stdout
+    # The notice names the declared set inline (GAPS U25): the writer learns
+    # what would have landed as itself without running a second command.
+    assert "no type 'runbook' — filed as inbox proposing it" in result.stdout
+    assert "types: task, guide, finding, profile, state, note" in result.stdout
+    assert "bm types for detail" in result.stdout
     assert f"inbox/{metadata['id']}--restart-the-thing.md" in result.stdout
 
 
@@ -1123,3 +1127,63 @@ def test_quiet_drops_the_affordance_and_keeps_the_payload() -> None:
     lines = result.stdout.strip().splitlines()
     assert len(lines) == 2
     assert lines[1] == "1 record"
+
+
+# --- Aliases (GAPS U25) ---
+
+
+def test_new_resolves_an_alias_and_stamps_the_canonical_type() -> None:
+    """`bm new decision` writes a finding — the record never carries the alias."""
+    project = seed_project(GOVERNED)
+
+    result = runner.invoke(
+        app, ["new", "decision", "Store Is Central", "-b", "why", "-p", GOVERNED]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout.split()[1] == "finding"
+    metadata = written_frontmatter(written_file(project, result.stdout))
+    assert metadata["type"] == "finding"
+    assert "proposed-type" not in metadata
+    assert "finding recorded (alias: decision is an alias for finding)" in result.stdout
+
+
+def test_new_alias_resolves_in_an_ungoverned_project_too() -> None:
+    """Ungoverned projects are measured against the closed set, aliases included."""
+    seed_project(UNGOVERNED, governed=False)
+
+    result = runner.invoke(app, ["new", "todo", "Do The Thing", "-b", "x", "-p", UNGOVERNED])
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout.split()[1] == "task"
+    assert "task recorded (alias: todo is an alias for task)" in result.stdout
+
+
+def test_new_quiet_hides_the_alias_notice_but_the_type_still_resolves() -> None:
+    """--quiet drops the teaching line; the payload line still names the type."""
+    project = seed_project(GOVERNED)
+
+    result = runner.invoke(
+        app, ["new", "idea", "Maybe Someday", "-b", "x", "-p", GOVERNED, "--quiet"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout.split()[1] == "inbox"
+    assert "alias" not in result.stdout
+    assert written_frontmatter(written_file(project, result.stdout))["type"] == "inbox"
+
+
+def test_new_a_declared_type_beats_the_default_alias_of_the_same_name() -> None:
+    """A project that promoted 'decision' to a type writes 'decision' records.
+
+    The parser drops the default alias when its name is declared, so the write
+    takes the type outright and no alias notice appears.
+    """
+    project = seed_project("decision-type", types=("task", "decision", "inbox"))
+
+    result = runner.invoke(app, ["new", "decision", "Promoted", "-b", "x", "-p", "decision-type"])
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout.split()[1] == "decision"
+    assert written_frontmatter(written_file(project, result.stdout))["type"] == "decision"
+    assert "alias" not in result.stdout

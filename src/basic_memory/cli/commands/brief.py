@@ -627,6 +627,22 @@ def headline_line(brief: Brief) -> Optional[str]:
     )
 
 
+def types_line() -> str:
+    """One line of tool context: the types, their picking questions, the aliases.
+
+    A hint, not payload — `--quiet` drops it where the headline footer stays.
+    Built from the glossary and the default aliases rather than a hardcoded
+    string, so the one copy of the vocabulary's language keeps holding (GAPS
+    W19); `bm types` remains the project-accurate report this line points at.
+    """
+    from basic_memory.vocabulary.glossary import PICKING_QUESTIONS
+    from basic_memory.vocabulary.model import DEFAULT_VOCABULARY
+
+    gists = " · ".join(f"{name} ({question})" for name, question in PICKING_QUESTIONS.items())
+    aliases = ", ".join(f"{alias}→{target}" for alias, target in DEFAULT_VOCABULARY.aliases.items())
+    return f"types: {gists} · aliases: {aliases} — bm types for detail"
+
+
 def render(brief: Brief) -> str:
     """Render to markdown, or to the empty string when there is nothing to report."""
     if brief.is_empty:
@@ -764,6 +780,12 @@ def brief(
         footer = headline_line(result)
         if footer is not None:
             typer.echo(footer)
+
+        # Tool context after the payload (GAPS U25): the reader has just seen
+        # the state; this is the line that says how to write back to it. A
+        # --query brief skips it with the rest of the footer material.
+        if not quiet and query_text is None:
+            typer.echo(types_line())
 
         # A project the brief could not read is reported whether or not the rest
         # of the brief had anything to say: the sections it would have

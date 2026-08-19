@@ -84,6 +84,9 @@ def test_full_file_loads_exactly(data_dir: Path):
             "commissioned": DeclaredField(name="commissioned", kind="date"),
             "tier": DeclaredField(name="tier", kind="enum", values=("prod", "staging", "dev")),
         },
+        # No `aliases:` key means the defaults apply, narrowed to the declared
+        # types — every target here is declared, so all three survive (U25).
+        aliases={"decision": "finding", "todo": "task", "idea": "inbox"},
     )
 
 
@@ -380,3 +383,93 @@ def test_inactive_statuses_falls_back_when_no_terminal_name_is_declared():
     vocabulary = parse_vocabulary({"statuses": ["open", "doing"]}, source="v.yml")
 
     assert inactive_statuses(vocabulary) == TERMINAL_STATUSES
+
+
+# --- Aliases (GAPS U25) ---
+
+
+def test_default_vocabulary_declares_the_three_aliases():
+    assert dict(DEFAULT_VOCABULARY.aliases) == {
+        "decision": "finding",
+        "todo": "task",
+        "idea": "inbox",
+    }
+
+
+def test_absent_aliases_key_gets_the_defaults():
+    parsed = parse_vocabulary({}, source="v.yml")
+
+    assert dict(parsed.aliases) == dict(DEFAULT_VOCABULARY.aliases)
+
+
+def test_absent_aliases_narrow_to_declared_types():
+    """Dropping 'finding' drops the alias that pointed at it, silently.
+
+    Silence is right here: the project never wrote an aliases key, so there is
+    nothing to hold it to — the default just cannot promise a target the
+    project removed.
+    """
+    parsed = parse_vocabulary({"types": ["task", "inbox"]}, source="v.yml")
+
+    assert dict(parsed.aliases) == {"todo": "task", "idea": "inbox"}
+
+
+def test_absent_aliases_yield_to_a_promoted_type():
+    """A project that made 'decision' a real type keeps it as a type only."""
+    parsed = parse_vocabulary({"types": ["task", "finding", "decision", "inbox"]}, source="v.yml")
+
+    assert "decision" not in parsed.aliases
+
+
+def test_declared_aliases_replace_the_default_outright():
+    parsed = parse_vocabulary(
+        {"types": ["task", "inbox"], "aliases": {"bug": "task"}}, source="v.yml"
+    )
+
+    assert dict(parsed.aliases) == {"bug": "task"}
+
+
+def test_empty_aliases_mapping_declares_none():
+    """An explicit empty mapping is an opt-out, not an invitation for defaults."""
+    parsed = parse_vocabulary({"aliases": {}}, source="v.yml")
+
+    assert dict(parsed.aliases) == {}
+
+
+def test_alias_shadowing_a_declared_type_is_refused():
+    with pytest.raises(VocabularyError, match="shadows a declared type"):
+        parse_vocabulary({"aliases": {"task": "finding"}}, source="v.yml")
+
+
+def test_alias_target_must_be_a_declared_type():
+    with pytest.raises(VocabularyError, match="not a declared type"):
+        parse_vocabulary({"aliases": {"bug": "defect"}}, source="v.yml")
+
+
+def test_aliases_must_be_a_mapping():
+    with pytest.raises(VocabularyError, match="'aliases' must be a mapping"):
+        parse_vocabulary({"aliases": ["decision"]}, source="v.yml")
+
+
+def test_alias_name_must_be_wordlike():
+    with pytest.raises(VocabularyError, match="alias name"):
+        parse_vocabulary({"aliases": {"two words": "task"}}, source="v.yml")
+
+
+def test_aliases_survive_a_file_round_trip(data_dir: Path):
+    """What load_vocabulary reads from a real file is the validated mapping."""
+    write_vocabulary("aliases: {ticket: task}\n")
+
+    loaded = load_vocabulary(EXTERNAL_ID)
+
+    assert loaded is not None
+    assert dict(loaded.aliases) == {"ticket": "task"}
+
+
+def test_vocabulary_document_serializes_aliases():
+    """`--governed` writes the aliases key, so a new project's file teaches it."""
+    from basic_memory.vocabulary.model import vocabulary_document
+
+    document = vocabulary_document(DEFAULT_VOCABULARY)
+
+    assert document["aliases"] == {"decision": "finding", "todo": "task", "idea": "inbox"}

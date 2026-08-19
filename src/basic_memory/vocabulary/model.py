@@ -32,7 +32,7 @@ type FieldKind = Literal["string", "date", "enum"]
 
 _FIELD_KINDS: frozenset[str] = frozenset({"string", "date", "enum"})
 _ALLOWED_KEYS: frozenset[str] = frozenset(
-    {"types", "statuses", "areas", "relations", "review_months", "fields"}
+    {"types", "statuses", "areas", "relations", "review_months", "fields", "aliases"}
 )
 _ALLOWED_FIELD_KEYS: frozenset[str] = frozenset({"kind", "values"})
 
@@ -52,6 +52,16 @@ _FIELD_NAME = re.compile(r"[^\s]+")
 # It is a *default*, not a floor: a project's `relations:` key replaces this list
 # outright, the way `types:` and `statuses:` do.
 DEFAULT_RELATIONS: tuple[str, ...] = ("relates_to", "derived_from", "supersedes")
+
+# The type names an agent reaches for that the closed set spells differently
+# (GAPS U25, user decision 2026-08-19). An alias resolves at write time and the
+# record stamps the canonical type, never the alias — the vocabulary stays
+# closed, the reaching just lands. Like `relations`, a project's `aliases:` key
+# replaces this mapping outright; absent, these apply narrowed to the types the
+# project actually declares.
+DEFAULT_ALIASES: Mapping[str, str] = MappingProxyType(
+    {"decision": "finding", "todo": "task", "idea": "inbox"}
+)
 
 
 class VocabularyError(ValueError):
@@ -87,6 +97,11 @@ class Vocabulary:
     # omits the key, and a project that says nothing about edges gets the same
     # three every other project starts with.
     relations: tuple[str, ...] = DEFAULT_RELATIONS
+    # Alias name -> canonical type (GAPS U25). Empty here, not DEFAULT_ALIASES:
+    # the default only applies through the parser, which narrows it to the types
+    # the project declares — a bare Vocabulary(...) constructed in code gets
+    # exactly what it asked for.
+    aliases: Mapping[str, str] = field(default_factory=lambda: MappingProxyType({}))
 
 
 # What `bm project add --governed` WRITES into a project's first vocabulary file
@@ -109,6 +124,7 @@ DEFAULT_VOCABULARY = Vocabulary(
     review_months=12,
     fields=MappingProxyType({}),
     relations=DEFAULT_RELATIONS,
+    aliases=DEFAULT_ALIASES,
 )
 
 
@@ -220,8 +236,12 @@ def parse_vocabulary(raw: Mapping[str, Any], *, source: Path | str) -> Vocabular
         allowed = ", ".join(sorted(_ALLOWED_KEYS))
         _fail(source, f"unknown key(s) {_quoted(unknown)}; allowed keys are {allowed}")
 
+    # Types first: aliases are validated against them, so they cannot be built
+    # inline in the constructor call below.
+    types = _string_tuple(raw, "types", DEFAULT_VOCABULARY.types, source)
+
     return Vocabulary(
-        types=_string_tuple(raw, "types", DEFAULT_VOCABULARY.types, source),
+        types=types,
         statuses=_string_tuple(raw, "statuses", DEFAULT_VOCABULARY.statuses, source),
         areas=_string_tuple(raw, "areas", DEFAULT_VOCABULARY.areas, source),
         review_months=_review_months(raw, source),
@@ -230,6 +250,7 @@ def parse_vocabulary(raw: Mapping[str, Any], *, source: Path | str) -> Vocabular
         # written before GAPS U14 omits the key, and reading that as a refusal
         # would turn `--rel` off for every project that already exists.
         relations=_string_tuple(raw, "relations", DEFAULT_VOCABULARY.relations, source),
+        aliases=_parse_aliases(raw, types, source),
     )
 
 
@@ -248,6 +269,7 @@ def vocabulary_document(vocabulary: Vocabulary) -> dict[str, object]:
         "statuses": list(vocabulary.statuses),
         "areas": list(vocabulary.areas),
         "relations": list(vocabulary.relations),
+        "aliases": dict(vocabulary.aliases),
         "review_months": vocabulary.review_months,
         "fields": {
             name: (
@@ -337,6 +359,55 @@ def _review_months(raw: Mapping[str, Any], source: Path | str) -> int:
     if isinstance(months, bool) or not isinstance(months, int) or months < 1:
         _fail(source, f"'review_months' must be a positive integer, got {months!r}")
     return months
+
+
+def _parse_aliases(
+    raw: Mapping[str, Any], types: tuple[str, ...], source: Path | str
+) -> Mapping[str, str]:
+    """Parse the ``aliases`` key, validated against the declared types (GAPS U25).
+
+    Absent, the default aliases apply narrowed to what the project declares: an
+    alias whose target the project dropped points nowhere, and one whose name the
+    project promoted to a real type must yield to it. Present — an empty mapping
+    included — the key replaces the default outright, the way ``types`` and
+    ``relations`` do, and is then held to the strict rules: a target must be a
+    declared type, and an alias may not shadow one, because a name that is both
+    a type and an alias makes `bm new <name>` mean two different writes.
+    """
+    if "aliases" not in raw:
+        declared = set(types)
+        return MappingProxyType(
+            {
+                alias: target
+                for alias, target in DEFAULT_ALIASES.items()
+                if target in declared and alias not in declared
+            }
+        )
+
+    values = raw["aliases"]
+    if not isinstance(values, Mapping):
+        _fail(source, f"'aliases' must be a mapping of alias: type, got {type(values).__name__}")
+
+    declared = set(types)
+    aliases: dict[str, str] = {}
+    for alias, target in values.items():
+        if not isinstance(alias, str) or not _FIELD_NAME.fullmatch(alias):
+            _fail(source, f"alias name {alias!r} must be a non-empty string without whitespace")
+        if alias in declared:
+            _fail(
+                source,
+                f"alias '{alias}' shadows a declared type of the same name; "
+                f"a name is a type or an alias, never both",
+            )
+        if not isinstance(target, str) or target not in declared:
+            names = ", ".join(types)
+            _fail(
+                source,
+                f"alias '{alias}' points at {target!r}, which is not a declared type; "
+                f"declared types are {names}",
+            )
+        aliases[alias] = target
+    return MappingProxyType(aliases)
 
 
 def _parse_fields(raw: Any, source: Path | str) -> Mapping[str, DeclaredField]:

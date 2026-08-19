@@ -177,6 +177,26 @@ def render_statuses(vocabulary: Vocabulary) -> list[str]:
     return lines
 
 
+def render_aliases(vocabulary: Vocabulary) -> list[str]:
+    """The alias names this project accepts, each with the type it lands as.
+
+    Mirrors the `statuses` section: a short aligned list, present even when
+    empty — an agent that reads "declares none" stops guessing at synonyms
+    (GAPS U25).
+    """
+    lines = ["aliases"]
+    if not vocabulary.aliases:
+        lines.append(f"  {NONE_DECLARED}")
+        return lines
+
+    width = max(len(name) for name in vocabulary.aliases)
+    lines.extend(
+        f"  {name:<{width + LABEL_GAP}}an alias for {target}"
+        for name, target in vocabulary.aliases.items()
+    )
+    return lines
+
+
 def render(project_name: str, vocabulary: Vocabulary, path_note: str = "") -> str:
     """Render the whole report: type sections, then the rest of the vocabulary.
 
@@ -194,6 +214,7 @@ def render(project_name: str, vocabulary: Vocabulary, path_note: str = "") -> st
     if field_meanings:
         sections.append(field_meanings)
 
+    sections.append(render_aliases(vocabulary))
     sections.append(render_statuses(vocabulary))
     sections.append(["areas", f"  {', '.join(vocabulary.areas) or NONE_DECLARED}"])
     sections.append(render_relations(vocabulary))
