@@ -147,7 +147,11 @@ def external_id_for(name: str) -> str:
     return f"external-{generate_permalink(name)}"
 
 
-def write_project_registry(projects: dict[str, str], default: str | None = None) -> Path:
+def write_project_registry(
+    projects: dict[str, str],
+    default: str | None = None,
+    repos: dict[str, str] | None = None,
+) -> Path:
     """Write the on-disk project registry the synchronous reader sees.
 
     The database owns the project registry (GAPS B2), and CLI-boundary code
@@ -174,21 +178,25 @@ def write_project_registry(projects: dict[str, str], default: str | None = None)
             # `external_id` is on the real table and is what the store keys off,
             # so a projection that omitted it would make `lookup_project_
             # external_id` fail here for a reason no production run can hit.
+            # `repo` mirrors the U36 column so the sync reader's repo lookups
+            # exercise the same projection production reads.
             "CREATE TABLE IF NOT EXISTS project ("
             "id INTEGER PRIMARY KEY, name TEXT, permalink TEXT, path TEXT, "
-            "external_id TEXT, is_active INTEGER, is_default INTEGER)"
+            "external_id TEXT, is_active INTEGER, is_default INTEGER, repo TEXT)"
         )
         connection.execute("DELETE FROM project")
         for name, path in projects.items():
             connection.execute(
-                "INSERT INTO project (name, permalink, path, external_id, is_active, is_default) "
-                "VALUES (?, ?, ?, ?, 1, ?)",
+                "INSERT INTO project "
+                "(name, permalink, path, external_id, is_active, is_default, repo) "
+                "VALUES (?, ?, ?, ?, 1, ?, ?)",
                 (
                     name,
                     generate_permalink(name),
                     path,
                     external_id_for(name),
                     1 if name == default else None,
+                    (repos or {}).get(name),
                 ),
             )
         connection.commit()

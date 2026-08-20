@@ -70,6 +70,15 @@ class Project(Base):
     last_scan_timestamp: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     last_file_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
+    # Working-repo identity (GAPS U36): the git `origin` URL captured when the
+    # project was marked, lightly normalized (trailing `.git` stripped). NULL
+    # when the marked directory had no remote, or the project predates capture.
+    # `.bm.yml` markers are gitignored, so every fresh clone arrives unmarked —
+    # this is the machine-independent evidence that lets `bm project mark
+    # --if-repo-matches` re-mark a clone without guessing from its basename.
+    # Exact-match semantics: ssh and https spellings of one repo stay distinct.
+    repo: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+
     # Revalidation trigger (GAPS W5 item 4): sha256 of the project's vocabulary.yml
     # bytes when its violations were last computed, "" when the file is absent, and
     # NULL when nothing has validated this project yet. Hashing beats mtime because

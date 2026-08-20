@@ -478,6 +478,7 @@ class ProjectService:
 
         resolved_project_name = db_project.name
         resolved_project_path = db_project.path
+        resolved_project_repo = db_project.repo
 
         # Get statistics for the specified project
         statistics = await self.get_statistics(db_project.id)
@@ -510,6 +511,7 @@ class ProjectService:
         return ProjectInfoResponse(
             project_name=resolved_project_name,
             project_path=resolved_project_path,
+            project_repo=resolved_project_repo,
             available_projects=enhanced_projects,
             default_project=default_project,
             statistics=statistics,

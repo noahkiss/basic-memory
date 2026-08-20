@@ -79,6 +79,44 @@ def find_marker(start: Path) -> Optional[Path]:
     return None
 
 
+def repo_identity(directory: Path) -> Optional[str]:
+    """The working repo's identity: its git `origin` URL, lightly normalized.
+
+    Captured into the registry at marking time (GAPS U36). Markers are
+    gitignored, so a fresh clone arrives unmarked; the origin URL is the one
+    machine-independent fact that says "this directory is that project's repo",
+    which is what lets `bm project mark --if-repo-matches` re-mark a clone
+    mechanically instead of a human answering a name-collision prompt.
+
+    Normalization is deliberately light — trailing whitespace and a trailing
+    `.git` — so ssh and https spellings of the same repo remain *distinct*.
+    Exact-match semantics keep false positives impossible at the cost of a
+    prompt when a machine clones over a different transport; unifying
+    transports would need URL parsing this fact does not deserve.
+
+    Never raises: no git binary, no repo, and no remote all read as None,
+    because "this directory has no repo identity" is an answer, not a fault.
+    """
+    import subprocess
+
+    try:
+        completed = subprocess.run(
+            ["git", "-C", str(directory), "config", "--get", "remote.origin.url"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if completed.returncode != 0:
+        return None
+
+    url = completed.stdout.strip()
+    if url.endswith(".git"):
+        url = url[: -len(".git")]
+    return url or None
+
+
 def _read_marker_mapping(marker: Path) -> dict:
     """Load a `.bm.yml` as a mapping, strictly. An empty file is an empty mapping."""
     # Deferred: PyYAML stays off the --version floor.

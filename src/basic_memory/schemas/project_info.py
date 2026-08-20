@@ -109,6 +109,12 @@ class ProjectInfoResponse(BaseModel):
     # Project configuration
     project_name: str = Field(description="Name of the current project")
     project_path: str = Field(description="Path to the current project files")
+    # None when no repo was ever captured — markers are gitignored, so this is
+    # the registry's only durable memory of which working repo the project is
+    # (GAPS U36). Defaulted so pre-U36 API payloads still validate.
+    project_repo: Optional[str] = Field(
+        default=None, description="Origin URL of the working repo recorded at marking time"
+    )
     available_projects: Dict[str, Dict[str, Any]] = Field(
         description="Map of configured project names to detailed project information"
     )

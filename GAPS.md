@@ -7560,6 +7560,38 @@ contract: its header says so, it prints no notices, and it can never affect the 
 `--strict` alongside it is refused rather than ignored. It joins `--only` but not the default
 all-groups run: every other section is project-scoped corpus checking, and usage is neither.
 
+### U36 — the registry never knew which repo a project was, so every fresh clone faced a human — **FOUND + FIXED 2026-08-20**
+
+**Found 2026-08-19** in the name-collision design discussion, sharpened 2026-08-20. `.bm.yml`
+markers are deliberately gitignored, so the marker never travels: every fresh clone of an
+already-registered repo arrives unmarked. The session hook's collision rule (decided 2026-08-19:
+never guess, never hash-suffix) then prompts a human with `mark`-vs-`add` — correct for a genuine
+second repo named `api`, pure friction for the overwhelmingly common case, a re-clone of the same
+repo. bm held no evidence to tell the two apart: the registry's `path` column is the store
+directory, and nothing recorded which *working* repo a project belonged to.
+
+**Fixed 2026-08-20.** The evidence is the origin URL, captured where certainty exists:
+
+- **`project.repo`** (migration `p9k0l1m2n3o4`): nullable; the directory's
+  `remote.origin.url`, trailing `.git` stripped, recorded by `bm project add --here` and
+  `bm project mark`. Fill-empty-only: a re-mark backfills NULL (the U21 retrofit pattern), an
+  equal value stays silent, and a *different* value warns and keeps what is recorded — two
+  directories claiming one project is for the human. **Exact-match semantics by design**: ssh
+  and https spellings of one repo do not match each other; a false prompt costs a keystroke,
+  a false match sends writes to the wrong project.
+- **`bm project mark --if-repo-matches`** is the hook's mechanical path: match this directory's
+  origin against the registry — one match marks (the name argument becomes optional), no match
+  or no remote exits 3, several claimants exit 4 listing them. Exit codes, not prose, are the
+  interface. The session hook slots it between "no marker" and the collision prompt: try the
+  repo match first, fall back to the human prompt only when the registry genuinely cannot say.
+- `bm project info` prints the `repo:` line when one is recorded. The sync registry reader
+  treats a pre-U36 database (no `repo` column yet) as "nothing recorded", the same fail-open
+  spirit as its no-such-table guard — the hook must survive a not-yet-migrated registry.
+
+The capture write goes through a narrow, fill-empty-only sqlite UPDATE in `project_registry.py`
+— a documented exception to that module's read-only rule, taken so the native marker verb stays
+off the SQLAlchemy import it avoids by design.
+
 ## Docs swept
 
 **2026-07-26.** A ten-reader sweep reconciled the following into this file. The gaps they contained

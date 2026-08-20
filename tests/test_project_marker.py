@@ -273,3 +273,36 @@ def test_resolve_marker_without_project_key_falls_back(tmp_path, write_registry_
     write_registry_file({"main": str(tmp_path)}, default="main")
     (tmp_path / ".bm.yml").write_text("id: abc123\n")
     assert resolve_cli_project(None, tmp_path) == "main"
+
+
+# --- repo_identity (GAPS U36) ---
+
+
+def _git(*args: str) -> None:
+    import subprocess
+
+    subprocess.run(["git", *args], check=True, capture_output=True)
+
+
+def test_repo_identity_reads_origin_and_strips_dot_git(tmp_path):
+    from basic_memory.project_marker import repo_identity
+
+    _git("init", "-q", str(tmp_path))
+    _git("-C", str(tmp_path), "remote", "add", "origin", "https://example.com/owner/repo.git")
+
+    assert repo_identity(tmp_path) == "https://example.com/owner/repo"
+
+
+def test_repo_identity_without_a_remote_is_none(tmp_path):
+    """A repo with no origin has no cross-machine identity — None, not an error."""
+    from basic_memory.project_marker import repo_identity
+
+    _git("init", "-q", str(tmp_path))
+
+    assert repo_identity(tmp_path) is None
+
+
+def test_repo_identity_outside_a_repo_is_none(tmp_path):
+    from basic_memory.project_marker import repo_identity
+
+    assert repo_identity(tmp_path) is None

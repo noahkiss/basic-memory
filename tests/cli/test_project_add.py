@@ -349,3 +349,34 @@ def test_project_add_here_refuses_a_foreign_marker(
     assert (work / ".bm.yml").read_text() == "project: someone-else\n"
     # Contract rule 6: nothing lands on stdout on the error path.
     assert result.stdout == ""
+
+
+def test_project_add_here_records_the_repo(
+    runner,
+    mock_config,
+    stub_create_project,
+    write_registry_file,
+    monkeypatch,
+    tmp_path,
+):
+    """`add --here` in a repo captures the origin URL like `mark` does (GAPS U36)."""
+    import subprocess
+
+    from basic_memory.project_registry import lookup_project_repo
+
+    work = tmp_path / "work"
+    work.mkdir()
+    monkeypatch.chdir(work)
+    write_registry_file({"research": str(tmp_path / "store")}, default="research")
+    subprocess.run(["git", "init", "-q", str(work)], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(work), "remote", "add", "origin", "https://example.com/owner/research"],
+        check=True,
+        capture_output=True,
+    )
+
+    result = runner.invoke(app, ["project", "add", "research", "--here"])
+
+    assert result.exit_code == 0, result.output
+    assert lookup_project_repo("research") == "https://example.com/owner/research"
+    assert "repo: https://example.com/owner/research" in result.stdout

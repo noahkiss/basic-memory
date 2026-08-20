@@ -120,8 +120,12 @@ def mark_here(name: str) -> None:
     layer — the marker write needs two columns of one row, and this keeps the
     verb off the SQLAlchemy import (AGENTS.md, "Measured baseline").
     """
-    from basic_memory.project_marker import MarkerError, write_marker
-    from basic_memory.project_registry import lookup_project_external_id
+    from basic_memory.project_marker import MarkerError, repo_identity, write_marker
+    from basic_memory.project_registry import (
+        lookup_project_external_id,
+        lookup_project_repo,
+        record_project_repo,
+    )
 
     registered, external_id = lookup_project_external_id(name)
     if registered is None or external_id is None:
@@ -134,10 +138,31 @@ def mark_here(name: str) -> None:
     except OSError as error:
         raise fail(f"Error: could not write the marker: {error}")
 
+    # Repo identity capture (GAPS U36): marking is the one moment a directory
+    # and a project are known to belong together, so it is when the registry
+    # learns the repo's origin URL. Fill-empty-only: a mismatch is evidence a
+    # second repo is claiming this project, and the human gets a warning, not
+    # a silent overwrite.
+    repo_line: Optional[str] = None
+    observed_repo = repo_identity(Path.cwd())
+    if observed_repo is not None:
+        recorded_repo = lookup_project_repo(registered)
+        if recorded_repo is None:
+            if record_project_repo(registered, observed_repo):
+                repo_line = observed_repo
+        elif recorded_repo != observed_repo:
+            typer.echo(
+                f"warning: this directory's origin is {observed_repo}, but '{registered}' "
+                f"is recorded at {recorded_repo} — not overwritten",
+                err=True,
+            )
+
     # Contract rule 1: a single record renders as labelled lines. `marker:` is
     # last because it is the longest value and the one a reader scans for.
     typer.echo(f"project: {registered}")
     typer.echo(f"id: {external_id}")
+    if repo_line is not None:
+        typer.echo(f"repo: {repo_line}")
     typer.echo(f"marker: {marker}")
 
 
@@ -145,6 +170,12 @@ def mark_here(name: str) -> None:
 def mark_project(
     name: Optional[str] = typer.Argument(
         None, help="Project to mark. Defaults to the name the existing .bm.yml carries."
+    ),
+    if_repo_matches: bool = typer.Option(
+        False,
+        "--if-repo-matches",
+        help="Mark only when a registered project's recorded repo equals this "
+        "directory's git origin URL. Exit 3 on no match, 4 when several match.",
     ),
 ) -> None:
     """Point the current directory at a project by writing its `.bm.yml`.
@@ -154,13 +185,51 @@ def mark_project(
     is also the retrofit path: a marker written before the id existed carries
     only the name, and `bm project mark` with no argument fills the id in.
 
+    Marking also records the directory's git origin URL on the project (GAPS
+    U36), which is what `--if-repo-matches` later matches against: markers are
+    gitignored, so a fresh clone arrives unmarked, and the session hook uses
+    this flag to re-mark it mechanically instead of asking. With the flag, the
+    NAME argument is optional — a single match supplies it — and the exit code
+    is the answer: 0 marked, 3 no match (or no origin remote here), 4 more
+    than one project claims this repo.
+
     Refuses when the directory's marker names a different project — that tree
     belongs to something else. Remove the marker first.
 
     Examples:
         bm project mark research
         bm project mark
+        bm project mark --if-repo-matches
     """
+    if if_repo_matches:
+        from basic_memory.project_marker import repo_identity
+        from basic_memory.project_registry import lookup_projects_by_repo
+
+        # Exit codes, not prose, are this flag's interface: the session hook
+        # branches on them without parsing a line that may later be reworded.
+        observed_repo = repo_identity(Path.cwd())
+        if observed_repo is None:
+            typer.echo("no origin remote here — nothing to match against", err=True)
+            raise typer.Exit(3)
+
+        matches = lookup_projects_by_repo(observed_repo)
+        if name is not None:
+            matches = [match for match in matches if match[0] == name]
+        if not matches:
+            typer.echo(f"no registered project records repo {observed_repo}", err=True)
+            raise typer.Exit(3)
+        if len(matches) > 1:
+            names = ", ".join(match_name for match_name, _ in matches)
+            typer.echo(
+                f"{len(matches)} projects record repo {observed_repo}: {names} — "
+                "name one: bm project mark <name>",
+                err=True,
+            )
+            raise typer.Exit(4)
+
+        mark_here(matches[0][0])
+        return
+
     if name is None:
         from basic_memory.project_marker import MARKER_FILENAME, MarkerError, read_marker_project
 
@@ -492,6 +561,10 @@ def display_project_info(
     typer.echo("Project")
     typer.echo(f"name: {info.project_name}")
     typer.echo(f"path: {format_path(info.project_path)}")
+    # Only when captured: an absent repo is the common historical state, and a
+    # `repo: None` line would read as a value (GAPS U36).
+    if info.project_repo:
+        typer.echo(f"repo: {info.project_repo}")
     typer.echo(f"default project: {info.default_project}")
 
     typer.echo("")
