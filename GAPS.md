@@ -7391,6 +7391,47 @@ the verb safe to have: the content sits in the parent commit and `bm undo` resto
 the client route 2026-08-19; the payload is built by `ProjectService.get_project_info`, which
 never needed the ASGI app) — see the Measured baseline note in `AGENTS.md`.
 
+### U28 — `bm brief` hid `Shelved: N` when there were no open tasks — **FOUND 2026-08-19, FIXED 2026-08-20**
+
+**Found 2026-08-19** (inbox record, user decision to fix): "bm brief hides 'Shelved: N' when there
+are no open tasks — the parked pile is invisible exactly when it is the whole picture." U23 shipped
+the parked count as a line *under the open rows*, and `Section.is_empty` deliberately ignored
+`parked` ("a parked pile is context, not content: alone it does not make a section"). The
+consequence inverted U23's own goal: shelve the last open task and the brief collapses to
+`nothing open in '<project>'`, which reads as "nothing at all" — the one state in which work set
+aside would actually be forgotten.
+
+**Fixed 2026-08-20.** `parked > 0` now makes a section non-empty. With open rows the rendering is
+unchanged (`Shelved: N` under the rows); with none, the section renders as one line —
+`Open tasks: 0 — Shelved: N` — so the brief states both facts without listing parked titles. The
+"counted, never listed" rule from U23 still holds; the reversed test
+(`test_a_brief_with_only_shelved_work_is_empty` → `…_reports_the_pile`) records the flip.
+
+### U29 — the marker walk crossed repo boundaries and searched `$HOME` — **FOUND 2026-08-18, FIXED 2026-08-20**
+
+**Found 2026-08-18** by the batch-1 migration planning (inbox record tnd-b4f4eu4m): `find_marker`
+walked from cwd to `/`, so a `.bm.yml` at `~/develop` would silently capture every unmarked repo
+below it — writes included — and a marker at `$HOME` would capture everything. The 2026-08-19
+session-hook rewrite (dotfiles `bm-session-context.sh`) fixed the *hook's* walk; bm's own resolver
+still had the trap, and both the write chain (`resolve_cli_project`) and the read scope
+(`resolve_read_scope`) go through it.
+
+**Fixed 2026-08-20**, mirroring the hook's settled rule in `project_marker.find_marker`, which
+both chains share:
+
+- The walk stops at the first directory holding a `.git` — directory or file, so worktrees and
+  submodules bound it too — **inclusive**, so the repo root's own marker is still the normal case.
+- `$HOME` and its ancestors are never searched, for any start point. This is also what keeps a
+  dotfiles-style `~/.git` from reading as a repo boundary: the walk stops at `$HOME` before
+  consulting it. Judgment call: the ceiling applies to starts outside `$HOME` too (`/` and `/home`
+  are above `$HOME`), so a marker at the filesystem root is no longer reachable from anywhere —
+  the widest form of the same trap.
+
+Test-fixture consequence, recorded because it will bite again: the CLI and registry fixtures set
+`HOME=tmp_path`, so any test that writes a marker *at* `tmp_path` is writing a marker at the fake
+`$HOME` — invisible by design after this fix. Six tests did; they now nest the marked tree one
+level down. Put new markers in a subdirectory of `tmp_path`, never at its root.
+
 ## Docs swept
 
 **2026-07-26.** A ten-reader sweep reconciled the following into this file. The gaps they contained

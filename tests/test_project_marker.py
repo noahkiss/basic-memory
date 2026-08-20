@@ -45,6 +45,71 @@ def test_find_marker_absent(tmp_path):
     assert find_marker(tmp_path) is None
 
 
+# --- find_marker boundaries (GAPS U29) ---
+
+
+def test_find_marker_stops_at_a_git_boundary(tmp_path):
+    """A marker above a repo must not capture the repo (tnd-b4f4eu4m)."""
+    (tmp_path / ".bm.yml").write_text("project: workspace\n")
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
+    nested = repo / "src" / "deep"
+    nested.mkdir(parents=True)
+    assert find_marker(nested) is None
+
+
+def test_find_marker_searches_the_repo_root_itself(tmp_path):
+    """The boundary is inclusive: the repo's own marker is the normal case."""
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
+    (repo / ".bm.yml").write_text("project: repo\n")
+    nested = repo / "src"
+    nested.mkdir()
+    assert find_marker(nested) == repo / ".bm.yml"
+
+
+def test_find_marker_treats_a_git_file_as_a_boundary(tmp_path):
+    """Worktrees and submodules leave a `.git` *file*; they bound the walk too."""
+    (tmp_path / ".bm.yml").write_text("project: workspace\n")
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    (worktree / ".git").write_text("gitdir: /elsewhere\n")
+    assert find_marker(worktree) is None
+
+
+def test_find_marker_never_searches_home_or_above(tmp_path, monkeypatch):
+    """$HOME is not a project, and a marker there would capture every repo."""
+    home = tmp_path / "home"
+    (home / "develop" / "sub").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    (home / ".bm.yml").write_text("project: dotfiles\n")
+    assert find_marker(home / "develop" / "sub") is None
+    assert find_marker(home) is None
+
+
+def test_find_marker_home_git_is_a_ceiling_not_a_boundary(tmp_path, monkeypatch):
+    """A dotfiles-style ~/.git never makes $HOME a searchable repo root."""
+    home = tmp_path / "home"
+    develop = home / "develop"
+    develop.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    (home / ".git").mkdir()
+    (home / ".bm.yml").write_text("project: dotfiles\n")
+    (develop / ".bm.yml").write_text("project: workspace\n")
+    nested = develop / "notes"
+    nested.mkdir()
+    # Below $HOME the walk still works; at $HOME it stops without looking.
+    assert find_marker(nested) == develop / ".bm.yml"
+
+
+def test_find_marker_without_git_still_walks_a_plain_tree(tmp_path):
+    """No repo boundary in the chain: the walk climbs as it always has."""
+    (tmp_path / ".bm.yml").write_text("project: research\n")
+    nested = tmp_path / "a" / "b" / "c"
+    nested.mkdir(parents=True)
+    assert find_marker(nested) == tmp_path / ".bm.yml"
+
+
 # --- read_marker_project (strict) ---
 
 
@@ -114,9 +179,13 @@ def test_read_marker_id_bad_value_raises(tmp_path):
 
 def test_marker_id_does_not_change_resolution(tmp_path, write_registry_file):
     """Resolution keys off `project:`. The id is recorded, not yet authoritative."""
-    write_registry_file({"named": str(tmp_path)}, default="named")
-    (tmp_path / ".bm.yml").write_text("project: named\nid: some-other-projects-id\n")
-    assert resolve_cli_project(None, tmp_path) == "named"
+    # Nested below tmp_path: the registry fixture makes tmp_path the fake $HOME,
+    # which the walk never searches (GAPS U29).
+    work = tmp_path / "work"
+    work.mkdir()
+    write_registry_file({"named": str(work)}, default="named")
+    (work / ".bm.yml").write_text("project: named\nid: some-other-projects-id\n")
+    assert resolve_cli_project(None, work) == "named"
 
 
 # --- render_marker / write_marker / marker_conflict (GAPS U21) ---
@@ -174,20 +243,25 @@ def test_resolve_explicit_wins(tmp_path):
 
 
 def test_resolve_marker_beats_default(tmp_path, write_registry_file):
+    # Nested below tmp_path — the fake $HOME — which the walk never searches.
+    work = tmp_path / "work"
+    work.mkdir()
     write_registry_file(
-        {"marker-project": str(tmp_path), "other-default": "/tmp/other"},
+        {"marker-project": str(work), "other-default": "/tmp/other"},
         default="other-default",
     )
-    (tmp_path / ".bm.yml").write_text("project: marker-project\n")
-    assert resolve_cli_project(None, tmp_path) == "marker-project"
+    (work / ".bm.yml").write_text("project: marker-project\n")
+    assert resolve_cli_project(None, work) == "marker-project"
 
 
 def test_resolve_unregistered_marker_raises(tmp_path, write_registry_file):
+    work = tmp_path / "work"
+    work.mkdir()
     write_registry_file({"other": "/tmp/other"}, default="other")
-    (tmp_path / ".bm.yml").write_text("project: nope\n")
+    (work / ".bm.yml").write_text("project: nope\n")
     with pytest.raises(MarkerError, match=r"names 'nope'") as exc_info:
-        resolve_cli_project(None, tmp_path)
-    assert str(tmp_path / ".bm.yml") in str(exc_info.value)
+        resolve_cli_project(None, work)
+    assert str(work / ".bm.yml") in str(exc_info.value)
 
 
 def test_resolve_no_marker_falls_back_to_default(tmp_path, write_registry_file):

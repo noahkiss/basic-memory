@@ -33,13 +33,17 @@ def test_explicit_project_pins(tmp_path, write_registry_file):
 
 
 def test_marker_pins(tmp_path, write_registry_file):
-    write_registry_file({"marked": str(tmp_path), "other": "/tmp/other"}, default="other")
-    (tmp_path / ".bm.yml").write_text("project: marked\n")
+    # Nested below tmp_path — the registry fixture's fake $HOME, which the
+    # marker walk never searches (GAPS U29).
+    work = tmp_path / "work"
+    work.mkdir()
+    write_registry_file({"marked": str(work), "other": "/tmp/other"}, default="other")
+    (work / ".bm.yml").write_text("project: marked\n")
 
-    scope = resolve_read_scope(None, tmp_path)
+    scope = resolve_read_scope(None, work)
 
     assert scope.project == "marked"
-    assert scope.marker == tmp_path / ".bm.yml"
+    assert scope.marker == work / ".bm.yml"
     assert scope.origin == "marker"
 
 
@@ -82,12 +86,14 @@ def test_unregistered_marker_raises_rather_than_widening(tmp_path, write_registr
     Degrading here would hand a marked tree the cross-project view the marker
     exists to exclude, and would do it precisely when the config is wrong.
     """
+    work = tmp_path / "work"
+    work.mkdir()
     write_registry_file({"other": "/tmp/other"}, default="other")
-    (tmp_path / ".bm.yml").write_text("project: nope\n")
+    (work / ".bm.yml").write_text("project: nope\n")
 
     with pytest.raises(MarkerError, match=r"names 'nope'") as exc_info:
-        resolve_read_scope(None, tmp_path)
-    assert str(tmp_path / ".bm.yml") in str(exc_info.value)
+        resolve_read_scope(None, work)
+    assert str(work / ".bm.yml") in str(exc_info.value)
 
 
 def test_writes_keep_the_default_project_tail(tmp_path, write_registry_file):

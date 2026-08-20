@@ -26,6 +26,11 @@ fallback to the default project would quietly point commands (including
 writes) at the wrong project — the failure mode B5 exists to remove. Callers
 that must never fail (`bm brief` on session start) catch `MarkerError` and
 degrade themselves.
+
+The marker *search* is bounded (GAPS U29): the walk up from cwd stops at the
+first `.git` boundary (inclusive) and never consults `$HOME` or its ancestors.
+Both the write chain here and the read scope in `cli/scope.py` resolve through
+the same `find_marker`, so the boundary holds for every verb at once.
 """
 
 from __future__ import annotations
@@ -43,13 +48,34 @@ class MarkerError(ValueError):
 def find_marker(start: Path) -> Optional[Path]:
     """Walk up from `start` looking for a `.bm.yml` project marker.
 
-    Stops at the filesystem root. Returns the first marker found, so a nested
-    project wins over the one above it.
+    Returns the first marker found, so a nested project wins over the one above
+    it. The walk honours two boundaries (GAPS U29):
+
+    - **A repo boundary is inclusive and final.** The first directory holding a
+      `.git` (a directory, or the file a worktree or submodule leaves) is the
+      last one searched. A marker *above* a repo must never capture the repo:
+      one `.bm.yml` at a workspace root would silently claim every unmarked
+      repo below it, writes included, which is the trap tnd-b4f4eu4m recorded.
+    - **`$HOME` and its ancestors are never searched.** The home directory is
+      not a project, and a marker there (or at `/home`, or `/`) could only be
+      the workspace-capture trap in its widest form. This ceiling is also what
+      keeps a dotfiles-style `~/.git` from reading as a repo boundary: the walk
+      stops at `$HOME` before it would ever consult it.
     """
+    home = Path.home()
+    # $HOME itself and everything above it. Precomputed as a set: the walk
+    # compares each visited directory against it, and `Path.__eq__` chains in a
+    # loop read worse than one membership test.
+    never_searched = {home, *home.parents}
     for directory in (start, *start.parents):
+        if directory in never_searched:
+            return None
         candidate = directory / MARKER_FILENAME
         if candidate.is_file():
             return candidate
+        # After the marker check, so the repo root itself is still searched.
+        if (directory / ".git").exists():
+            return None
     return None
 
 

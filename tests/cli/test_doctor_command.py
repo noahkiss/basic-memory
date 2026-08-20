@@ -289,9 +289,13 @@ def test_doctor_marker_pins_its_project(stub_report, tmp_path, monkeypatch, writ
     a marker carries is registered — an unregistered marker raises rather than
     widening to every project (GAPS W5-C).
     """
-    write_registry_file({"marked": str(tmp_path)}, default="marked")
-    (tmp_path / ".bm.yml").write_text("project: marked\n", encoding="utf-8")
-    working = tmp_path / "src" / "deep"
+    # Nested below tmp_path — the CLI fixture's fake $HOME, which the marker
+    # walk never searches (GAPS U29).
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    write_registry_file({"marked": str(repo)}, default="marked")
+    (repo / ".bm.yml").write_text("project: marked\n", encoding="utf-8")
+    working = repo / "src" / "deep"
     working.mkdir(parents=True)
     monkeypatch.chdir(working)
     calls = stub_report([ProjectDoctorReport(project_name="marked")])
@@ -304,8 +308,10 @@ def test_doctor_marker_pins_its_project(stub_report, tmp_path, monkeypatch, writ
 
 def test_doctor_unreadable_marker_fails_loudly(stub_report, tmp_path, monkeypatch):
     """A marker that exists but cannot be used is an addressing failure, not a roll-up."""
-    (tmp_path / ".bm.yml").write_text("project: []\n", encoding="utf-8")
-    monkeypatch.chdir(tmp_path)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / ".bm.yml").write_text("project: []\n", encoding="utf-8")
+    monkeypatch.chdir(repo)
     stub_report([ProjectDoctorReport(project_name="alpha")])
 
     result = runner.invoke(app, ["doctor"])

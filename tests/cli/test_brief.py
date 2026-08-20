@@ -912,8 +912,12 @@ async def test_the_shelved_count_prints_under_the_rows(session_maker, test_proje
 
 
 @pytest.mark.asyncio
-async def test_a_brief_with_only_shelved_work_is_empty(session_maker, test_project, config_home):
-    """A parked pile is context, not content: alone it does not make a section."""
+async def test_a_brief_with_only_shelved_work_reports_the_pile(
+    session_maker, test_project, config_home
+):
+    """GAPS U28, reversing the U23-era call: when everything is shelved, the
+    parked pile is the whole picture, and hiding it made the one brief that
+    most needed to mention set-aside work read as "nothing at all"."""
     _govern(test_project, types="[task]", statuses=SHELVED_STATUSES)
     await _make_entity(
         session_maker,
@@ -925,8 +929,11 @@ async def test_a_brief_with_only_shelved_work_is_empty(session_maker, test_proje
 
     result = await query(session_maker, _scope(test_project.name))
 
-    assert result.is_empty
-    assert render(result) == ""
+    assert not result.is_empty
+    rendered = render(result)
+    assert "Open tasks: 0 — Shelved: 1" in rendered
+    # Still counted, never listed: the title stays out of the context window.
+    assert "Parked" not in rendered
 
 
 # --- The headline footer (GAPS U24) ---

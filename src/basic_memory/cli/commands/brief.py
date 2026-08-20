@@ -166,9 +166,11 @@ class Section:
 
     @property
     def is_empty(self) -> bool:
-        # `parked` alone does not make a section: a brief whose only content is
-        # "Shelved: 3" would report a heading over nothing to act on.
-        return not self.rows and not self.count
+        # `parked` alone DOES make a section (GAPS U28, reversing the U23-era
+        # call): when everything is shelved, the parked pile is the whole
+        # picture, and "nothing open" without it reads as "nothing at all" —
+        # which is exactly when work set aside would be forgotten.
+        return not self.rows and not self.count and not self.parked
 
 
 @dataclass(frozen=True)
@@ -663,7 +665,13 @@ def render(brief: Brief) -> str:
         # A count-only section is one line. A heading with nothing under it would be the
         # empty heading the rule above forbids.
         if not section.rows:
-            lines.append(f"\n{section.heading}: {section.count}")
+            if section.count:
+                lines.append(f"\n{section.heading}: {section.count}")
+            else:
+                # Only the parked pile survives (GAPS U28): no open rows to hang
+                # a heading over, so one line states both facts — zero open, and
+                # how much was deliberately set aside.
+                lines.append(f"\n{section.heading}: 0 — Shelved: {section.parked}")
             continue
         lines.append(f"\n## {section.heading} ({_heading_count(section)})")
         lines.extend(
