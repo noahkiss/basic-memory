@@ -23,6 +23,7 @@ from basic_memory.cli.commands.brief import (
     MAX_FENCE_RUN,
     MAX_ROWS,
     SECTION_RULES,
+    STALE_TASK_DAYS,
     Brief,
     Row,
     Section,
@@ -767,7 +768,8 @@ def test_brief_verbose_distinguishes_an_empty_corpus(monkeypatch, capsys):
     _run_brief(monkeypatch, _scope(None), Brief(project=None), verbose=True)
 
     captured = capsys.readouterr()
-    assert captured.out.strip() == "nothing open in any project"
+    # The stated line leads; the toolbox (U31) follows it as standing payload.
+    assert captured.out.splitlines()[0] == "nothing open in any project"
     assert "nothing open" in captured.err
     assert "all projects" in captured.err
 
@@ -781,7 +783,8 @@ def test_brief_states_an_empty_result_instead_of_printing_nothing(monkeypatch, c
     _run_brief(monkeypatch, _scope("scratchpilot"), Brief(project="scratchpilot"), verbose=False)
 
     captured = capsys.readouterr()
-    assert captured.out.strip() == "nothing open in 'scratchpilot'"
+    # The stated line leads; the toolbox (U31) follows it as standing payload.
+    assert captured.out.splitlines()[0] == "nothing open in 'scratchpilot'"
     assert captured.err == ""
 
 
@@ -995,34 +998,136 @@ def test_headline_line_prompts_when_none_is_set():
     assert "max 30 chars" in line
 
 
-# --- The types hint line (GAPS U25) ---
+# --- The toolbox (GAPS U25, widened by U31) ---
 
 
-def test_types_line_is_built_from_the_glossary():
-    """One copy of the vocabulary's language: the glossary feeds the line."""
-    from basic_memory.cli.commands.brief import types_line
+def test_toolbox_is_built_from_the_glossary():
+    """One copy of the vocabulary's language: the glossary feeds the block."""
+    from basic_memory.cli.commands.brief import toolbox_lines
 
-    line = types_line()
+    block = "\n".join(toolbox_lines())
 
-    assert line.startswith("types: task (do it)")
-    assert "finding (learned it)" in line
-    assert "inbox (can't tell)" in line
-    assert line.endswith("bm types for detail")
+    assert "task (do it)" in block
+    assert "finding (learned it)" in block
+    assert "inbox (can't tell)" in block
+    assert "bm types for detail" in block
 
 
-def test_types_line_names_the_default_aliases():
+def test_toolbox_names_the_default_aliases():
     """The aliases ride along, so `bm new decision` is learned before it is typed."""
-    from basic_memory.cli.commands.brief import types_line
+    from basic_memory.cli.commands.brief import toolbox_lines
 
-    line = types_line()
+    block = "\n".join(toolbox_lines())
 
-    assert "decision→finding" in line
-    assert "todo→task" in line
-    assert "idea→inbox" in line
+    assert "decision→finding" in block
+    assert "todo→task" in block
+    assert "idea→inbox" in block
 
 
-def test_types_line_is_one_line():
-    """The hint budget is one line; a wrap here is a regression, not styling."""
-    from basic_memory.cli.commands.brief import types_line
+def test_toolbox_teaches_the_verbs_the_doctrine_and_the_undo_pair():
+    """The hn-app audit's lessons, where every session starts (GAPS U31/U33)."""
+    from basic_memory.cli.commands.brief import toolbox_lines
 
-    assert "\n" not in types_line()
+    block = "\n".join(toolbox_lines())
+
+    assert "bm new <type>" in block
+    assert "bm rm <id>" in block
+    assert "bm undo --redo" in block
+    assert "finished it? bm done" in block
+    assert "supersedes:<old-id>" in block
+    assert "shelved is parked, not dropped" in block
+
+
+def test_the_toolbox_prints_under_quiet(monkeypatch, capsys):
+    """Payload, not a hint: the session hook runs --quiet and is the one consumer.
+
+    The U25 types line was quiet-gated, so the hook never injected it — the
+    exact failure this assertion pins (`_run_brief` always passes quiet=True).
+    """
+    filled = _brief(Section("Open tasks", (Row("Ship it", "notes/ship-it", "p"),)))
+
+    _run_brief(monkeypatch, _scope("p"), filled, verbose=False)
+
+    captured = capsys.readouterr()
+    assert "doctrine: finished it? bm done" in captured.out
+
+
+def test_an_empty_brief_still_prints_the_toolbox(monkeypatch, capsys):
+    """A new project is where the manual is needed most."""
+    _run_brief(monkeypatch, _scope("p"), Brief(project="p"), verbose=False)
+
+    captured = capsys.readouterr()
+    assert "nothing open in 'p'" in captured.out
+    assert "doctrine: finished it? bm done" in captured.out
+
+
+def test_a_query_brief_carries_no_toolbox(monkeypatch, capsys):
+    """The hits are what was asked for; the manual belongs to session starts."""
+    hits = _brief(
+        Section('Matches for "x"', (Row("Hit", "notes/hit", "p"),)),
+        query_text="x",
+    )
+
+    _run_brief(monkeypatch, _scope("p"), hits, verbose=False, query_text="x")
+
+    captured = capsys.readouterr()
+    assert "doctrine:" not in captured.out
+
+
+# --- Rot: open tasks untouched past the window (GAPS U31) ---
+
+
+@pytest.mark.asyncio
+async def test_untouched_open_tasks_are_counted_as_stale(session_maker, test_project, config_home):
+    """The hn-app failure in miniature: open work nobody has touched surfaces."""
+    _govern(test_project, types="[task]", statuses=SHELVED_STATUSES)
+    await _make_entity(
+        session_maker,
+        test_project.id,
+        title="Forgotten",
+        note_type="task",
+        metadata={"status": "open"},
+        updated_at=datetime.now(timezone.utc) - timedelta(days=STALE_TASK_DAYS + 1),
+    )
+    await _make_entity(
+        session_maker,
+        test_project.id,
+        title="Fresh",
+        note_type="task",
+        metadata={"status": "open"},
+    )
+
+    result = await query(session_maker, _scope(test_project.name))
+
+    assert _required_section(result, "task").stale == 1
+    rendered = render(result)
+    assert f"1 open task untouched >{STALE_TASK_DAYS}d" in rendered
+    assert "bm mark <id> shelved parks one" in rendered
+
+
+@pytest.mark.asyncio
+async def test_closed_and_fresh_tasks_are_not_stale(session_maker, test_project, config_home):
+    """Rot is open-and-untouched only: a closed task may sleep forever."""
+    _govern(test_project, types="[task]", statuses=SHELVED_STATUSES)
+    old = datetime.now(timezone.utc) - timedelta(days=STALE_TASK_DAYS + 30)
+    for title, status in (("Done long ago", "done"), ("Shelved long ago", "shelved")):
+        await _make_entity(
+            session_maker,
+            test_project.id,
+            title=title,
+            note_type="task",
+            metadata={"status": status},
+            updated_at=old,
+        )
+    await _make_entity(
+        session_maker,
+        test_project.id,
+        title="Fresh",
+        note_type="task",
+        metadata={"status": "open"},
+    )
+
+    result = await query(session_maker, _scope(test_project.name))
+
+    assert _required_section(result, "task").stale == 0
+    assert "untouched" not in render(result)

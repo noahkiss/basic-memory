@@ -427,6 +427,27 @@ class Supersession:
 
 
 @dataclass(frozen=True, slots=True)
+class IncomingReference:
+    """One record that points at the record being shown (GAPS U32).
+
+    The hn-app audit's gap: a correction carries `derived_from` to the record it
+    overturns, but the stale record shows nothing — a reader landing on it via
+    search sees a confidently wrong claim with no pointer forward. The incoming
+    edge is the pointer, so `bm show` renders it from this row.
+    """
+
+    relation_type: str
+    record_id: str
+    title: str
+
+    def describe(self) -> str:
+        # The title is context, not payload — cut it before it becomes a second
+        # record body inside the first one's output.
+        title = self.title if len(self.title) <= 60 else self.title[:59].rstrip() + "…"
+        return f'← {self.relation_type} by {self.record_id} "{title}"'
+
+
+@dataclass(frozen=True, slots=True)
 class ResolvedRecord:
     """One record, located: which project holds it, where its file is, and its successors."""
 
@@ -434,6 +455,7 @@ class ResolvedRecord:
     record_id: str
     path: Path
     superseded_by: tuple[Supersession, ...] = ()
+    referenced_by: tuple[IncomingReference, ...] = ()
 
 
 async def _projects_in_scope(session: "AsyncSession", project_name: str | None) -> list["Project"]:
@@ -542,6 +564,7 @@ async def direct_record(project_name: str | None, record_id: str) -> ResolvedRec
                     record_id=record_id,
                     path=Path(project.path) / entity.file_path,
                     superseded_by=_supersessions(entity),
+                    referenced_by=_incoming_references(entity),
                 )
             )
 
@@ -571,3 +594,25 @@ def _supersessions(entity: "Entity") -> tuple[Supersession, ...]:
         and relation.from_entity.permalink
     ]
     return tuple(sorted(successors, key=lambda item: (item.event_date, item.record_id)))
+
+
+def _incoming_references(entity: "Entity") -> tuple[IncomingReference, ...]:
+    """Every other record pointing at ``entity``, minus supersessions (GAPS U32).
+
+    Supersession keeps its own richer rendering above — repeating it here would
+    print the same edge twice. Read from the same eagerly-loaded collection
+    `_supersessions` uses, never from a rescan of files. Sorted by relation type
+    then id, so an unchanged graph renders the same block twice.
+    """
+    references = [
+        IncomingReference(
+            relation_type=relation.relation_type,
+            record_id=relation.from_entity.permalink,
+            title=relation.from_entity.title or "",
+        )
+        for relation in entity.incoming_relations
+        if relation.relation_type != SUPERSEDES
+        and relation.from_entity is not None
+        and relation.from_entity.permalink
+    ]
+    return tuple(sorted(references, key=lambda item: (item.relation_type, item.record_id)))

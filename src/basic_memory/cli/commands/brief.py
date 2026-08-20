@@ -48,7 +48,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from types import MappingProxyType
 from typing import Literal, Optional
@@ -68,6 +68,12 @@ MAX_BRIEF_CHARS = 10_000
 # inventory — `bm ls` is the place to go wide. Five is what fits before the reader
 # starts skimming.
 MAX_ROWS = 5
+
+# How long an open task may sit untouched before the brief asks about it (GAPS
+# U31). The hn-app audit found seventeen open tasks and zero ever closed — rot
+# that nothing surfaced where an agent looks. Sixty days is deliberately lax:
+# the line exists to catch abandonment, not to nag about a slow fortnight.
+STALE_TASK_DAYS = 60
 
 # The statuses that take a task out of "what is open" live in `vocabulary/model.py`, which
 # is their one home: two readers that disagreed about whether a task is still
@@ -156,6 +162,11 @@ class Section:
     `shelved` (GAPS U23). It is a count and never rows: a shelved task is not
     what to do next, so listing it would spend the brief's budget on work that
     was deliberately set aside. Zero for every section but the task one.
+
+    `stale` is how many of the section's open records sat untouched past
+    `STALE_TASK_DAYS` (GAPS U31). A count and never rows, for the same reason as
+    `parked`: the line's job is to prompt a triage, and the triage verb is
+    `bm ls`, not a longer brief. Zero for every section but the task one.
     """
 
     heading: str
@@ -163,6 +174,7 @@ class Section:
     count: int = 0
     total: int = 0
     parked: int = 0
+    stale: int = 0
 
     @property
     def is_empty(self) -> bool:
@@ -402,14 +414,14 @@ async def query(session_maker, scope: ReadScope, query_text: Optional[str] = Non
                 continue
 
             parked = 0
+            stale = 0
             statement = base(note_type)
             if rule.rule == "non-terminal":
                 # A missing or undeclared status still counts as open. Hiding a task
                 # because its frontmatter is wrong would suppress open work over a
                 # schema fault the notice already reports.
-                statement = statement.where(
-                    or_(status.is_(None), status.not_in(sorted(inactive_statuses())))
-                ).order_by(recent)
+                is_open = or_(status.is_(None), status.not_in(sorted(inactive_statuses())))
+                statement = statement.where(is_open).order_by(recent)
                 # One extra COUNT for the parked pile (GAPS U23). Counted rather
                 # than listed, and counted separately from the section's own
                 # total, because a shelved task belongs to neither answer: it is
@@ -422,6 +434,26 @@ async def query(session_maker, scope: ReadScope, query_text: Optional[str] = Non
                             Entity.note_type == note_type,
                             Entity.project_id.in_(project_ids),
                             status.in_(sorted(PARKED_STATUSES)),
+                        )
+                    )
+                    or 0
+                )
+                # And one for rot (GAPS U31): open rows nobody has touched in
+                # STALE_TASK_DAYS. `updated_at` is the honest timestamp here —
+                # it moves on every write to the record's file, where `opened`
+                # only says when the work was first written down. Local-aware
+                # for the reason doctor's stale-state cutoff is: SQLite stores
+                # the wall clock and drops the offset.
+                stale_cutoff = datetime.now().astimezone() - timedelta(days=STALE_TASK_DAYS)
+                stale = (
+                    await session.scalar(
+                        select(func.count())
+                        .select_from(Entity)
+                        .where(
+                            Entity.note_type == note_type,
+                            Entity.project_id.in_(project_ids),
+                            is_open,
+                            Entity.updated_at < stale_cutoff,
                         )
                     )
                     or 0
@@ -446,7 +478,13 @@ async def query(session_maker, scope: ReadScope, query_text: Optional[str] = Non
             )
             found = await session.execute(statement.limit(MAX_ROWS))
             sections.append(
-                Section(heading=rule.heading, rows=_rows(found), total=total or 0, parked=parked)
+                Section(
+                    heading=rule.heading,
+                    rows=_rows(found),
+                    total=total or 0,
+                    parked=parked,
+                    stale=stale,
+                )
             )
 
         return Brief(
@@ -629,20 +667,44 @@ def headline_line(brief: Brief) -> Optional[str]:
     )
 
 
-def types_line() -> str:
-    """One line of tool context: the types, their picking questions, the aliases.
+def toolbox_lines() -> list[str]:
+    """The tool-teaching block every non-query brief carries (GAPS U31).
 
-    A hint, not payload — `--quiet` drops it where the headline footer stays.
-    Built from the glossary and the default aliases rather than a hardcoded
-    string, so the one copy of the vocabulary's language keeps holding (GAPS
-    W19); `bm types` remains the project-accurate report this line points at.
+    Payload, not a hint: the session hook runs `--quiet`, and this block is the
+    one place an agent learns the verb surface before guessing at it — the
+    U25 types line was quiet-gated and therefore invisible to the only consumer
+    it was written for. `--quiet` keeps hiding notices and affordances; it does
+    not hide the manual.
+
+    Built from the glossary and the default vocabulary rather than hardcoded
+    strings, so the one copy of the vocabulary's language keeps holding (GAPS
+    W19); `bm types` remains the project-accurate report this block points at.
+    The doctrine lines at the end are the hn-app audit's lessons (GAPS U31/U32):
+    seventeen open tasks with zero ever closed, and corrections whose stale
+    predecessors nothing flagged.
     """
-    from basic_memory.vocabulary.glossary import PICKING_QUESTIONS
+    from basic_memory.vocabulary.glossary import PICKING_QUESTIONS, SUPERSEDES_RELATION
     from basic_memory.vocabulary.model import DEFAULT_VOCABULARY
 
     gists = " · ".join(f"{name} ({question})" for name, question in PICKING_QUESTIONS.items())
     aliases = ", ".join(f"{alias}→{target}" for alias, target in DEFAULT_VOCABULARY.aliases.items())
-    return f"types: {gists} · aliases: {aliases} — bm types for detail"
+    statuses = ", ".join(DEFAULT_VOCABULARY.statuses)
+    return [
+        'write: bm new <type> "<title>" [--body <text>] [--rel <type>:<id>] · '
+        "bm edit <id> · bm mark <id> <status> · bm done <id> · "
+        "bm rm <id>... (recoverable — bm undo)",
+        "read: bm ls [-t <type> -s <status>] · bm show <id> · bm path <id> · "
+        'bm brief -q "<search>" · bm doctor [--only integrity|hygiene]',
+        "history: bm history dirty what is uncommitted · bm undo peels one more real "
+        "write each run · bm undo --redo reverts the newest commit even if it was an "
+        "undo — the way back",
+        f"types: {gists} · aliases: {aliases} — bm types for detail",
+        f"statuses: {statuses} — shelved is parked, not dropped; bm mark <id> open revives it",
+        "doctrine: finished it? bm done — learned it? bm new finding — will do it? bm new task",
+        "findings are never edited — supersede: "
+        f'bm new finding "<corrected>" --rel {SUPERSEDES_RELATION}:<old-id>; '
+        "ls and show then flag the old record",
+    ]
 
 
 def render(brief: Brief) -> str:
@@ -686,6 +748,14 @@ def render(brief: Brief) -> str:
         # to act on, so it is stated and never listed (GAPS U23).
         if section.parked:
             lines.append(f"Shelved: {section.parked}")
+        # Rot is a question, not a listing (GAPS U31): the line names the count,
+        # the window, and the verb that parks one. `bm ls` is where to triage.
+        if section.stale:
+            plural = "" if section.stale == 1 else "s"
+            lines.append(
+                f"{section.stale} open task{plural} untouched >{STALE_TASK_DAYS}d — "
+                "still real? bm mark <id> shelved parks one"
+            )
 
     body = "\n".join(lines)
     opening = (
@@ -789,11 +859,13 @@ def brief(
         if footer is not None:
             typer.echo(footer)
 
-        # Tool context after the payload (GAPS U25): the reader has just seen
-        # the state; this is the line that says how to write back to it. A
-        # --query brief skips it with the rest of the footer material.
-        if not quiet and query_text is None:
-            typer.echo(types_line())
+        # The toolbox after the payload (GAPS U25, widened by U31): the reader
+        # has just seen the state; this block says how to work the store.
+        # Payload, so `--quiet` keeps it — the session hook is the primary
+        # consumer. A --query brief skips it: the hits are what was asked for.
+        if query_text is None:
+            for line in toolbox_lines():
+                typer.echo(line)
 
         # A project the brief could not read is reported whether or not the rest
         # of the brief had anything to say: the sections it would have

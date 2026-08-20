@@ -48,7 +48,12 @@ STORE_SCOPE = ReadScope(project=None, origin="unscoped")
 
 # Static affordance (GAPS W19 item 5, VERBS_PLAN §5 J). Static is the
 # requirement: a hint that appears only sometimes teaches the surface unreliably.
-UNDO_AFFORDANCE = "bm history dirty see what is uncommitted · bm show <id> read the restored entry"
+# It teaches the undo pair by name (GAPS U33): the two flags diverge only when
+# the newest commit is a restore, which is exactly the moment nobody reads help.
+UNDO_AFFORDANCE = (
+    "bm undo again peels one write deeper · bm undo --redo reverts the newest "
+    "commit, restores included · bm history dirty see what is uncommitted"
+)
 
 # `bm undo` is a human-typed command, so `cli` is what the tool actually knows
 # about who ran it (GAPS W3-B: silence beats a guess).
@@ -243,6 +248,16 @@ def undo(
             help="Revert the literal newest commit, a restore included — this is how you redo.",
         ),
     ] = False,
+    redo: Annotated[
+        bool,
+        typer.Option(
+            "--redo",
+            help=(
+                "Alias for --last, named for the moment it matters: after an undo, "
+                "this reverts the restore and puts the undone write back."
+            ),
+        ),
+    ] = False,
     yes: Annotated[
         bool,
         typer.Option("--yes", help="Confirm undoing more than one commit."),
@@ -261,15 +276,20 @@ def undo(
 
     Bare `bm undo` peels one more real write each run: restores and the commits
     they reverted cancel out of the walk (GAPS U26), so running it twice undoes
-    the last *two* writes rather than redoing the first. `--last` reverts the
-    literal newest commit, a restore included — that is how you redo an undo.
+    the last *two* writes rather than redoing the first. `--redo` (alias
+    `--last`) reverts the literal newest commit, a restore included — after an
+    undo, that puts the undone write back. The two shapes diverge only when the
+    newest commit is a restore; on any other commit they do the same thing.
 
     `--session <id>` does the same for every commit carrying that session's
     trailer, newest first, so the store ends on the content it held before the
     session began.
     """
+    # --redo exists because "--last" says nothing about the one case the flag
+    # is for (GAPS U33). Same behavior, so it folds in before any branching.
+    last = last or redo
     if last and session is not None:
-        raise fail("Error: pass either --last or --session, not both.")
+        raise fail("Error: pass either --last/--redo or --session, not both.")
 
     try:
         targets = _target_commits(session, last)
@@ -343,6 +363,11 @@ def undo(
     if not quiet:
         for line in _undo_notices(result, projects, unowned):
             typer.echo(line)
+        # State-aware, on top of the static affordance (GAPS U33): the fork
+        # between bare undo and --redo exists right now, so one line says what
+        # each would do from here. Recomputed after the restore commit, so the
+        # walk already cancels the pair this run created.
+        typer.echo(_next_step_line(result))
         typer.echo(UNDO_AFFORDANCE)
 
 
@@ -382,6 +407,28 @@ def _restore(targets: Sequence[str]) -> dict[str, str]:
         for path in restore_from_commit(sha):
             restored[path] = sha
     return restored
+
+
+def _next_step_line(result: CommitResult | None) -> str:
+    """What the two undo shapes would do from the state this run left (GAPS U33).
+
+    One line, derived from the walk rather than asserted: `latest_undoable_commit`
+    already cancels the restore this run recorded, so its answer *is* what a
+    following bare `bm undo` targets. Failure degrades to the static affordance
+    alone — a next-step hint must never turn a finished undo into an error.
+    """
+    try:
+        deeper = latest_undoable_commit()
+    except HistoryError:
+        deeper = None
+    redo = (
+        "'bm undo --redo' puts this restore back"
+        if result is not None
+        else "'bm undo --redo' reverts the newest commit"
+    )
+    if deeper is None:
+        return f"note: nothing older for bare 'bm undo' to peel · {redo}"
+    return f"note: bare 'bm undo' next peels {deeper[:8]} (one write deeper) · {redo}"
 
 
 def _undo_notices(result: CommitResult | None, projects: int, unowned: int) -> list[str]:

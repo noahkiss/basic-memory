@@ -67,11 +67,18 @@ def frontmatter(record_id: str, note_type: str, title: str, **extra: Any) -> dic
     }
 
 
-def seed(corpus: dict[str, list[dict[str, Any]]], *, supersedes: tuple[str, str] | None = None):
+def seed(
+    corpus: dict[str, list[dict[str, Any]]],
+    *,
+    supersedes: tuple[str, str] | None = None,
+    relations: tuple[tuple[str, str, str], ...] = (),
+):
     """Create every project and record in ``corpus``, in the database and on disk.
 
     ``supersedes`` is a ``(successor_id, predecessor_id)`` pair; the edge is
     written on the successor, which is the only direction the schema stores (§5).
+    ``relations`` is the general form: ``(relation_type, source_id, target_id)``
+    triples, each written on the source, for the incoming-reference tests (U32).
     """
 
     async def _seed() -> Seeded:
@@ -128,17 +135,21 @@ def seed(corpus: dict[str, list[dict[str, Any]]], *, supersedes: tuple[str, str]
                         target.parent.mkdir(parents=True, exist_ok=True)
                         target.write_text(entry["content"], encoding="utf-8")
 
+                edges = tuple(relations)
                 if supersedes is not None:
-                    successor, predecessor = (by_id[key] for key in supersedes)
+                    edges += (("supersedes", *supersedes),)
+                for relation_type, source_id, target_id in edges:
+                    source, target = by_id[source_id], by_id[target_id]
                     session.add(
                         Relation(
-                            project_id=successor.project_id,
-                            from_id=successor.id,
-                            to_id=predecessor.id,
-                            to_name=predecessor.permalink,
-                            relation_type="supersedes",
+                            project_id=source.project_id,
+                            from_id=source.id,
+                            to_id=target.id,
+                            to_name=target.permalink,
+                            relation_type=relation_type,
                         )
                     )
+                if edges:
                     await session.flush()
             return Seeded(paths=paths)
         finally:
@@ -457,6 +468,90 @@ def test_show_notices_supersession_on_the_replaced_record_not_the_successor() ->
     live = runner.invoke(app, ["show", "tnd-dddd4444", "--project", MAIN])
     assert live.exit_code == 0, live.output
     assert "superseded by" not in live.stdout
+
+
+# --- Incoming references (GAPS U32) ---
+
+CORRECTION = note(
+    "finding-eeee5555",
+    "finding",
+    "Correction: the pragmas were not the cause",
+    **{"event-date": "2026-08-02"},
+)
+
+
+def test_show_renders_an_incoming_reference_on_the_target() -> None:
+    """The stale side of a correction points forward, from the record that misleads.
+
+    The edge lives on the correction; the record a reader lands on via search is
+    the old one. Both directions are asserted so the rendering cannot flip to
+    the side that already knows.
+    """
+    seed(
+        {MAIN: [FINDING, CORRECTION]},
+        relations=(("derived_from", "finding-eeee5555", "tnd-cccc3333"),),
+    )
+
+    stale = runner.invoke(app, ["show", "tnd-cccc3333", "--project", MAIN])
+    assert stale.exit_code == 0, stale.output
+    assert (
+        '← derived_from by finding-eeee5555 "Correction: the pragmas were not the cause"'
+        in stale.stdout
+    )
+
+    live = runner.invoke(app, ["show", "finding-eeee5555", "--project", MAIN])
+    assert live.exit_code == 0, live.output
+    assert "← derived_from" not in live.stdout
+
+
+def test_quiet_drops_the_incoming_reference() -> None:
+    """Derived, so it follows the supersession notice out under --quiet."""
+    seeded = seed(
+        {MAIN: [FINDING, CORRECTION]},
+        relations=(("derived_from", "finding-eeee5555", "tnd-cccc3333"),),
+    )
+    on_disk = seeded.file(MAIN, FINDING["file_path"]).read_text(encoding="utf-8")
+
+    result = runner.invoke(app, ["show", "tnd-cccc3333", "--project", MAIN, "--quiet"])
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout == on_disk
+
+
+def test_show_truncates_a_long_incoming_title() -> None:
+    """The title is context, not a second payload — it is cut, with a mark."""
+    long_title = "Correction: " + "a really long explanation " * 4
+    source = note("finding-ffff6666", "finding", long_title)
+    seed(
+        {MAIN: [FINDING, source]},
+        relations=(("derived_from", "finding-ffff6666", "tnd-cccc3333"),),
+    )
+
+    result = runner.invoke(app, ["show", "tnd-cccc3333", "--project", MAIN])
+
+    assert result.exit_code == 0, result.output
+    assert "← derived_from by finding-ffff6666" in result.stdout
+    assert long_title not in result.stdout
+    assert "…" in result.stdout
+
+
+def test_show_caps_incoming_references_and_counts_the_rest() -> None:
+    """A hub record summarizes past MAX_INCOMING instead of trailing a listing."""
+    sources = [
+        note(f"finding-aaaa000{index}", "finding", f"Reference {index}") for index in range(7)
+    ]
+    seed(
+        {MAIN: [FINDING, *sources]},
+        relations=tuple(
+            ("relates_to", f"finding-aaaa000{index}", "tnd-cccc3333") for index in range(7)
+        ),
+    )
+
+    result = runner.invoke(app, ["show", "tnd-cccc3333", "--project", MAIN])
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout.count("← relates_to by") == records.MAX_INCOMING
+    assert "… and 2 more incoming relations" in result.stdout
 
 
 def test_show_separates_a_body_with_no_final_newline_from_the_notice() -> None:

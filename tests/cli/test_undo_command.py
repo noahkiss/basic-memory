@@ -290,6 +290,48 @@ def test_undo_last_redoes_what_a_bare_undo_reverted(project: Path) -> None:
     assert (project / TASK_FILE).read_text(encoding="utf-8") == SECOND
 
 
+def test_redo_is_an_alias_for_last(project: Path) -> None:
+    """`--redo` names the intent `--last` only implies (GAPS U33)."""
+    path = write(project, TASK_FILE, FIRST)
+    commit([path], "create notes/tasks")
+    write(project, TASK_FILE, SECOND)
+    commit([path], "update notes/tasks")
+
+    assert runner.invoke(app, ["undo", "--quiet"]).exit_code == 0
+    assert (project / TASK_FILE).read_text(encoding="utf-8") == FIRST
+
+    assert runner.invoke(app, ["undo", "--redo", "--quiet"]).exit_code == 0
+    assert (project / TASK_FILE).read_text(encoding="utf-8") == SECOND
+
+
+def test_undo_states_what_each_shape_would_do_next(project: Path) -> None:
+    """The fork between bare undo and --redo is explained the moment it exists.
+
+    Derived from the walk, not asserted: after undoing the update, the next bare
+    target is the create, and --redo would put the update back (GAPS U33).
+    """
+    path = write(project, TASK_FILE, FIRST)
+    create_sha = commit([path], "create notes/tasks")
+    write(project, TASK_FILE, SECOND)
+    commit([path], "update notes/tasks")
+
+    result = runner.invoke(app, ["undo"])
+
+    assert result.exit_code == 0, result.output
+    assert f"note: bare 'bm undo' next peels {create_sha[:8]}" in result.stdout
+    assert "'bm undo --redo' puts this restore back" in result.stdout
+
+
+def test_the_next_step_line_says_when_nothing_older_remains(project: Path) -> None:
+    path = write(project, TASK_FILE, FIRST)
+    commit([path], "create notes/tasks")
+
+    result = runner.invoke(app, ["undo"])
+
+    assert result.exit_code == 0, result.output
+    assert "note: nothing older for bare 'bm undo' to peel" in result.stdout
+
+
 def test_repeated_bare_undo_peels_one_more_real_write_each_time(project: Path) -> None:
     """The U26 fix itself: undo·undo reverts the last two writes, no ping-pong."""
     path = write(project, TASK_FILE, FIRST)
@@ -331,7 +373,14 @@ def test_bare_undo_after_a_redo_targets_the_redone_write(project: Path) -> None:
 def test_last_with_session_is_refused(project: Path) -> None:
     result = runner.invoke(app, ["undo", "--last", "--session", SESSION])
     assert result.exit_code == 1
-    assert "either --last or --session" in result.output
+    assert "either --last/--redo or --session" in result.output
+
+
+def test_redo_with_session_is_refused(project: Path) -> None:
+    """The alias folds in before the refusal, so both spellings are covered."""
+    result = runner.invoke(app, ["undo", "--redo", "--session", SESSION])
+    assert result.exit_code == 1
+    assert "either --last/--redo or --session" in result.output
 
 
 # --- A commit that only added a file becomes a deletion ---

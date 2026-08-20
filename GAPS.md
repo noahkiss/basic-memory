@@ -7462,6 +7462,62 @@ alphabet: `task-yke6e8dz`, `finding-8xk3p2q1`. Decisions, all in `vocabulary/ids
 No migration: the ~3250 migrated records keep their `tnd-` names, links keep resolving, and mixed
 listings are expected output, not corruption.
 
+### U31 — the brief taught nothing about the tool, and open tasks rotted unseen — **FOUND + FIXED 2026-08-20**
+
+**Found 2026-08-20**, two ways. First, U25's types line was `--quiet`-gated while the session hook —
+the one consumer it was written for — runs `bm brief --quiet`, so no agent ever saw it. Second, the
+hn-app usage audit (finding in the basic-memory project): 110 records, agents using the write path
+daily — and seventeen open tasks with **zero** ever marked done, the oldest opened 2026-04-01.
+Progress was narrated as sequential findings while the task pile rotted, and nothing surfaced the
+rot where an agent looks. The user's decision: brief may spend ~1k tokens if it makes everything
+downstream cheaper — it should carry the whole toolbox, not a single line.
+
+**Fixed 2026-08-20.** Two pieces, both payload rather than hints:
+
+- **`toolbox_lines()` replaces `types_line()`** and prints on every non-`--query` brief, `--quiet`
+  included — the manual is payload; `--quiet` keeps hiding notices and affordances only. Seven
+  lines built from the glossary and `DEFAULT_VOCABULARY`, never hardcoded copies: the write verbs,
+  the read verbs, the undo pair (U33's wording), types + aliases, statuses with the `shelved` gist,
+  the doctrine line — *finished it? `bm done` — learned it? `bm new finding` — will do it?
+  `bm new task`* — and the supersession rule naming `--rel supersedes:<old-id>`.
+- **A stale-open count in the task section** (`STALE_TASK_DAYS = 60`): open tasks whose
+  `updated_at` — the timestamp writes actually move — is older than the window print one line
+  under the rows: `N open tasks untouched >60d — still real? bm mark <id> shelved parks one`.
+  A count and never rows, like the shelved pile: the line prompts a triage, `bm ls` is the triage.
+
+### U32 — the stale side of a correction showed nothing — **FOUND + FIXED 2026-08-20**
+
+**Found 2026-08-20** by the hn-app usage audit. The append-only finding discipline worked — every
+`Correction:`/`Retracted:` finding carried `derived_from` to the record it overturned — but the
+edge lives on the *new* record only. An agent landing on the old finding via search read a
+confidently wrong claim ("the mmap pragmas caused the OOM") with nothing pointing forward. `bm
+show` already rendered incoming `supersedes` edges; every other relation type was invisible from
+the target side.
+
+**Fixed 2026-08-20.** `direct_record` now returns `referenced_by`: every incoming relation except
+`supersedes` (which keeps its richer supersession rendering), read from the same eagerly-loaded
+collection — never a file rescan, so the native path stays fast. `bm show` prints them after the
+payload as quiet-dropped notices — `← derived_from by finding-0fkuaraa "Correction: …"` — titles
+cut at 60 chars, capped at `MAX_INCOMING = 5` with an honest `… and N more incoming relations`
+line for hub records. The payload stays byte-exact; only the notice block grew.
+
+### U33 — `--last` said nothing about the one case it exists for — **FOUND + FIXED 2026-08-20**
+
+**Found 2026-08-20** (user, reviewing U26): "are you saying bm undo --last still avoids undoing an
+undo? cause that could get a bit confusing" — read exactly backwards, which is the finding. The
+flag's whole purpose is the redo case, its name points at mechanism ("the literal newest commit")
+rather than intent, and the divergence from bare `bm undo` only exists at the moment nobody reads
+help: right after an undo.
+
+**Fixed 2026-08-20.** `--redo` is an alias for `--last` (one fold at the top of the verb, so every
+branch and refusal covers both spellings), and the divergence is now spelled out in the three
+places an agent actually looks: the help text (they diverge only when the newest commit is a
+restore), the static `UNDO_AFFORDANCE` (bare undo peels one write deeper · `--redo` reverts the
+newest commit, restores included), and a state-aware post-undo line derived from the walk itself —
+`note: bare 'bm undo' next peels <sha> (one write deeper) · 'bm undo --redo' puts this restore
+back`. Derived, not asserted: `latest_undoable_commit` runs again after the restore commit, so the
+line's answer is the walk's answer. The brief's toolbox (U31) teaches the same pair.
+
 ## Docs swept
 
 **2026-07-26.** A ten-reader sweep reconciled the following into this file. The gaps they contained
