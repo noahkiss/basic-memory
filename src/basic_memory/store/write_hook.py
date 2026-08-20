@@ -42,13 +42,12 @@ from basic_memory.store.history import (
 SESSION_ENV_VAR = "CLAUDE_SESSION_ID"
 
 # What a write does to prior content. Only `create` has none to lose, which is
-# the whole of W3-A's split. No `delete` yet: the local write stack has no delete
-# entry point. W3-A's table names delete alongside overwrite, so a delete verb
-# adds the literal here **and** to `_DESTRUCTIVE` — a delete that is not
-# destructive is the hole this module exists to prevent.
-type WriteOperation = Literal["create", "update", "edit"]
+# the whole of W3-A's split. `delete` (GAPS U27, `bm rm`) sits with the
+# destructive pair, exactly as W3-A's table always named it — a delete that is
+# not destructive is the hole this module exists to prevent.
+type WriteOperation = Literal["create", "update", "edit", "delete"]
 
-_DESTRUCTIVE: frozenset[str] = frozenset({"update", "edit"})
+_DESTRUCTIVE: frozenset[str] = frozenset({"update", "edit", "delete"})
 
 # D3: a project whose notes are not under the store keeps working, and says so
 # once per write rather than failing. The store is the only home for note
@@ -111,7 +110,7 @@ def check_can_record(project_path: str, target: str, operation: WriteOperation) 
     try:
         ensure_store_repo()
     except HistoryError as exc:
-        raise HistoryError(_refusal(target, exc)) from exc
+        raise HistoryError(_refusal(target, operation, exc)) from exc
 
 
 def record_note_write(
@@ -146,7 +145,7 @@ def record_note_write(
         # `check_can_record` is what normally stops this case one step earlier;
         # reaching here means the repository broke between the two calls.
         if operation in _DESTRUCTIVE:
-            raise HistoryError(_unrecorded_overwrite(note_path, exc)) from exc
+            raise HistoryError(_unrecorded_loss(note_path, operation, exc)) from exc
         return HistoryOutcome(sha=None, notices=(_create_warning(exc),))
 
     if result is None:
@@ -210,31 +209,35 @@ def record_headline_change(project_external_id: str) -> HistoryOutcome:
 # --- Messages ---
 
 
-def _refusal(target: str, error: HistoryError) -> str:
-    """Explain a refused overwrite: what was refused, why, and what to fix.
+def _refusal(target: str, operation: WriteOperation, error: HistoryError) -> str:
+    """Explain a refused destructive write: what was refused, why, and the fix.
 
     ``target`` is whatever the caller named the note by — a record id at the
     preflight, because the file path is not resolved until the mutation service
     has run. An agent can clear a stale lock when told to; it cannot act on "git
     failed" (GAPS W3-A), so the underlying error — which already names the
-    repository and the fix — is carried through verbatim.
+    repository and the fix — is carried through verbatim. The verb word follows
+    the operation, because "refused to overwrite" on a `bm rm` (GAPS U27) would
+    send the reader to the wrong verb.
     """
+    verb = "delete" if operation == "delete" else "overwrite"
     return (
-        f"Refused to overwrite '{target}': its previous content cannot be "
-        f"recorded in the note history first, so the overwrite would lose it. "
+        f"Refused to {verb} '{target}': its previous content cannot be "
+        f"recorded in the note history first, so the {verb} would lose it. "
         f"{error}"
     )
 
 
-def _unrecorded_overwrite(file_path: str, error: HistoryError) -> str:
-    """Report an overwrite that already happened and could not be recorded.
+def _unrecorded_loss(file_path: str, operation: WriteOperation, error: HistoryError) -> str:
+    """Report a destructive write that already happened and could not be recorded.
 
-    Deliberately not phrased as a refusal: the file is written by the time a
-    commit can fail, and telling the user it was refused would send them looking
-    for content that is already gone.
+    Deliberately not phrased as a refusal: the file is written (or gone) by the
+    time a commit can fail, and telling the user it was refused would send them
+    looking for content that is already lost.
     """
+    verb = "Deleted" if operation == "delete" else "Overwrote"
     return (
-        f"Overwrote '{file_path}' but could not record its previous content in "
+        f"{verb} '{file_path}' but could not record its previous content in "
         f"the note history, so that content is no longer recoverable. {error}"
     )
 

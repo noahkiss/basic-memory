@@ -33,6 +33,7 @@ if not _version_only_invocation(sys.argv[1:]):
         project,
         record_write,
         records,
+        rm,
         status,
         tool,
         types,

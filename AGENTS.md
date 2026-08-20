@@ -99,8 +99,8 @@ Consequences, all deliberate:
 
 **Naming:** `tend` is a **codename for the design, not a command.** There is no `tend` binary and no
 `bm tend` namespace — the verbs ship flat under `bm` (`bm ls`, `bm new`, `bm edit`, `bm path`,
-`bm mine`, `bm done`, `bm show`, `bm history`, `bm undo`, `bm mark`, `bm types`, `bm brief`,
-`bm headline`, `bm doctor`, `bm status`, `bm project`). **There is no `bm check`** —
+`bm mine`, `bm done`, `bm show`, `bm history`, `bm undo`, `bm mark`, `bm rm`, `bm types`,
+`bm brief`, `bm headline`, `bm doctor`, `bm status`, `bm project`). **There is no `bm check`** —
 the schema and integrity checks land inside the existing `bm doctor` (see `GAPS.md` W5), because a
 second checking command would immediately be the one nobody runs.
 
@@ -135,9 +135,9 @@ tool layer.** `basic_memory.mcp.tools` and `basic_memory.api.app` are each secon
 
 The boundary is structural now, not aspirational: `basic_memory.cli.direct` is the supported way
 for a native command to reach the service layer, and
-`tests/cli/test_native_command_import_guard.py` runs each native verb — `project list`, `types`,
-`mine`, `doctor`, `brief`, `ls`, `show`, `path`, `new`, `headline`, `edit`, `mark`, `done`,
-`undo` — in a
+`tests/cli/test_native_command_import_guard.py` runs each native verb — `project list`, `project info`,
+`types`, `mine`, `doctor`, `brief`, `ls`, `show`, `path`, `new`, `headline`, `edit`, `mark`,
+`done`, `undo`, `rm` — in a
 subprocess, cold and warm, and fails if
 `api.app`, `mcp.tools`, `mcp.async_client`, `mcp.clients`, `fastapi`, or `dateparser` ever enter
 `sys.modules`. Model new fast verbs on `fetch_project_list` in `cli/commands/project.py`.
@@ -147,8 +147,9 @@ Two rules follow from that ban list (GAPS.md T30). A native verb takes its event
 `command_utils` pulls the MCP client graph. And a command module that *is* client-routed must
 defer its `basic_memory.mcp` imports into the function that uses them, because `cli/main.py`
 imports every command module on every invocation. The *other* project subcommands (`add`,
-`remove`, `default`, `move`, `info`) still route through the in-process ASGI app and cost ~3.5 s —
-they are mutations or one-shots where correctness, not latency, is the constraint.
+`remove`, `default`, `move`) still route through the in-process ASGI app and cost ~3.5 s — they
+are mutations or one-shots where correctness, not latency, is the constraint. `project info`
+joined the fast path 2026-08-20: it is a read, and reads pay the direct-path price.
 
 Embedding model `qdrant/bge-small-en-v1.5-onnx-q` (64 MB) caches to the shared
 `$XDG_CACHE_HOME/fastembed` in this fork, not inside `BASIC_MEMORY_CONFIG_DIR` as upstream had it —

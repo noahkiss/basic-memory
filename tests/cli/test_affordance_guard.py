@@ -26,7 +26,7 @@ import typer.main
 from typer.core import TyperGroup
 
 import basic_memory.cli.commands as commands_package
-from basic_memory.cli.commands import doctor, history, mine, new, record_write, records
+from basic_memory.cli.commands import doctor, history, mine, new, record_write, records, rm
 from basic_memory.cli.main import app as registered
 from basic_memory.cli.notices import NoticeCounts, notice_lines
 
@@ -46,6 +46,7 @@ AFFORDANCE_CONSTANTS = {
     ("record_write.py", "MARK_AFFORDANCE"),
     ("records.py", "LS_AFFORDANCE"),
     ("records.py", "SHOW_AFFORDANCE"),
+    ("rm.py", "RM_AFFORDANCE"),
     ("doctor.py", "AFFORDANCES"),
 }
 
@@ -59,6 +60,7 @@ def affordance_lines() -> list[str]:
         record_write.EDIT_AFFORDANCE,
         record_write.MARK_AFFORDANCE,
         history.UNDO_AFFORDANCE,
+        rm.RM_AFFORDANCE,
         *(command for command, _ in doctor.AFFORDANCES),
         # `bm mine` builds its list around the search term, so it is rendered
         # rather than declared. The term is arbitrary; the commands are not.

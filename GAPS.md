@@ -7335,6 +7335,62 @@ reach for, and a closed vocabulary should catch the reach, not file it as a prop
   `types: task (do it) · … · aliases: decision→finding, … — bm types for detail` — because the
   session-start brief is where an agent learns the tool it is about to write with.
 
+### U26 — `bm undo` twice re-did instead of going deeper — **FOUND 2026-08-19, FIXED 2026-08-20**
+
+**Found 2026-08-19** smoke-testing U25. Three `bm undo` runs were meant to revert the last three
+writes (`new`, `new`, `done`) and netted exactly one revert: each restore is recorded as a *new*
+commit — by design, history is the thing being protected — so the next undo targeted the restore
+and re-applied what the first had reverted. Repeated undo ping-ponged between two states, and
+"peel back the last N writes", the thing an agent actually reaches for, was unreachable.
+
+```
+$ bm undo --quiet; bm undo --quiet; bm undo --quiet   # after new, new, done
+# net effect: only the `done` was reverted; both `new` writes survived
+```
+
+**Fixed 2026-08-20.** Three pieces:
+
+- **Restores are identifiable**: the restore commit carries one `Undo-Of: <sha>` trailer per
+  commit it reverted, beside the existing `Session:`/`Actor:` trailers (`_commit_message`).
+- **Bare `bm undo` pair-cancels** (`latest_undoable_commit` in `store/history.py`): walking
+  newest→oldest, a commit already in the skip-set is passed over *before* its trailers are read,
+  a restore adds what it reverted to the skip-set, and the first commit that is neither is the
+  target. Undo·undo peels two real writes; undo-of-an-undo (a redo) cancels the restore it
+  reverted, so the redone write stays the next target — the R(R(X)) case.
+- **`bm undo --last`** keeps the literal-newest behavior, which is how you redo an undo.
+  `--session` is unchanged.
+
+Accepted edge: a restore committed before this fix carries no trailer, reads as a normal commit,
+and is offered as the target — reverting it is a redo, exactly what targeting it meant before.
+Old history keeps its old semantics; new history gets the useful ones.
+
+### U27 — no verb deleted a record, so inbox triage dead-ended at "leave it" — **FOUND 2026-08-19, FIXED 2026-08-20**
+
+**Found 2026-08-19**, the same smoke-test session: a junk inbox record (`tnd-yxxa4knk`, written to
+exercise the unknown-type fallback) had no exit. An inbox record carries no status, so it cannot be
+`dropped`; there was no delete verb on any path; and `bm undo` could not reach a write several
+commits back (see U26). Triage of the very hatch `bm doctor` reports had no closing move.
+
+**Fixed 2026-08-20: `bm rm <id>…`.** The deletion runs the same mutation/materialization pair the
+API's delete endpoint runs, then commits the removal into the store history — which is what makes
+the verb safe to have: the content sits in the parent commit and `bm undo` restores it. Shape:
+
+- Native fast path (`cli/commands/rm.py`), write-chain project resolution, import-guard probe.
+- `delete` joins `WriteOperation` **and** `_DESTRUCTIVE` in `store/write_hook.py`, exactly as that
+  module's comment always demanded — preflight refusal when the history cannot record, and the
+  loss messages name the right verb ("refused to delete", not "overwrite").
+- A target with uncommitted changes is refused, naming `bm history commit --all` — the same edit
+  `bm undo` refuses to overwrite, for the same W3-B reason.
+- Several ids are processed independently: per-id error lines on stderr, the rest still deleted,
+  exit 1 if any failed.
+- Relations that pointed at a deleted record go unresolved and `bm doctor` reports them. Honest
+  and deliberate: the edge recorded a claim whose target is gone, and dropping it silently would
+  hide that.
+
+`bm project info` moved onto the direct path in the same pass (measured 3.14 s user / 224 MB on
+the client route 2026-08-19; the payload is built by `ProjectService.get_project_info`, which
+never needed the ASGI app) — see the Measured baseline note in `AGENTS.md`.
+
 ## Docs swept
 
 **2026-07-26.** A ten-reader sweep reconciled the following into this file. The gaps they contained

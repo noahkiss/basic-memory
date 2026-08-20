@@ -276,7 +276,8 @@ def test_the_undo_commit_names_the_cli_and_carries_no_session(project: Path) -> 
     assert "Session:" not in message
 
 
-def test_undoing_the_undo_puts_the_change_back(project: Path) -> None:
+def test_undo_last_redoes_what_a_bare_undo_reverted(project: Path) -> None:
+    """`--last` targets the literal newest commit — the redo path (GAPS U26)."""
     path = write(project, TASK_FILE, FIRST)
     commit([path], "create notes/tasks")
     write(project, TASK_FILE, SECOND)
@@ -285,8 +286,52 @@ def test_undoing_the_undo_puts_the_change_back(project: Path) -> None:
     assert runner.invoke(app, ["undo", "--quiet"]).exit_code == 0
     assert (project / TASK_FILE).read_text(encoding="utf-8") == FIRST
 
-    assert runner.invoke(app, ["undo", "--quiet"]).exit_code == 0
+    assert runner.invoke(app, ["undo", "--last", "--quiet"]).exit_code == 0
     assert (project / TASK_FILE).read_text(encoding="utf-8") == SECOND
+
+
+def test_repeated_bare_undo_peels_one_more_real_write_each_time(project: Path) -> None:
+    """The U26 fix itself: undo·undo reverts the last two writes, no ping-pong."""
+    path = write(project, TASK_FILE, FIRST)
+    commit([path], "create notes/tasks")
+    write(project, TASK_FILE, SECOND)
+    commit([path], "update notes/tasks")
+
+    # First undo reverts the update...
+    assert runner.invoke(app, ["undo", "--quiet"]).exit_code == 0
+    assert (project / TASK_FILE).read_text(encoding="utf-8") == FIRST
+
+    # ...and the second cancels past the restore and reverts the create,
+    # instead of re-applying the update the first one reverted.
+    assert runner.invoke(app, ["undo", "--quiet"]).exit_code == 0
+    assert not (project / TASK_FILE).exists()
+
+    # Nothing real is left: every write is undone and the restores cancel.
+    result = runner.invoke(app, ["undo", "--quiet"])
+    assert result.exit_code == 0
+    assert "nothing to undo" in result.stdout
+
+
+def test_bare_undo_after_a_redo_targets_the_redone_write(project: Path) -> None:
+    """R(R(X)) cancels: after undo then redo, bare undo reverts X again (U26)."""
+    path = write(project, TASK_FILE, FIRST)
+    commit([path], "create notes/tasks")
+    write(project, TASK_FILE, SECOND)
+    commit([path], "update notes/tasks")
+
+    assert runner.invoke(app, ["undo", "--quiet"]).exit_code == 0  # revert update
+    assert runner.invoke(app, ["undo", "--last", "--quiet"]).exit_code == 0  # redo it
+    assert (project / TASK_FILE).read_text(encoding="utf-8") == SECOND
+
+    # The redo cancelled the restore, so the update is in force and is the target.
+    assert runner.invoke(app, ["undo", "--quiet"]).exit_code == 0
+    assert (project / TASK_FILE).read_text(encoding="utf-8") == FIRST
+
+
+def test_last_with_session_is_refused(project: Path) -> None:
+    result = runner.invoke(app, ["undo", "--last", "--session", SESSION])
+    assert result.exit_code == 1
+    assert "either --last or --session" in result.output
 
 
 # --- A commit that only added a file becomes a deletion ---

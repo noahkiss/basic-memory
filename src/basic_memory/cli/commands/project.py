@@ -68,6 +68,19 @@ async def fetch_project_list() -> ProjectList:
     )
 
 
+async def fetch_project_info(name: str):
+    """Fetch one project's info via the direct service path (GAPS U-series, 2026-08-20).
+
+    `ProjectService.get_project_info` builds the whole payload from the
+    repository layer, so nothing about this read needed the in-process ASGI app
+    it used to route through — that path cost ~3.1 s user CPU and ~220 MB per
+    invocation in imports alone (measured 2026-08-19; AGENTS.md "Measured
+    baseline").
+    """
+    service = await direct_project_service()
+    return await service.get_project_info(name)
+
+
 @project_app.command("list")
 def list_projects(
     quiet: bool = typer.Option(False, "--quiet", help="Hide the status lines and next-step hints"),
@@ -466,15 +479,11 @@ def display_project_info(
     quiet: bool = typer.Option(False, "--quiet", help="Hide the status lines and next-step hints"),
 ):
     """Show the settings, the counts, and the system details for one project."""
-    # Deferred for the reason above: `project info` is the one read here that
-    # routes through the API client, and it must not tax the native verbs.
-    from basic_memory.cli.commands import command_utils
-
     try:
-        info = run_with_cleanup(command_utils.get_project_info(name))
+        info = run_with_cleanup(fetch_project_info(name))
     except typer.Exit:
         raise
-    except Exception as e:  # pragma: no cover
+    except Exception as e:
         raise fail(f"Error getting project info: {e}")
 
     statistics = info.statistics

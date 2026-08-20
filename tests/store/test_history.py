@@ -363,3 +363,80 @@ def test_paths_in_commit_reads_without_touching_the_worktree(data_dir: Path) -> 
     assert paths_in_commit(second.sha) == ("notes/one.md",)
     # The file is untouched: reading is not restoring.
     assert (store / "notes/one.md").read_text(encoding="utf-8") == "second\n"
+
+
+# --- latest_undoable_commit: the pair-cancelling walk (GAPS U26) ---
+
+
+def undo_commit(store: Path, relative: str, reverted: str) -> str:
+    """Record a restore commit the way `bm undo` does: with its Undo-Of trailer."""
+    write(store, relative, f"restored against {reverted}\n")
+    result = commit_paths(
+        [relative], f"undo {reverted}", actor="cli", session_id=None, undo_of=[reverted]
+    )
+    assert result is not None
+    return result.sha
+
+
+def real_commit(store: Path, relative: str, text: str) -> str:
+    write(store, relative, text)
+    result = commit_paths([relative], f"create {relative}", actor="test", session_id=None)
+    assert result is not None
+    return result.sha
+
+
+def test_undo_of_trailer_lands_on_the_restore_commit(data_dir: Path) -> None:
+    store = ensure_store_repo()
+    first = real_commit(store, "a.md", "one\n")
+    undo_commit(store, "a.md", first)
+
+    body = git(store, "log", "-1", "--format=%B")
+    assert f"Undo-Of: {first}" in body
+
+
+def test_latest_undoable_commit_on_an_empty_store_is_none(data_dir: Path) -> None:
+    ensure_store_repo()
+    assert history.latest_undoable_commit() is None
+
+
+def test_latest_undoable_commit_skips_a_restore_and_what_it_reverted(data_dir: Path) -> None:
+    """Undo then undo peels two real writes instead of ping-ponging (GAPS U26)."""
+    store = ensure_store_repo()
+    first = real_commit(store, "a.md", "one\n")
+    second = real_commit(store, "b.md", "two\n")
+    undo_commit(store, "b.md", second)
+
+    # The restore and the commit it reverted cancel; the next real write is first.
+    assert history.latest_undoable_commit() == first
+
+
+def test_latest_undoable_commit_survives_a_redo(data_dir: Path) -> None:
+    """R(R(X)) cancels: a redone write is the next target again (GAPS U26)."""
+    store = ensure_store_repo()
+    target = real_commit(store, "a.md", "one\n")
+    restore = undo_commit(store, "a.md", target)
+    # The redo is an undo of the restore, which is what --last records.
+    undo_commit(store, "a.md", restore)
+
+    # The redo cancelled the restore before its trailer was read, so the
+    # original write is in force and is what a bare undo should revert.
+    assert history.latest_undoable_commit() == target
+
+
+def test_latest_undoable_commit_treats_a_legacy_restore_as_a_real_commit(data_dir: Path) -> None:
+    """A pre-U26 restore has no trailer, so targeting it (a redo) is preserved."""
+    store = ensure_store_repo()
+    real_commit(store, "a.md", "one\n")
+    # The old shape: an undo-styled subject with no Undo-Of trailer.
+    legacy = real_commit(store, "a.md", "restored by an old bm\n")
+
+    assert history.latest_undoable_commit() == legacy
+
+
+def test_latest_undoable_commit_with_everything_cancelled_is_none(data_dir: Path) -> None:
+    """A store whose one write was undone has no next real write to peel."""
+    store = ensure_store_repo()
+    only = real_commit(store, "a.md", "one\n")
+    undo_commit(store, "a.md", only)
+
+    assert history.latest_undoable_commit() is None

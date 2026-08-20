@@ -176,6 +176,7 @@ def test_the_verbs_the_notice_covers_are_the_ones_w5_named() -> None:
         ("record_write.py", "done"),
         ("records.py", "ls"),
         ("records.py", "show"),
+        ("rm.py", "rm"),
         ("status.py", "status"),
         ("types.py", "types"),
     }

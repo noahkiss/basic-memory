@@ -241,6 +241,46 @@ class LocalNoteWriteStack:
             raise LocalNoteWriteError(note_write_error_message(error)) from error
         return await self._materialize_and_follow_up(bundle, accepted, operation, source)
 
+    async def delete_note(
+        self,
+        *,
+        project_external_id: str,
+        entity_external_id: str,
+        note_path: str,
+    ) -> HistoryOutcome:
+        """Delete one note: remove its rows, remove its file, record the deletion.
+
+        The same mutation/materialization pair the v2 router's delete endpoint
+        calls, so the index ends in the same state an API delete leaves it in.
+        ``note_path`` is the record's project-relative file path, resolved by the
+        caller before the rows disappear — after the mutation there is nothing
+        left to ask. The deletion commit is what makes `bm rm` recoverable
+        (GAPS U27): the content is in the parent commit, and `bm undo` restores
+        it.
+        """
+        bundle = await self._project_bundle(project_external_id)
+        # Preflight, same as update/edit: a delete whose history cannot record it
+        # would be an unrecoverable loss, which is W3-A's refusal case.
+        _refuse_unrecordable(bundle.project.path, note_path, "delete")
+        try:
+            accepted = await bundle.mutation_service.delete_note(
+                project_external_id=project_external_id,
+                entity_external_id=entity_external_id,
+            )
+        except NoteContentMutationServiceError as error:
+            raise LocalNoteWriteError(note_write_error_message(error)) from error
+        await bundle.materializer.materialize_delete_change(accepted)
+
+        try:
+            return record_note_write(
+                project_path=bundle.project.path,
+                note_path=note_path,
+                operation="delete",
+                actor=CLI_NOTE_WRITE_SOURCE,
+            )
+        except HistoryError as error:
+            raise LocalNoteWriteError(str(error)) from error
+
     async def _materialize_and_follow_up(
         self,
         bundle: _ProjectWriteBundle,

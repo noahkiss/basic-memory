@@ -113,6 +113,7 @@ def commit_paths(
     *,
     actor: str | None,
     session_id: str | None,
+    undo_of: Sequence[str] | None = None,
 ) -> CommitResult | None:
     """Commit exactly ``paths`` (store-relative) and report what else is dirty.
 
@@ -140,7 +141,9 @@ def commit_paths(
         _require(staged, store, "inspect staged changes in the note store")
 
     _require(
-        _git_retrying_lock(store, "commit", "-m", _commit_message(message, actor, session_id)),
+        _git_retrying_lock(
+            store, "commit", "-m", _commit_message(message, actor, session_id, undo_of)
+        ),
         store,
         "commit to the note store",
     )
@@ -215,6 +218,49 @@ def latest_commit() -> str | None:
         return None
     _require(result, store, "read the newest commit from the note store")
     return result.stdout.strip()
+
+
+def latest_undoable_commit() -> str | None:
+    """The newest commit `bm undo` should revert, cancelling undo pairs (GAPS U26).
+
+    Each restore is itself a new commit, so "revert the newest commit" made a
+    second undo revert the first — three undos netted one revert. The walk here
+    reads the ``Undo-Of:`` trailers restores carry and cancels pairs: a restore
+    is skipped and the commits it reverted are skipped with it, so each bare
+    `bm undo` peels one more *real* write. An undone-then-redone write stays
+    reachable, because the redo (an undo of an undo) cancels the restore it
+    reverted before that restore's own trailer is read.
+
+    A restore recorded before the trailer existed looks like a normal commit and
+    is returned as the target — reverting it is a redo, which is exactly what
+    targeting it used to mean. Accepted edge, noted in GAPS U26.
+    """
+    if latest_commit() is None:
+        return None
+
+    store = store_path()
+    # One log call for the whole walk: sha, space, then the commit's Undo-Of
+    # values space-separated (shas contain no spaces). No trailer renders as
+    # an empty field list.
+    result = _git(store, "log", "--format=%H %(trailers:key=Undo-Of,valueonly,separator=%x20)")
+    _require(result, store, "read the undo trailers from the note store")
+
+    skip: set[str] = set()
+    for line in result.stdout.splitlines():
+        fields = line.split()
+        if not fields:
+            continue
+        sha, undone = fields[0], fields[1:]
+        # Order matters: a restore that was itself reverted is dead history —
+        # harvesting its trailer would wrongly skip the write it once reverted,
+        # which the later redo put back in force.
+        if sha in skip:
+            continue
+        if undone:
+            skip.update(undone)
+            continue
+        return sha
+    return None
 
 
 def commits_for_session(session_id: str) -> tuple[str, ...]:
@@ -377,17 +423,25 @@ def _stale_lock(lock: Path) -> bool:
     return age > _STALE_LOCK_SECONDS
 
 
-def _commit_message(message: str, actor: str | None, session_id: str | None) -> str:
+def _commit_message(
+    message: str,
+    actor: str | None,
+    session_id: str | None,
+    undo_of: Sequence[str] | None = None,
+) -> str:
     """Build the commit message: subject, blank line, then known trailers.
 
-    The trailers are what `undo --session` reads, so each is written only when
-    the tool actually knows the value.
+    The trailers are what `undo --session` and the pair-cancelling walk read
+    (GAPS U26), so each is written only when the tool actually knows the value.
+    One `Undo-Of:` line per reverted commit, because a session undo reverts
+    several at once and each has to cancel individually.
     """
     trailers = [
         line
         for line in (
             f"Session: {session_id}" if session_id else None,
             f"Actor: {actor}" if actor else None,
+            *(f"Undo-Of: {sha}" for sha in undo_of or ()),
         )
         if line is not None
     ]

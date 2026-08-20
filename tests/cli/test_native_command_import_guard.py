@@ -111,6 +111,20 @@ PROBE_SOURCE = (
         connection.close()
         command = [*command, default_name]
 
+    if command[:2] == ["project", "info"]:
+        # Same resolution `project mark` uses: the registry name comes from this
+        # probe's temp environment, so it cannot be baked into the parametrization.
+        import sqlite3
+
+        from basic_memory.config_models import DATABASE_NAME, resolve_data_dir
+
+        connection = sqlite3.connect(resolve_data_dir() / DATABASE_NAME)
+        default_name = connection.execute(
+            "SELECT name FROM project WHERE is_default = 1"
+        ).fetchone()[0]
+        connection.close()
+        command = [*command, default_name]
+
     if command[0] == "types":
         # `bm types` renders nothing but the ungoverned line until a vocabulary
         # file exists, so give it one — the guard has to cover the full render.
@@ -184,7 +198,7 @@ PROBE_SOURCE = (
 
         asyncio.run(seed_one_record())
 
-    if command[0] in ("new", "edit", "done", "mark", "undo"):
+    if command[0] in ("new", "edit", "done", "mark", "undo", "rm"):
         # A write is recorded in the store's git history only when the project's
         # files sit in the store's worktree (VERBS_PLAN D3), and the bootstrap
         # project points at BASIC_MEMORY_HOME, which does not. Move it to the
@@ -213,7 +227,7 @@ PROBE_SOURCE = (
 
         asyncio.run(move_project_into_the_store())
 
-    if command[0] in ("edit", "done", "mark", "undo"):
+    if command[0] in ("edit", "done", "mark", "undo", "rm"):
         # `bm new` is the only way to produce what these three change and what
         # undo reverses, and it is itself a native verb — so seeding through it
         # adds no import the probe would not otherwise measure.
@@ -248,6 +262,10 @@ PROBE_SOURCE = (
         # The count line closes every record listing, so its presence proves the
         # command rendered a payload rather than exiting early on a swallowed error.
         assert result.stdout.strip().splitlines()[-1].endswith(tail), result.stdout
+    elif command[:2] == ["project", "info"]:
+        # `project info` ends on a timestamp, which no stable tail can match, so
+        # the render proof is the section header the payload opens with.
+        assert result.stdout.strip().splitlines()[0] == "Project", result.stdout
     else:
         # `bm brief` is the one verb whose payload is not a count line: it states
         # an empty result and nothing else here (GAPS U7). It runs without
@@ -290,6 +308,8 @@ NATIVE_COMMANDS = (
     (["mark", SEEDED, "doing", "--quiet"], "1 record"),
     (["done", SEEDED, "--quiet"], "1 record"),
     (["undo", "--quiet"], " files restored"),
+    (["rm", SEEDED, "--quiet"], "1 deleted"),
+    (["project", "info", "--quiet"], ""),
 )
 
 
@@ -342,6 +362,8 @@ def _probe(tmp_path, banned, command=("project", "list"), tail=" projects"):
         "mark",
         "done",
         "undo",
+        "rm",
+        "project-info",
     ],
 )
 def test_native_command_stays_off_api_and_mcp(tmp_path, command, tail):

@@ -35,6 +35,7 @@ from basic_memory.store.history import (
     commits_for_session,
     dirty_paths,
     latest_commit,
+    latest_undoable_commit,
     paths_in_commit,
     restore_from_commit,
     sweep_commit,
@@ -235,6 +236,13 @@ def undo(
         Optional[str],
         typer.Option("--session", help="Undo every commit this session id recorded."),
     ] = None,
+    last: Annotated[
+        bool,
+        typer.Option(
+            "--last",
+            help="Revert the literal newest commit, a restore included — this is how you redo.",
+        ),
+    ] = False,
     yes: Annotated[
         bool,
         typer.Option("--yes", help="Confirm undoing more than one commit."),
@@ -244,19 +252,27 @@ def undo(
         typer.Option("--quiet", help="Hide the notices and the next-step hints."),
     ] = False,
 ) -> None:
-    """Put the note store back to the content it held before its last change.
+    """Put the note store back one more real change, each time it runs.
 
-    Restores every path the newest commit touched to the version its parent held
+    Restores every path the target commit touched to the version its parent held
     — a file that commit created is removed — then records the restore as a
     **new** commit and reindexes what changed. It never resets: the history is
     the thing being protected, so undoing a change adds to it.
+
+    Bare `bm undo` peels one more real write each run: restores and the commits
+    they reverted cancel out of the walk (GAPS U26), so running it twice undoes
+    the last *two* writes rather than redoing the first. `--last` reverts the
+    literal newest commit, a restore included — that is how you redo an undo.
 
     `--session <id>` does the same for every commit carrying that session's
     trailer, newest first, so the store ends on the content it held before the
     session began.
     """
+    if last and session is not None:
+        raise fail("Error: pass either --last or --session, not both.")
+
     try:
-        targets = _target_commits(session)
+        targets = _target_commits(session, last)
     except HistoryError as exc:
         raise fail(f"Error: {exc}")
 
@@ -307,6 +323,9 @@ def undo(
             # set that `bm undo --session <same id>` walks, and a second run
             # would then undo the undo.
             session_id=None,
+            # The Undo-Of trailers are what let the next bare undo cancel this
+            # restore against what it reverted and reach one write deeper (U26).
+            undo_of=targets,
         )
     except HistoryError as exc:
         raise fail(f"Error: {exc}")
@@ -327,11 +346,16 @@ def undo(
         typer.echo(UNDO_AFFORDANCE)
 
 
-def _target_commits(session: str | None) -> tuple[str, ...]:
-    """The commits this invocation undoes, newest first."""
+def _target_commits(session: str | None, last: bool) -> tuple[str, ...]:
+    """The commits this invocation undoes, newest first.
+
+    Bare undo asks the pair-cancelling walk for the newest *real* write; `--last`
+    asks for the literal newest commit, restores included, which is the redo path
+    (GAPS U26).
+    """
     if session is not None:
         return commits_for_session(session)
-    newest = latest_commit()
+    newest = latest_commit() if last else latest_undoable_commit()
     return () if newest is None else (newest,)
 
 
