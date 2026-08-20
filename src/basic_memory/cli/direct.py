@@ -415,6 +415,26 @@ class RecordListing:
 
 
 @dataclass(frozen=True, slots=True)
+class BoardRow:
+    """One task line of the bare-`bm` board (GAPS U37)."""
+
+    record_id: str
+    status: str
+    title: str
+
+
+@dataclass(frozen=True, slots=True)
+class BoardData:
+    """What the board prints for one project: live tasks and the two counts."""
+
+    project: str
+    external_id: str
+    rows: list[BoardRow]
+    shelved: int
+    inbox: int
+
+
+@dataclass(frozen=True, slots=True)
 class Supersession:
     """A successor record that supersedes the one being shown."""
 
@@ -524,6 +544,70 @@ async def direct_record_listing(
             for row in kept
         ],
         truncated=truncated,
+    )
+
+
+async def direct_board(project_name: str) -> BoardData:
+    """Gather what bare `bm` prints: live tasks plus the parked and inbox counts.
+
+    The board is always pinned — a "what's open here" view has no meaning as an
+    all-projects roll-up, so the caller resolves the project before asking
+    (GAPS U37). Live means neither terminal nor parked, and a task with no
+    status counts as open for the same reason `bm brief` counts it: hiding open
+    work over a schema fault the notice already reports would be a second,
+    silent penalty.
+    """
+    # Deferred: the service layer pulls SQLAlchemy, which must not load at CLI
+    # import time — only when a command actually runs (#886).
+    from sqlalchemy import case, func, or_, select
+
+    from basic_memory import db
+    from basic_memory.config import ConfigManager
+    from basic_memory.models.knowledge import Entity
+    from basic_memory.services.initialization import ensure_project_registry
+    from basic_memory.vocabulary.model import PARKED_STATUSES, inactive_statuses
+
+    config = ConfigManager().config
+    _, session_maker = await db.get_or_create_db(config.database_path, config=config)
+    await ensure_project_registry(config, bootstrap=False)
+
+    async with db.scoped_session(session_maker) as session:
+        (project,) = await _projects_in_scope(session, project_name)
+
+        status = Entity.entity_metadata["status"].as_string()
+        is_live = or_(status.is_(None), status.not_in(sorted(inactive_statuses())))
+
+        # Working order, not alphabetical: what is in motion, then what is
+        # stuck, then what is waiting — recency breaking ties within each.
+        rank = case((status == "doing", 0), (status == "blocked", 1), else_=2)
+        found = await session.execute(
+            select(Entity.permalink, status, Entity.title)
+            .where(Entity.project_id == project.id, Entity.note_type == "task", is_live)
+            .order_by(rank, Entity.updated_at.desc())
+        )
+        rows = [
+            BoardRow(record_id=permalink, status=row_status or "open", title=title)
+            for permalink, row_status, title in found
+        ]
+
+        async def count(*conditions) -> int:
+            return (
+                await session.scalar(
+                    select(func.count())
+                    .select_from(Entity)
+                    .where(Entity.project_id == project.id, *conditions)
+                )
+            ) or 0
+
+        shelved = await count(Entity.note_type == "task", status.in_(sorted(PARKED_STATUSES)))
+        inbox = await count(Entity.note_type == "inbox")
+
+    return BoardData(
+        project=project.name,
+        external_id=project.external_id,
+        rows=rows,
+        shelved=shelved,
+        inbox=inbox,
     )
 
 

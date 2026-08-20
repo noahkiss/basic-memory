@@ -100,7 +100,8 @@ Consequences, all deliberate:
 **Naming:** `tend` is a **codename for the design, not a command.** There is no `tend` binary and no
 `bm tend` namespace — the verbs ship flat under `bm` (`bm ls`, `bm new`, `bm edit`, `bm path`,
 `bm mine`, `bm done`, `bm show`, `bm history`, `bm undo`, `bm mark`, `bm rm`, `bm types`,
-`bm brief`, `bm headline`, `bm bug`, `bm doctor`, `bm status`, `bm project`). **There is no `bm check`** —
+`bm brief`, `bm headline`, `bm bug`, `bm doctor`, `bm status`, `bm project`; bare `bm` renders the
+project board — GAPS U37). **There is no `bm check`** —
 the schema and integrity checks land inside the existing `bm doctor` (see `GAPS.md` W5), because a
 second checking command would immediately be the one nobody runs.
 

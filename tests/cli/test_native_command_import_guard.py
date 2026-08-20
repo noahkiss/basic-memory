@@ -71,6 +71,9 @@ PROBE_SOURCE = (
     banned = json.loads(sys.argv[1])
     command = json.loads(sys.argv[2])
     tail = sys.argv[3]
+    # Bare `bm` probes as the empty command (GAPS U37); `first` keeps the
+    # seeding branches below index-safe for it.
+    first = command[0] if command else ""
 
     runner = CliRunner()
 
@@ -94,6 +97,27 @@ PROBE_SOURCE = (
             await _db.shutdown_db()
 
     _asyncio.run(_bootstrap_registry())
+
+    if command == []:
+        # Bare `bm` renders the board only for a marked directory (GAPS U37),
+        # so write the marker the session hook would have left. The name comes
+        # from this probe's temp registry, like the `project mark` branch below.
+        # In a subdirectory, not the probe cwd: the cwd doubles as $HOME here,
+        # and the marker walk never reads $HOME itself (GAPS U29).
+        import os
+        import sqlite3
+        from pathlib import Path
+
+        from basic_memory.config_models import DATABASE_NAME, resolve_data_dir
+
+        connection = sqlite3.connect(resolve_data_dir() / DATABASE_NAME)
+        default_name = connection.execute(
+            "SELECT name FROM project WHERE is_default = 1"
+        ).fetchone()[0]
+        connection.close()
+        Path("repo").mkdir(exist_ok=True)
+        Path("repo/.bm.yml").write_text(f"project: {default_name}\\n", encoding="utf-8")
+        os.chdir("repo")
 
     if command[:2] == ["project", "mark"]:
         # `mark` writes a marker for a *registered* project, and the bootstrap
@@ -125,7 +149,7 @@ PROBE_SOURCE = (
         connection.close()
         command = [*command, default_name]
 
-    if command[0] == "types":
+    if first == "types":
         # `bm types` renders nothing but the ungoverned line until a vocabulary
         # file exists, so give it one — the guard has to cover the full render.
         import sqlite3
@@ -143,7 +167,7 @@ PROBE_SOURCE = (
         directory.mkdir(parents=True, exist_ok=True)
         (directory / "vocabulary.yml").write_text("types: [task, guide]\\n")
 
-    if command[0] in ("ls", "show", "path"):
+    if first in ("ls", "show", "path"):
         # The record verbs need a record: `show` and `path` exit 1 without one,
         # so an unseeded probe would prove nothing about their import path. The
         # row is written through the same repository the verbs read, because a
@@ -198,7 +222,7 @@ PROBE_SOURCE = (
 
         asyncio.run(seed_one_record())
 
-    if command[0] in ("new", "edit", "done", "mark", "undo", "rm"):
+    if first in ("new", "edit", "done", "mark", "undo", "rm"):
         # A write is recorded in the store's git history only when the project's
         # files sit in the store's worktree (VERBS_PLAN D3), and the bootstrap
         # project points at BASIC_MEMORY_HOME, which does not. Move it to the
@@ -227,11 +251,11 @@ PROBE_SOURCE = (
 
         asyncio.run(move_project_into_the_store())
 
-    if command[0] in ("edit", "done", "mark", "undo", "rm"):
+    if first in ("edit", "done", "mark", "undo", "rm"):
         # `bm new` is the only way to produce what these three change and what
         # undo reverses, and it is itself a native verb — so seeding through it
         # adds no import the probe would not otherwise measure.
-        seed_type = "guide" if command[0] == "edit" else "task"
+        seed_type = "guide" if first == "edit" else "task"
         created = runner.invoke(
             app, ["new", seed_type, "Seeded record", "--body", "seeded", "--quiet"]
         )
@@ -243,7 +267,7 @@ PROBE_SOURCE = (
         assert record_id.startswith(f"{seed_type}-"), created.stdout
         command = [record_id if part == SEEDED else part for part in command]
 
-    if command[0] == "mine":
+    if first == "mine":
         # `bm mine` reads transcripts off disk and nothing else, so the guard
         # needs one to read. The path is built here rather than baked into the
         # parametrization because it has to sit under this probe's temp HOME.
@@ -312,6 +336,9 @@ NATIVE_COMMANDS = (
     (["rm", SEEDED, "--quiet"], "1 deleted"),
     (["project", "info", "--quiet"], ""),
     (["bug", "guard probe report", "--quiet"], ".md"),
+    # Bare `bm` — the board (GAPS U37). Runs without --quiet so the notice path
+    # stays inside the import measurement; the affordance line closes it.
+    ([], "the fuller picture"),
 )
 
 
@@ -367,6 +394,7 @@ def _probe(tmp_path, banned, command=("project", "list"), tail=" projects"):
         "rm",
         "project-info",
         "bug",
+        "board",
     ],
 )
 def test_native_command_stays_off_api_and_mcp(tmp_path, command, tail):

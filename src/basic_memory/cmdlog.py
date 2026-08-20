@@ -63,7 +63,9 @@ def command_path(argv: list[str]) -> str:
     """
     positionals = [token for token in argv if token and not token.startswith("-")]
     if not positionals:
-        return "(none)"
+        # A truly bare `bm` runs the board (GAPS U37); flags-only invocations
+        # (`bm --version`) stay unnamed rather than being mislabelled.
+        return "board" if not argv else "(none)"
     if positionals[0] in _GROUPS and len(positionals) > 1:
         return f"{positionals[0]} {positionals[1]}"
     return positionals[0]

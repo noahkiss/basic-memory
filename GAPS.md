@@ -7592,6 +7592,32 @@ The capture write goes through a narrow, fill-empty-only sqlite UPDATE in `proje
 — a documented exception to that module's read-only rule, taken so the native marker verb stays
 off the SQLAlchemy import it avoids by design.
 
+### U37 — bare `bm` was a usage error, so "what is open here?" had no cheap spelling — **FOUND + FIXED 2026-08-20**
+
+**Found 2026-08-20** (user): running `bm` in-harness (`! bm` in Claude Code) should print the
+project at a glance for the human *and* the agent reading the same context — instead it printed
+Typer usage help. The equivalent question cost a flagged `bm ls -t task -s open` that misses
+doing/blocked, or a `bm brief` nobody runs mid-session. (`bm list` stays a did-you-mean for `ls`
+rather than gaining an alias; the usage log will say if it earns one.)
+
+**Fixed 2026-08-20.** Bare `bm` renders the **board**: header (`board: <project> · headline: …`),
+every live task — `doing`, then `blocked`, then `open`, recency within each; a missing status
+counts as open for brief's reason — and a closing `N open items · shelved N · inbox N` summary.
+Three shape decisions:
+
+- **Always pinned.** No marker and no `--project` prints the session hook's own one-line opt-in,
+  exit 0 — an unmarked directory is a fact, not an error, and two spellings of "not tracked"
+  would teach the surface unreliably.
+- **Not the brief.** No toolbox, no sections, no cap: brief orients a session start; the board
+  answers one question mid-session.
+- **A real (hidden) command.** `bm board` exists so the notice, affordance, and import guards see
+  the verb the way they see every other one; the app callback (`invoke_without_command=True`)
+  routes bare `bm` to the same function. cmdlog logs a truly-bare invocation as `board`;
+  flags-only invocations (`bm --version`) stay `(none)`.
+
+The import-guard probe runs the empty command from a marked subdirectory of its temp `$HOME`,
+because the marker walk never reads `$HOME` itself (U29) — the probe's cwd doubles as `$HOME`.
+
 ## Docs swept
 
 **2026-07-26.** A ten-reader sweep reconciled the following into this file. The gaps they contained

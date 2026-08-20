@@ -164,6 +164,7 @@ def test_the_verbs_the_notice_covers_are_the_ones_w5_named() -> None:
     covered = every_command(COMMANDS_DIR) - set(EXEMPT)
 
     assert covered == {
+        ("board.py", "board"),
         ("brief.py", "brief"),
         ("doctor.py", "doctor"),
         ("headline.py", "headline"),

@@ -26,7 +26,16 @@ import typer.main
 from typer.core import TyperGroup
 
 import basic_memory.cli.commands as commands_package
-from basic_memory.cli.commands import doctor, history, mine, new, record_write, records, rm
+from basic_memory.cli.commands import (
+    board,
+    doctor,
+    history,
+    mine,
+    new,
+    record_write,
+    records,
+    rm,
+)
 from basic_memory.cli.main import app as registered
 from basic_memory.cli.notices import NoticeCounts, notice_lines
 
@@ -40,6 +49,7 @@ INVOCATION = re.compile(r"\bbm ([a-z][a-z-]*)(?:\s+([a-z][a-z-]*))?")
 # Every static affordance block in the tree, by the name the module gives it.
 # Compared against a source scan below, so this list cannot fall behind.
 AFFORDANCE_CONSTANTS = {
+    ("board.py", "BOARD_AFFORDANCE"),
     ("history.py", "UNDO_AFFORDANCE"),
     ("new.py", "NEW_AFFORDANCE"),
     ("record_write.py", "EDIT_AFFORDANCE"),
@@ -59,6 +69,7 @@ def affordance_lines() -> list[str]:
         records.SHOW_AFFORDANCE,
         record_write.EDIT_AFFORDANCE,
         record_write.MARK_AFFORDANCE,
+        board.BOARD_AFFORDANCE,
         history.UNDO_AFFORDANCE,
         rm.RM_AFFORDANCE,
         *(command for command, _ in doctor.AFFORDANCES),

@@ -25,7 +25,9 @@ def version_callback(value: bool) -> None:
         raise typer.Exit()
 
 
-app = typer.Typer(name="basic-memory")
+# invoke_without_command: bare `bm` is a verb, not a usage error — the callback
+# renders the project board when no subcommand was named (GAPS U37).
+app = typer.Typer(name="basic-memory", invoke_without_command=True)
 
 
 @app.callback()
@@ -87,6 +89,10 @@ def app_callback(
     # database and calls ensure_project_registry.
     # ('brief' returns above, before this point.)
     skip_init_commands = {
+        # 'board' builds on the record-read direct path, whose own bootstrap
+        # calls ensure_project_registry — same shape as 'ls' (bare `bm` reaches
+        # it through the callback below and skips this gate by being None).
+        "board",
         "doctor",
         "done",
         "edit",
@@ -123,6 +129,14 @@ def app_callback(
         from basic_memory.services.initialization import ensure_initialization
 
         ensure_initialization(container.config)
+
+    # Bare `bm`: render the project board (GAPS U37). Routed to the same verb
+    # `bm board` names, called directly with explicit arguments — the decorated
+    # function's Typer defaults are OptionInfo objects, not values.
+    if ctx.invoked_subcommand is None:
+        from basic_memory.cli.commands.board import board
+
+        board(project=None, quiet=False)
 
 
 ## import
