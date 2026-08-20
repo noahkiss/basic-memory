@@ -169,7 +169,7 @@ def write_project_name(explicit: Optional[str]) -> str:
 def record_directory(note_type: str) -> str:
     """The directory records of ``note_type`` live in.
 
-    The closed six get their plural directory from `vocabulary/ids.py`. A type a
+    The closed seven get their plural directory from `vocabulary/ids.py`. A type a
     human added to a project's `vocabulary.yml` has no entry there and gets a
     directory under its own name: a declared type is legal to write (GAPS W4), so
     refusing it a home would make the extension mechanism unusable, and inventing

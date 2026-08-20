@@ -33,7 +33,7 @@ from basic_memory.vocabulary.ids import (
 
 def test_a_closed_type_passes_through_as_its_own_prefix() -> None:
     """The whole point of U30: the prefix is the type word, unabbreviated."""
-    for name in ("task", "guide", "finding", "profile", "state", "inbox", "note"):
+    for name in ("task", "plan", "guide", "finding", "profile", "state", "inbox", "note"):
         assert type_prefix(name) == name
 
 
@@ -213,11 +213,11 @@ def test_a_long_title_truncates_without_a_trailing_hyphen() -> None:
 def test_type_dir_maps_every_closed_type_to_its_plural_directory() -> None:
     """D2's mapping. `inbox` is a place, not a count, so it keeps its name."""
     assert [
-        type_dir(name) for name in ("task", "guide", "finding", "profile", "state", "inbox")
-    ] == ["tasks", "guides", "findings", "profiles", "states", "inbox"]
+        type_dir(name) for name in ("task", "plan", "guide", "finding", "profile", "state", "inbox")
+    ] == ["tasks", "plans", "guides", "findings", "profiles", "states", "inbox"]
 
 
-def test_type_dir_refuses_a_type_outside_the_closed_six() -> None:
+def test_type_dir_refuses_a_type_outside_the_closed_seven() -> None:
     """An unknown type files as `inbox` with a proposed-type — `bm new`'s call, said out loud."""
     with pytest.raises(ValueError, match="unknown record type 'runbook'"):
         type_dir("runbook")

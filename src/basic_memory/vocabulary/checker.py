@@ -49,12 +49,15 @@ class Violation:
 # A human-added type is absent here and gets the common rules only.
 _TYPE_DATE_FIELD: Mapping[str, str] = {
     "task": "opened",
+    "plan": "opened",
     "finding": "event-date",
     "profile": "since",
 }
 
 _TYPE_ONLY_FIELDS: Mapping[str, frozenset[str]] = {
-    "status": frozenset({"task"}),
+    # A plan shares the task's lifecycle, so it shares the status field; it does
+    # not share `not-before` — a plan is followed or shelved, never snoozed.
+    "status": frozenset({"task", "plan"}),
     "not-before": frozenset({"task"}),
     "review-by": frozenset({"finding", "guide"}),
     # An inbox record is unfiled by definition, so it is the only type that can
@@ -219,9 +222,9 @@ def check_frontmatter(
                 )
             )
 
-    # --- 4. Status, on a task only ---
-    if record_type == "task":
-        violations.extend(_check_status(metadata, vocabulary))
+    # --- 4. Status, on the lifecycle types only ---
+    if record_type in ("task", "plan"):
+        violations.extend(_check_status(metadata, vocabulary, record_type))
 
     # --- 5. Fields that belong to another type ---
     violations.extend(_check_type_only_fields(metadata, record_type, date_field))
@@ -344,13 +347,18 @@ def _unknown_type(record_type: Any, vocabulary: Vocabulary) -> Violation:
     )
 
 
-def _check_status(metadata: Mapping[str, Any], vocabulary: Vocabulary) -> list[Violation]:
+def _check_status(
+    metadata: Mapping[str, Any], vocabulary: Vocabulary, record_type: str
+) -> list[Violation]:
     if not _present(metadata, "status"):
         return [
             Violation(
                 rule="missing-status",
                 field="status",
-                message=f"A task needs a status. Allowed values: {_listed(vocabulary.statuses)}.",
+                message=(
+                    f"A {record_type} needs a status. "
+                    f"Allowed values: {_listed(vocabulary.statuses)}."
+                ),
                 severity="error",
             )
         ]

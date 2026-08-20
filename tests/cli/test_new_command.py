@@ -248,6 +248,7 @@ def written_frontmatter(path: Path) -> dict[str, Any]:
     ("note_type", "directory"),
     [
         ("task", "tasks"),
+        ("plan", "plans"),
         ("guide", "guides"),
         ("finding", "findings"),
         ("profile", "profiles"),
@@ -371,6 +372,25 @@ def test_new_writes_a_stated_event_date_and_its_source() -> None:
     assert metadata["date-confidence"] == "exact"
 
 
+def test_new_plan_carries_a_status_and_a_plan_id(  # GAPS U38
+) -> None:
+    """A plan opens the way a task does: status `open`, `opened` stamped, plan- id."""
+    project = seed_project(GOVERNED)
+
+    result = runner.invoke(
+        app,
+        ["new", "plan", "Uplevel The App", "--body", "1. [[task-x]]", "-p", GOVERNED, "--quiet"],
+    )
+
+    assert result.exit_code == 0, result.output
+    record_id = result.stdout.split()[0]
+    assert record_id.startswith("plan-")
+    on_disk = next((project.path / "plans").glob(f"{record_id}--*.md"))
+    text = on_disk.read_text(encoding="utf-8")
+    assert "status: open" in text
+    assert "opened:" in text
+
+
 def test_new_writes_a_stated_opened_date_on_a_task() -> None:
     """`--opened` is the task's own date field, and it takes the same provenance."""
     project = seed_project(GOVERNED)
@@ -480,7 +500,7 @@ def test_new_refuses_a_date_flag_the_type_does_not_carry() -> None:
     )
 
     assert result.exit_code == 1
-    assert "--opened writes 'opened', which only a task carries" in result.stderr
+    assert "--opened writes 'opened', which only a plan or task carries" in result.stderr
     assert "this record is a finding" in result.stderr
     assert result.stdout.strip() == ""
     assert list((project.path / "findings").glob("*.md")) == []
@@ -834,7 +854,7 @@ def test_new_files_an_unknown_type_as_inbox_and_says_so() -> None:
     # The notice names the declared set inline (GAPS U25): the writer learns
     # what would have landed as itself without running a second command.
     assert "no type 'runbook' — filed as inbox proposing it" in result.stdout
-    assert "types: task, guide, finding, profile, state, note" in result.stdout
+    assert "types: task, plan, guide, finding, profile, state, note" in result.stdout
     assert "bm types for detail" in result.stdout
     assert f"inbox/{metadata['id']}--restart-the-thing.md" in result.stdout
 
@@ -897,7 +917,7 @@ def test_new_rejects_a_relation_type_the_project_does_not_declare() -> None:
 
     assert refused.exit_code == 1
     assert "'caused_by' is not a relation type project 'governed' declares" in refused.stderr
-    assert "relates_to, derived_from, supersedes" in refused.stderr
+    assert "relates_to, derived_from, part_of, supersedes" in refused.stderr
     assert refused.stdout.strip() == ""
 
     allowed = runner.invoke(

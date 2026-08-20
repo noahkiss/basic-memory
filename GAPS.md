@@ -7618,6 +7618,41 @@ Three shape decisions:
 The import-guard probe runs the empty command from a marked subdirectory of its temp `$HOME`,
 because the marker walk never reads `$HOME` itself (U29) — the probe's cwd doubles as `$HOME`.
 
+### U38 — a multi-stage effort had no home, so plans lived in PLAN.md files that rotted — **FOUND + FIXED 2026-08-20**
+
+**Found 2026-08-20** (user): the most common root markdown file after STATUS.local.md was a
+PLAN.md — "a plan to uplevel hn-app, 7 stages" — a 3k-word document whose stages were dead prose
+the moment work started. Records could hold a snippet but nothing larger: no way to relate stages
+to a master plan, no roll-up, nothing an agent could follow hands-off.
+
+**Fixed 2026-08-20.** Plans are records; the body is the plan. Four pieces:
+
+- **`plan` is the eighth default type**, beside `task` because they share a lifecycle: status
+  (same six values, `bm mark`/`bm done` work), `opened`, and the task's required fields minus
+  `not-before` (a plan is followed or shelved, never snoozed). Unlike a task it is **kept
+  current**: the body carries the narrative and an *ordered* stage list of `[[task-id]]`
+  wikilinks, and `bm edit --body` rewrites it as the plan evolves. Records land in `plans/` with
+  `plan-`-prefixed ids (U30 pays for itself: agent reports self-describe).
+- **`part_of` joins the default relations**: a stage task writes `--rel part_of:<plan-id>`, so
+  membership survives the body rewrite that would lose a wikilink.
+- **`bm show` renders the live checklist.** The payload stays byte-exact, so the stage list is
+  not annotated in place: a derived block after the payload restates every task/plan the record
+  points at — in body order, deduped — as `→ task-x (doing) "title"`, and the U32 incoming block
+  gains the same `(status)` stamp when the pointing record has a lifecycle. Showing a plan is
+  reading its checklist; showing a stage names the plans it belongs to.
+- **The board and brief treat plans as first-class open work**: plans ride the bare-`bm` board
+  inline with tasks (the id prefix labels them; within a status rank a plan sorts first), the
+  `Open plans` brief section gets rows, a parked count and the >60d stale flag via the same
+  `non-terminal` rule tasks use, and the toolbox states the one recommended way — plan record,
+  never a PLAN.md file.
+
+**Adoption edge, deliberate:** a present key replaces the defaults, so a governed project's
+explicit `types:` list (every file `--governed` has written) lacks `plan` until a human adds it —
+`bm new plan` there files as inbox proposing `plan`, which is the W4 hatch working. `relations:`
+follows U14's rule instead: a file that omits the key gets the defaults, `part_of` now included;
+only an explicit `relations:` list excludes it. Ungoverned and freshly governed projects get both
+immediately.
+
 ## Docs swept
 
 **2026-07-26.** A ten-reader sweep reconciled the following into this file. The gaps they contained

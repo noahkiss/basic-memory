@@ -84,6 +84,7 @@ _TYPE_PREFIX_PATTERN: Final = re.compile(r"^[a-z][a-z0-9-]*$")
 TYPE_DIRS: Final = MappingProxyType(
     {
         "task": "tasks",
+        "plan": "plans",
         "guide": "guides",
         "finding": "findings",
         "profile": "profiles",
@@ -183,7 +184,7 @@ def record_slug(title: str) -> str:
 def type_dir(record_type: str) -> str:
     """The directory records of ``record_type`` live in.
 
-    Raises ValueError for a type outside the closed six. An unknown type is the
+    Raises ValueError for a type outside the closed seven. An unknown type is the
     W4 escape hatch and belongs in `inbox` with a ``proposed-type``, but that is
     a decision `bm new` makes and states; silently filing it here would make the
     escape hatch invisible.

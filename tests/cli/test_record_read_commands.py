@@ -554,6 +554,72 @@ def test_show_caps_incoming_references_and_counts_the_rest() -> None:
     assert "… and 2 more incoming relations" in result.stdout
 
 
+def test_show_renders_a_plan_as_a_live_checklist_in_body_order() -> None:
+    """A plan's outgoing stage links print with each stage's status (U38).
+
+    Body order, not alphabetical: relation insertion follows the body top to
+    bottom, and the checklist must read in the order the plan states. The
+    finding target earns no row — the block is a checklist, and a record
+    without a lifecycle has nothing to check.
+    """
+    plan = note("plan-gggg7777", "plan", "Uplevel the app", status="doing")
+    doing = note("tnd-hhhh8888", "task", "Stage two", status="doing")
+    seed(
+        {MAIN: [plan, TASK, DONE_TASK, doing, FINDING]},
+        relations=(
+            # Deliberately not alphabetical by target id.
+            ("links_to", "plan-gggg7777", "tnd-bbbb2222"),
+            ("links_to", "plan-gggg7777", "tnd-hhhh8888"),
+            ("links_to", "plan-gggg7777", "tnd-aaaa1111"),
+            ("links_to", "plan-gggg7777", "tnd-cccc3333"),
+        ),
+    )
+
+    result = runner.invoke(app, ["show", "plan-gggg7777", "--project", MAIN])
+
+    assert result.exit_code == 0, result.output
+    first = result.stdout.index('→ tnd-bbbb2222 (done) "Rotate the deploy key"')
+    second = result.stdout.index('→ tnd-hhhh8888 (doing) "Stage two"')
+    third = result.stdout.index('→ tnd-aaaa1111 (open) "Move backups off-container"')
+    assert first < second < third
+    assert "→ tnd-cccc3333" not in result.stdout
+
+
+def test_show_stamps_lifecycle_status_on_both_reference_directions() -> None:
+    """A stage names its plan with the plan's status; the plan names the stage back."""
+    plan = note("plan-gggg7777", "plan", "Uplevel the app", status="doing")
+    stage = note("tnd-hhhh8888", "task", "Stage two", status="blocked")
+    seed(
+        {MAIN: [plan, stage]},
+        relations=(("part_of", "tnd-hhhh8888", "plan-gggg7777"),),
+    )
+
+    shown_plan = runner.invoke(app, ["show", "plan-gggg7777", "--project", MAIN])
+    assert shown_plan.exit_code == 0, shown_plan.output
+    assert '← part_of by tnd-hhhh8888 (blocked) "Stage two"' in shown_plan.stdout
+
+    shown_stage = runner.invoke(app, ["show", "tnd-hhhh8888", "--project", MAIN])
+    assert shown_stage.exit_code == 0, shown_stage.output
+    assert '→ plan-gggg7777 (doing) "Uplevel the app"' in shown_stage.stdout
+
+
+def test_show_dedupes_a_twice_linked_stage() -> None:
+    """A wikilink plus a part_of to the same stage is one checklist row, not two."""
+    plan = note("plan-gggg7777", "plan", "Uplevel the app", status="open")
+    seed(
+        {MAIN: [plan, TASK]},
+        relations=(
+            ("links_to", "plan-gggg7777", "tnd-aaaa1111"),
+            ("relates_to", "plan-gggg7777", "tnd-aaaa1111"),
+        ),
+    )
+
+    result = runner.invoke(app, ["show", "plan-gggg7777", "--project", MAIN])
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout.count("→ tnd-aaaa1111") == 1
+
+
 def test_show_separates_a_body_with_no_final_newline_from_the_notice() -> None:
     """GAPS U2: without a separator, the body's last word and the notice are one token.
 

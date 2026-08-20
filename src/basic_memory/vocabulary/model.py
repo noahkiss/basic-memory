@@ -51,7 +51,11 @@ _FIELD_NAME = re.compile(r"[^\s]+")
 #
 # It is a *default*, not a floor: a project's `relations:` key replaces this list
 # outright, the way `types:` and `statuses:` do.
-DEFAULT_RELATIONS: tuple[str, ...] = ("relates_to", "derived_from", "supersedes")
+#
+# `part_of` joined 2026-08-20 (GAPS U38): a stage task inside a plan writes it
+# toward the plan record, so membership survives a body rewrite that the plan's
+# own `[[task-id]]` stage list would lose.
+DEFAULT_RELATIONS: tuple[str, ...] = ("relates_to", "derived_from", "part_of", "supersedes")
 
 # The type names an agent reaches for that the closed set spells differently
 # (GAPS U25, user decision 2026-08-19). An alias resolves at write time and the
@@ -108,15 +112,19 @@ class Vocabulary:
 # — explicitly NOT what an absent file means. An absent file means the project is
 # not governed and the checker never runs (GAPS W4, decided 2026-08-10).
 #
-# `note` is the seventh and it is not one of the record types: it is MCP's
+# `note` is the eighth and it is not one of the record types: it is MCP's
 # `write_note` default, and a governed project that did not declare it refused the
 # primary agent write path outright (GAPS D8). Declaring it costs nothing — it
 # carries the four common fields and no rules of its own, exactly like a type a
 # human added — and it keeps `--governed` from meaning "MCP stops working here".
-# The record types are still the six: `note` has no picking question and no
+# The record types are still the seven: `note` has no picking question and no
 # glossary summary, so `bm new` never offers it as a choice.
 DEFAULT_VOCABULARY = Vocabulary(
-    types=("task", "guide", "finding", "profile", "state", "inbox", "note"),
+    # `plan` sits beside `task` because the two share a lifecycle: a plan is a
+    # multi-stage effort whose body orders the stage tasks it links (GAPS U38 —
+    # plans replace PLAN.md). A project governed before U38 declares its own
+    # `types:` list and simply lacks `plan` until a human adds it.
+    types=("task", "plan", "guide", "finding", "profile", "state", "inbox", "note"),
     # `shelved` sits between the open statuses and the closing ones because that
     # is what it means: parked, not dropped (GAPS U23).
     statuses=("open", "doing", "blocked", "shelved", "done", "dropped"),

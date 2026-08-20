@@ -249,7 +249,7 @@ def test_error_message_names_the_source():
 
 
 def test_default_vocabulary_matches_the_schema_block():
-    """The six record types, plus `note` — MCP's `write_note` default (GAPS D8).
+    """The seven record types, plus `note` — MCP's `write_note` default (GAPS D8).
 
     `note` is declared so that governing a project does not refuse the primary
     agent write path. It is not a seventh record type: it has no picking question
@@ -257,6 +257,7 @@ def test_default_vocabulary_matches_the_schema_block():
     """
     assert DEFAULT_VOCABULARY.types == (
         "task",
+        "plan",
         "guide",
         "finding",
         "profile",
@@ -275,7 +276,27 @@ def test_default_vocabulary_matches_the_schema_block():
     assert DEFAULT_VOCABULARY.areas == ()
     assert DEFAULT_VOCABULARY.review_months == 12
     assert DEFAULT_VOCABULARY.fields == {}
-    assert DEFAULT_VOCABULARY.relations == ("relates_to", "derived_from", "supersedes")
+    assert DEFAULT_VOCABULARY.relations == ("relates_to", "derived_from", "part_of", "supersedes")
+
+
+def test_plan_and_part_of_are_defaults_but_yield_to_explicit_lists(data_dir: Path):
+    """GAPS U38's adoption edge, said out loud: a present key replaces the defaults.
+
+    A project governed before U38 carries explicit `types:` and `relations:`
+    lists; it sees neither `plan` nor `part_of` until a human adds them, which
+    is the extension rule working, not a migration bug.
+    """
+    assert "plan" in DEFAULT_VOCABULARY.types
+    assert "part_of" in DEFAULT_VOCABULARY.relations
+
+    write_vocabulary(
+        "types: [task, guide]\nrelations: [relates_to]\n",
+    )
+    loaded = load_vocabulary(EXTERNAL_ID)
+
+    assert loaded is not None
+    assert "plan" not in loaded.types
+    assert "part_of" not in loaded.relations
 
 
 # --- Relations (GAPS U14) ---

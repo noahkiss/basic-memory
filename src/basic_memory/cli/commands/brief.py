@@ -87,7 +87,7 @@ STALE_TASK_DAYS = 60
 # means *unchecked*, not *typeless*: records still carry a frontmatter `type`, and a
 # brief that went blank over a missing file would hide real open work. So the two types
 # whose rows are unconditional are assumed, and nothing else is.
-UNGOVERNED_TYPES: tuple[str, ...] = ("task", "state")
+UNGOVERNED_TYPES: tuple[str, ...] = ("task", "plan", "state")
 
 # How a row is chosen for a section. Each is a predicate over the `entity` table, not a
 # ranking: "which records of this type belong in a session primer at all".
@@ -120,6 +120,9 @@ class SectionRule:
 SECTION_RULES: Mapping[str, SectionRule] = MappingProxyType(
     {
         "task": SectionRule("Open tasks", "non-terminal"),
+        # Plans share the task's rules wholesale (GAPS U38): non-terminal rows,
+        # a parked count, and the stale flag all mean the same thing on a plan.
+        "plan": SectionRule("Open plans", "non-terminal"),
         "state": SectionRule("Current state", "every"),
         "finding": SectionRule("Findings past review-by", "review-due"),
         "inbox": SectionRule("Unfiled inbox records", "count"),
@@ -175,6 +178,10 @@ class Section:
     total: int = 0
     parked: int = 0
     stale: int = 0
+    # What one of this section's records is called in prose — "task" or "plan"
+    # (GAPS U38). The stale line interpolates it; defaulted so the render-only
+    # tests that build bare Sections keep reading naturally.
+    noun: str = "task"
 
     @property
     def is_empty(self) -> bool:
@@ -484,6 +491,7 @@ async def query(session_maker, scope: ReadScope, query_text: Optional[str] = Non
                     total=total or 0,
                     parked=parked,
                     stale=stale,
+                    noun=note_type,
                 )
             )
 
@@ -704,6 +712,13 @@ def toolbox_lines() -> list[str]:
         "findings are never edited — supersede: "
         f'bm new finding "<corrected>" --rel {SUPERSEDES_RELATION}:<old-id>; '
         "ls and show then flag the old record",
+        # The toolbox is normative — one recommended way, stated once (user
+        # decision 2026-08-20): every agent on every machine does it the same
+        # way, or the corpus grows four spellings of the same structure.
+        'a multi-stage effort is a plan record: bm new plan "<title>" --body carries the '
+        "narrative and an ordered list of [[task-id]] stage links; each stage is a task "
+        "--rel part_of:<plan-id>; bm show <plan-id> renders the live checklist — "
+        "never a PLAN.md file",
     ]
 
 
@@ -753,7 +768,7 @@ def render(brief: Brief) -> str:
         if section.stale:
             plural = "" if section.stale == 1 else "s"
             lines.append(
-                f"{section.stale} open task{plural} untouched >{STALE_TASK_DAYS}d — "
+                f"{section.stale} open {section.noun}{plural} untouched >{STALE_TASK_DAYS}d — "
                 "still real? bm mark <id> shelved parks one"
             )
 

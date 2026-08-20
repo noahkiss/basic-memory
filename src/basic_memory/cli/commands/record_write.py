@@ -71,7 +71,7 @@ MARK_AFFORDANCE = "bm ls --status open what is still open · bm new record what 
 # The types `bm edit` changes in place. Fixed by the schema, not by a project's
 # vocabulary: a type is kept current or it is not, and that is a property of the
 # type's temporal shape rather than of any one project's declarations.
-KEPT_CURRENT_TYPES: tuple[str, ...] = ("guide", "profile", "state", "inbox")
+KEPT_CURRENT_TYPES: tuple[str, ...] = ("plan", "guide", "profile", "state", "inbox")
 
 # The one type whose declared fields are mutable (`.forked/schema.md` §1 table and
 # §4 item 4). A profile accretes facts about a subject; on every other type the
@@ -551,9 +551,9 @@ async def mark_record(*, project_name: str, record_id: str, status: str) -> Writ
 
     stack, project, record = await _open_record(project_name, record_id)
 
-    if record.note_type != "task":
+    if record.note_type not in ("task", "plan"):
         raise RecordVerbError(
-            f"only a task carries a status; '{record.record_id}' is a {record.note_type}"
+            f"only a task or a plan carries a status; '{record.record_id}' is a {record.note_type}"
         )
 
     # An ungoverned project declares no statuses, so there is nothing to check

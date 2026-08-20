@@ -128,6 +128,36 @@ def test_board_counts_shelved_and_inbox_instead_of_listing_them(
     assert "0 open items · shelved 1 · inbox 1" in output
 
 
+def test_board_lists_plans_inline_before_tasks_of_the_same_rank(
+    project: SeededProject,
+) -> None:
+    """A plan rides the board with the tasks (GAPS U38): the `plan-` prefix
+    labels it, and within a status rank the plan sorts first — it is the
+    higher-altitude item its stages roll up into."""
+    # Plan first, task second: recency alone would list the newer task first,
+    # so the assertion below proves the altitude sort, not the tie-break.
+    plan_id = new_record("The campaign", note_type="plan")
+    task_id = new_record("A stage task")
+    assert plan_id.startswith("plan-")
+
+    lines = board().strip().splitlines()
+
+    listed = [line.split()[0] for line in lines[1:3]]
+    assert listed == [plan_id, task_id]
+    # The affordance is the true last line (contract rule 3); the summary sits above it.
+    assert any("2 open items" in line for line in lines)
+
+
+def test_board_counts_a_shelved_plan_with_the_parked_pile(project: SeededProject) -> None:
+    plan_id = new_record("Someday campaign", note_type="plan")
+    mark(plan_id, "shelved")
+
+    output = board()
+
+    assert plan_id not in output
+    assert "0 open items · shelved 1 · inbox 0" in output
+
+
 def test_board_shows_the_composed_headline(project: SeededProject) -> None:
     result = runner.invoke(app, ["headline", "ship the board", "-p", PROJECT, "--quiet"])
     assert result.exit_code == 0, result.output

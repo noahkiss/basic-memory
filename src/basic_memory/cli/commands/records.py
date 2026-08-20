@@ -239,6 +239,12 @@ def show(
     if not quiet:
         for supersession in record.superseded_by:
             typer.echo(supersession.describe())
+        # Outgoing lifecycle references, after the payload (GAPS U38): the
+        # payload is byte-exact, so a plan's stage list cannot be annotated in
+        # place — this block restates it, in body order, with each stage's
+        # status, which is what makes the plan read as a live checklist.
+        for reference in record.references:
+            typer.echo(reference.describe())
         # Incoming references, after the payload (GAPS U32): the reader of a
         # stale finding learns that a correction points here, from the record
         # that would otherwise mislead them. Derived and quiet-dropped like the

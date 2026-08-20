@@ -97,8 +97,8 @@ def used_field_names(type_names: tuple[str, ...]) -> list[str]:
     """Every field the listed types use, in first-seen order, without repeats.
 
     Field meanings print once in their own section rather than under each type:
-    ``id``/``permalink``/``title``/``source`` are on all six, and repeating four
-    sentences six times buys nothing.
+    ``id``/``permalink``/``title``/``source`` are on every type, and repeating
+    four sentences per type buys nothing.
     """
     seen: dict[str, None] = {}
     for name in type_names:
@@ -296,7 +296,7 @@ def types(
         path = vocabulary_path(ref.external_id)
         # Trigger: the project has no vocabulary.yml.
         # Why: an absent file means "not governed", never "use the defaults" (GAPS
-        #     W4, decided 2026-08-10). Printing the default six here would teach an
+        #     W4, decided 2026-08-10). Printing the defaults here would teach an
         #     agent a vocabulary that nothing enforces.
         # Outcome: say so and move on; the file to create is named below.
         if vocabulary is None:

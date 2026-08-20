@@ -87,7 +87,7 @@ DEFAULT_DATE_CONFIDENCE = "day"
 # `profile.since` is deliberately absent: it is optional, and a `since` this verb
 # invented would claim a start date the writer never gave. `guide`, `state` and
 # `inbox` have no date field at all — there is physically nowhere to put one.
-_TYPE_DATE_FIELD = {"task": "opened", "finding": "event-date"}
+_TYPE_DATE_FIELD = {"task": "opened", "plan": "opened", "finding": "event-date"}
 
 # Which flag writes which frontmatter key, and the types that carry it (§2/§3).
 #
@@ -95,7 +95,7 @@ _TYPE_DATE_FIELD = {"task": "opened", "finding": "event-date"}
 # appointment the writer sets for the future, not a claim about when something
 # happened, so there is nothing to say about where it came from.
 _DATE_FLAGS: Mapping[str, tuple[str, frozenset[str]]] = {
-    "--opened": ("opened", frozenset({"task"})),
+    "--opened": ("opened", frozenset({"task", "plan"})),
     "--event-date": ("event-date", frozenset({"finding"})),
     "--review-by": ("review-by", frozenset({"finding", "guide"})),
 }
@@ -310,7 +310,9 @@ def build_frontmatter(
 
     if area is not None:
         fields["area"] = area
-    if note_type == "task":
+    # A plan opens the way a task does: the two share the status lifecycle
+    # (GAPS U38), and a plan born without one would fail its own checker.
+    if note_type in ("task", "plan"):
         fields["status"] = INITIAL_TASK_STATUS
     if proposed_type is not None:
         fields["proposed-type"] = proposed_type

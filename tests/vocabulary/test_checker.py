@@ -274,6 +274,46 @@ def test_task_with_off_vocabulary_status():
     assert "open, doing, blocked, shelved, done, dropped" in violation.message
 
 
+def test_plan_without_status():
+    """A plan shares the task lifecycle (GAPS U38), the missing-status rule included."""
+    plan = {
+        "id": "plan-7k2m9x4p",
+        "permalink": "plan-7k2m9x4p",
+        "type": "plan",
+        "title": "Uplevel hn-app",
+        "opened": "2026-08-20",
+        "date-source": "inline",
+        "date-confidence": "day",
+        "source": "cli",
+    }
+
+    violation = one(check(plan))
+
+    assert violation.rule == "missing-status"
+    assert "A plan needs a status" in violation.message
+
+
+def test_plan_refuses_not_before():
+    """`not-before` stays a task's field: a plan is followed or shelved, never snoozed."""
+    plan = {
+        "id": "plan-7k2m9x4p",
+        "permalink": "plan-7k2m9x4p",
+        "type": "plan",
+        "title": "Uplevel hn-app",
+        "status": "open",
+        "opened": "2026-08-20",
+        "date-source": "inline",
+        "date-confidence": "day",
+        "source": "cli",
+        "not-before": "2026-09-01",
+    }
+
+    violation = one(check(plan))
+
+    assert violation.rule == "field-not-on-type"
+    assert violation.field == "not-before"
+
+
 # --- 5. field-not-on-type ---
 
 

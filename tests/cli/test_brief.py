@@ -1036,6 +1036,10 @@ def test_toolbox_teaches_the_verbs_the_doctrine_and_the_undo_pair():
     assert "finished it? bm done" in block
     assert "supersedes:<old-id>" in block
     assert "shelved is parked, not dropped" in block
+    # The plan doctrine (GAPS U38): one recommended way, stated once.
+    assert "bm new plan" in block
+    assert "part_of:<plan-id>" in block
+    assert "never a PLAN.md file" in block
 
 
 def test_the_toolbox_prints_under_quiet(monkeypatch, capsys):
@@ -1103,6 +1107,27 @@ async def test_untouched_open_tasks_are_counted_as_stale(session_maker, test_pro
     rendered = render(result)
     assert f"1 open task untouched >{STALE_TASK_DAYS}d" in rendered
     assert "bm mark <id> shelved parks one" in rendered
+
+
+@pytest.mark.asyncio
+async def test_untouched_open_plans_are_counted_as_stale(session_maker, test_project, config_home):
+    """A plan shares the task lifecycle (GAPS U38), the rot flag included."""
+    _govern(test_project, types="[plan]", statuses=SHELVED_STATUSES)
+    await _make_entity(
+        session_maker,
+        test_project.id,
+        title="Stalled campaign",
+        note_type="plan",
+        metadata={"status": "doing"},
+        updated_at=datetime.now(timezone.utc) - timedelta(days=STALE_TASK_DAYS + 1),
+    )
+
+    result = await query(session_maker, _scope(test_project.name))
+
+    assert _required_section(result, "plan").stale == 1
+    rendered = render(result)
+    assert "Open plans" in rendered
+    assert f"1 open plan untouched >{STALE_TASK_DAYS}d" in rendered
 
 
 @pytest.mark.asyncio

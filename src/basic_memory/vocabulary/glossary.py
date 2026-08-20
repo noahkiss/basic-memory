@@ -18,6 +18,7 @@ from dataclasses import dataclass
 # The one-word test that picks the type, from GAPS W4's type table.
 PICKING_QUESTIONS: Mapping[str, str] = {
     "task": "do it",
+    "plan": "follow it",
     "guide": "consult it",
     "finding": "learned it",
     "profile": "refer to it",
@@ -52,6 +53,7 @@ SUPERSEDES_RELATION = "supersedes"
 RELATION_MEANINGS: Mapping[str, str] = {
     "relates_to": "These two belong together. Use it when no stronger word is true.",
     "derived_from": "This record came out of that one — a source, a transcript, a finding.",
+    "part_of": "This record is one piece of that larger one — a stage task inside a plan.",
     SUPERSEDES_RELATION: "This record replaces that one. Only a finding supersedes another.",
 }
 
@@ -108,6 +110,11 @@ def _or_listed(values: tuple[str, ...]) -> str:
 # with the record, not what the schema does with it (W19's whole complaint).
 TYPE_SUMMARIES: Mapping[str, str] = {
     "task": "Work you mean to get done. Its status is the only field you change later.",
+    "plan": (
+        "A multi-stage effort. Its body orders the stage tasks it links; each "
+        "stage is a task marked part_of it. You rewrite the body as the plan "
+        "evolves, and its status closes it like a task's."
+    ),
     "guide": (
         "An instruction you keep current. You rewrite the title and the body in "
         "place — that is what keeping it current means."
@@ -162,6 +169,12 @@ TYPE_FIELDS: Mapping[str, TypeFields] = {
     "task": _fields(
         "id permalink title source status opened date-source date-confidence",
         "area not-before date-ref",
+    ),
+    # A plan carries the task's set minus `not-before`: a plan is followed, not
+    # snoozed — deferring one is `bm mark <id> shelved`.
+    "plan": _fields(
+        "id permalink title source status opened date-source date-confidence",
+        "area date-ref",
     ),
     "guide": _fields("id permalink title source review-by", "area"),
     "finding": _fields(

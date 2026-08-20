@@ -255,9 +255,13 @@ def frontmatter_of(path: Path) -> dict[str, Any]:
 # --- bm edit ---
 
 
-@pytest.mark.parametrize("note_type", ["guide", "profile", "state", "inbox"])
+@pytest.mark.parametrize("note_type", ["plan", "guide", "profile", "state", "inbox"])
 def test_edit_replaces_the_body_of_each_kept_current_type(note_type: str) -> None:
-    """The four kept-current types are rewritten in place — that is what they are for (§4)."""
+    """The kept-current types are rewritten in place — that is what they are for (§4).
+
+    `plan` is one of them (GAPS U38): its body IS the plan, and rewriting the
+    stage list as the plan evolves is what keeping it current means.
+    """
     project = seed_project()
     record_id = create(GOVERNED, note_type, "How To Restore")
 
@@ -855,8 +859,39 @@ def test_mark_on_a_record_that_is_not_a_task_exits_one() -> None:
     result = runner.invoke(app, ["mark", record_id, "done", "-p", GOVERNED])
 
     assert result.exit_code == 1
-    assert "only a task carries a status" in result.stderr
+    assert "only a task or a plan carries a status" in result.stderr
     assert result.stdout.strip() == ""
+
+
+def test_mark_and_done_move_a_plan_like_a_task() -> None:
+    """A plan shares the task lifecycle (GAPS U38): mark and done both take it."""
+    seed_project()
+    record_id = create(GOVERNED, "plan", "Uplevel The App")
+    assert record_id.startswith("plan-")
+
+    marked = runner.invoke(app, ["mark", record_id, "doing", "-p", GOVERNED, "--quiet"])
+    assert marked.exit_code == 0, marked.output
+    assert marked.stdout.strip().splitlines()[0].split("  ") == [record_id, "plan", "doing"]
+
+    closed = runner.invoke(app, ["done", record_id, "-p", GOVERNED, "--quiet"])
+    assert closed.exit_code == 0, closed.output
+    path = payload_path(runner.invoke(app, ["path", record_id, "-p", GOVERNED]).stdout + "\n")
+    assert frontmatter_of(path)["status"] == "done"
+
+
+def test_a_stage_task_links_part_of_its_plan() -> None:
+    """`part_of` is a default relation (GAPS U38): membership survives a body rewrite."""
+    project = seed_project()
+    plan_id = create(GOVERNED, "plan", "Uplevel The App")
+    stage_id = create(GOVERNED, "task", "Stage One")
+
+    result = runner.invoke(
+        app,
+        ["edit", stage_id, "--rel", f"part_of:{plan_id}", "-p", GOVERNED, "--quiet"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert ("part_of", plan_id) in indexed_relations(project, stage_id)
 
 
 def test_done_is_exactly_mark_done() -> None:

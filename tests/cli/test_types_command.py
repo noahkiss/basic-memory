@@ -172,6 +172,9 @@ def test_relations_are_listed_with_what_each_one_claims(
     assert "relations" in result.stdout
     assert "derived_from  This record came out of that one" in result.stdout
     assert "relates_to    These two belong together" in result.stdout
+    # `part_of` joined the defaults with the plan type (GAPS U38).
+    assert "part_of" in result.stdout
+    assert "a stage task inside a plan" in result.stdout
 
 
 def test_a_relation_the_glossary_does_not_know_still_appears(
@@ -270,6 +273,20 @@ def test_unscoped_types_names_no_single_file_to_edit(
 
 
 # --- Status prose (GAPS U23) ---
+
+
+def test_plan_lists_with_its_summary_and_fields(
+    runner, config_home, stub_project, write_vocabulary
+):
+    """The eighth type teaches itself the way the first seven do (GAPS U38)."""
+    write_vocabulary("types: [task, plan]\n")
+
+    result = runner.invoke(app, ["types", "--project", PROJECT])
+
+    assert result.exit_code == 0, result.output
+    assert "plan — follow it" in result.stdout
+    assert "A multi-stage effort." in result.stdout
+    assert "status" in result.stdout
 
 
 def test_shelved_gets_a_line_of_prose(runner, config_home, stub_project, write_vocabulary):

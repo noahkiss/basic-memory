@@ -454,17 +454,43 @@ class IncomingReference:
     overturns, but the stale record shows nothing — a reader landing on it via
     search sees a confidently wrong claim with no pointer forward. The incoming
     edge is the pointer, so `bm show` renders it from this row.
+
+    `status` is set only when the pointing record has a lifecycle (task or
+    plan, GAPS U38): a plan shown from one of its stages should say where the
+    stage stands, and a statusless type has nothing honest to print there.
     """
 
     relation_type: str
     record_id: str
     title: str
+    status: str | None = None
 
     def describe(self) -> str:
         # The title is context, not payload — cut it before it becomes a second
         # record body inside the first one's output.
         title = self.title if len(self.title) <= 60 else self.title[:59].rstrip() + "…"
-        return f'← {self.relation_type} by {self.record_id} "{title}"'
+        stamped = f" ({self.status})" if self.status else ""
+        return f'← {self.relation_type} by {self.record_id}{stamped} "{title}"'
+
+
+@dataclass(frozen=True, slots=True)
+class OutgoingReference:
+    """One lifecycle record the shown record points at (GAPS U38).
+
+    Only task and plan targets earn a row: the block exists so a plan's stage
+    list reads as a live checklist, and a reference without a status would be
+    noise under it. Ordered by relation insertion, which follows the body's own
+    top-to-bottom order — the checklist prints in the order the plan states.
+    """
+
+    relation_type: str
+    record_id: str
+    title: str
+    status: str
+
+    def describe(self) -> str:
+        title = self.title if len(self.title) <= 60 else self.title[:59].rstrip() + "…"
+        return f'→ {self.record_id} ({self.status}) "{title}"'
 
 
 @dataclass(frozen=True, slots=True)
@@ -476,6 +502,7 @@ class ResolvedRecord:
     path: Path
     superseded_by: tuple[Supersession, ...] = ()
     referenced_by: tuple[IncomingReference, ...] = ()
+    references: tuple[OutgoingReference, ...] = ()
 
 
 async def _projects_in_scope(session: "AsyncSession", project_name: str | None) -> list["Project"]:
@@ -579,11 +606,19 @@ async def direct_board(project_name: str) -> BoardData:
 
         # Working order, not alphabetical: what is in motion, then what is
         # stuck, then what is waiting — recency breaking ties within each.
+        # Plans ride inline with tasks (GAPS U38): the `plan-` id prefix labels
+        # them, and within a status rank a plan sorts first because it is the
+        # higher-altitude item its stages roll up into.
         rank = case((status == "doing", 0), (status == "blocked", 1), else_=2)
+        altitude = case((Entity.note_type == "plan", 0), else_=1)
         found = await session.execute(
             select(Entity.permalink, status, Entity.title)
-            .where(Entity.project_id == project.id, Entity.note_type == "task", is_live)
-            .order_by(rank, Entity.updated_at.desc())
+            .where(
+                Entity.project_id == project.id,
+                Entity.note_type.in_(["task", "plan"]),
+                is_live,
+            )
+            .order_by(rank, altitude, Entity.updated_at.desc())
         )
         rows = [
             BoardRow(record_id=permalink, status=row_status or "open", title=title)
@@ -599,7 +634,9 @@ async def direct_board(project_name: str) -> BoardData:
                 )
             ) or 0
 
-        shelved = await count(Entity.note_type == "task", status.in_(sorted(PARKED_STATUSES)))
+        shelved = await count(
+            Entity.note_type.in_(["task", "plan"]), status.in_(sorted(PARKED_STATUSES))
+        )
         inbox = await count(Entity.note_type == "inbox")
 
     return BoardData(
@@ -649,6 +686,7 @@ async def direct_record(project_name: str | None, record_id: str) -> ResolvedRec
                     path=Path(project.path) / entity.file_path,
                     superseded_by=_supersessions(entity),
                     referenced_by=_incoming_references(entity),
+                    references=_outgoing_references(entity),
                 )
             )
 
@@ -680,6 +718,56 @@ def _supersessions(entity: "Entity") -> tuple[Supersession, ...]:
     return tuple(sorted(successors, key=lambda item: (item.event_date, item.record_id)))
 
 
+# The types whose records carry a status (GAPS U38). Shared by both reference
+# builders so "which references get a stamp" has one answer.
+_LIFECYCLE_TYPES: frozenset[str] = frozenset({"task", "plan"})
+
+
+def _lifecycle_status(entity: "Entity | None") -> str | None:
+    """The status stamp a reference to ``entity`` earns, or None for no stamp.
+
+    A lifecycle record with no status is stamped `open`, the same reading brief
+    and the board give it: hiding it over a schema fault would misreport the
+    checklist this exists to render.
+    """
+    if entity is None or entity.note_type not in _LIFECYCLE_TYPES:
+        return None
+    metadata = entity.entity_metadata or {}
+    status = metadata.get("status")
+    return str(status) if status else "open"
+
+
+def _outgoing_references(entity: "Entity") -> tuple[OutgoingReference, ...]:
+    """The lifecycle records ``entity`` points at, in body order (GAPS U38).
+
+    Relation rows are read in insertion order, which follows the body top to
+    bottom — a plan's stage list therefore prints in the plan's own order, not
+    alphabetically. Only task/plan targets appear: the block is a checklist,
+    and a row with no status has nothing to check.
+    """
+    references = []
+    seen: set[str] = set()
+    for relation in entity.outgoing_relations:
+        target = relation.to_entity
+        status = _lifecycle_status(target)
+        if status is None or target is None or not target.permalink:
+            continue
+        # One row per target: the body may link a stage twice (a wikilink and a
+        # `--rel part_of`), and the checklist needs each stage once.
+        if target.permalink in seen:
+            continue
+        seen.add(target.permalink)
+        references.append(
+            OutgoingReference(
+                relation_type=relation.relation_type,
+                record_id=target.permalink,
+                title=target.title or "",
+                status=status,
+            )
+        )
+    return tuple(references)
+
+
 def _incoming_references(entity: "Entity") -> tuple[IncomingReference, ...]:
     """Every other record pointing at ``entity``, minus supersessions (GAPS U32).
 
@@ -693,6 +781,7 @@ def _incoming_references(entity: "Entity") -> tuple[IncomingReference, ...]:
             relation_type=relation.relation_type,
             record_id=relation.from_entity.permalink,
             title=relation.from_entity.title or "",
+            status=_lifecycle_status(relation.from_entity),
         )
         for relation in entity.incoming_relations
         if relation.relation_type != SUPERSEDES
