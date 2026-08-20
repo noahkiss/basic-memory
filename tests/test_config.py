@@ -1038,3 +1038,25 @@ class TestAtomicConfigSave:
 
             assert config_file.exists()
             assert not list(temp_path.glob("*.tmp"))
+
+
+class TestBugConfigFields:
+    """The three `bugs_*` keys (GAPS U34) ride the ordinary config model."""
+
+    def test_defaults(self):
+        config = BasicMemoryConfig()
+        assert config.bugs_dir == ""
+        assert config.bugs_autocapture is True
+        assert config.bugs_followup == ""
+
+    def test_round_trip_through_validation(self):
+        # `bm config set` validates through model_validate; these keys must
+        # survive that path like any other field.
+        candidate = BasicMemoryConfig().model_dump()
+        candidate.update(
+            {"bugs_dir": "~/synced/bugs", "bugs_autocapture": False, "bugs_followup": "true"}
+        )
+        validated = BasicMemoryConfig.model_validate(candidate)
+        assert validated.bugs_dir == "~/synced/bugs"
+        assert validated.bugs_autocapture is False
+        assert validated.bugs_followup == "true"

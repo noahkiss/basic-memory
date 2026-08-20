@@ -431,6 +431,33 @@ class BasicMemoryConfig(BaseSettings):
         gt=0,
     )
 
+    # Bug reports (GAPS U34). `bugs_dir` accepts `~`; the user points it at a
+    # dotfiles-synced directory to collect reports across machines, and wires
+    # `bugs_followup` to their own sync command — bm never knows about the sync.
+    bugs_dir: str = Field(
+        default="",
+        description=(
+            "Directory bug reports are written to. Empty means <data-dir>/bugs. "
+            "Point it at a synced directory to collect reports across machines."
+        ),
+    )
+
+    bugs_autocapture: bool = Field(
+        default=True,
+        description=(
+            "File a deduplicated bug report automatically on any nonzero exit or "
+            "uncaught crash. Repeats of one failure shape bump a counter, never a new file."
+        ),
+    )
+
+    bugs_followup: str = Field(
+        default="",
+        description=(
+            "Command run (shell, best-effort, from bugs_dir) after a report is written — "
+            "e.g. a dotfiles add-and-commit. Empty disables."
+        ),
+    )
+
     # Project path constraints
     project_root: Optional[str] = Field(
         default=None,

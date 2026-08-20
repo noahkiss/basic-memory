@@ -45,7 +45,12 @@ if TYPE_CHECKING:  # pragma: no cover
 
 INTEGRITY = "integrity"
 HYGIENE = "hygiene"
+# `usage` is the third --only group (GAPS U35): machine-wide aggregation of the
+# invocation log, informational only — it reports on the tool, not any corpus,
+# so it never touches the exit code and never joins a default (all-groups) run.
+USAGE = "usage"
 GROUPS = (INTEGRITY, HYGIENE)
+ONLY_GROUPS = (INTEGRITY, HYGIENE, USAGE)
 
 NO_ISSUES = "  No issues"
 
@@ -78,6 +83,45 @@ def fail(message: str) -> typer.Exit:
 def count_line(total: int) -> str:
     """The count that closes a section (contract rule 3)."""
     return f"  {total} issue{'' if total == 1 else 's'}"
+
+
+def render_usage() -> list[str]:
+    """The usage section: per-command counts from the machine-wide cmdlog.
+
+    Machine-wide by nature — the log is per-user state, not per-project — and
+    the header says so, because every other doctor section is project-scoped.
+    Never-run names come from the live Typer registry, so a new verb shows up
+    here on the day it ships without a list to maintain.
+    """
+    from collections import Counter
+
+    from basic_memory import cmdlog
+
+    records = cmdlog.entries()
+    lines = ["## usage — this machine, all projects (from the bm invocation log)"]
+    if not records:
+        lines.append("  No invocations logged yet — the log fills as bm runs.")
+        return lines
+
+    counts: Counter[str] = Counter(r.get("command", "(unknown)") for r in records)
+    failures: Counter[str] = Counter(
+        r.get("command", "(unknown)") for r in records if r.get("exit", 0) != 0
+    )
+    first_ts = next((r.get("ts") for r in records if r.get("ts")), "")
+    last_ts = next((r.get("ts") for r in reversed(records) if r.get("ts")), "")
+    lines.append(f"  window: {first_ts or '?'} .. {last_ts or '?'}  ({len(records)} invocations)")
+    for command, count in counts.most_common():
+        failed = f"  ({failures[command]} failed)" if failures[command] else ""
+        lines.append(f"  {count:5d}  {command}{failed}")
+
+    registered = {c.name for c in app.registered_commands if c.name} | {
+        g.name for g in app.registered_groups if g.name
+    }
+    seen_heads = {name.split(" ")[0] for name in counts}
+    never = sorted(registered - seen_heads)
+    if never:
+        lines.append(f"  never run: {', '.join(never)}")
+    return lines
 
 
 def _violation_lines(rows: "list[ViolationRow]") -> list[str]:
@@ -439,7 +483,7 @@ def doctor(
         Optional[str],
         typer.Option(
             "--only",
-            help="Print one group only: integrity or hygiene.",
+            help="Print one group only: integrity, hygiene, or usage (machine-wide command stats).",
         ),
     ] = None,
     self_test: Annotated[
@@ -481,10 +525,19 @@ def doctor(
         run_self_test()
         return
 
-    if only is not None and only not in GROUPS:
+    if only is not None and only not in ONLY_GROUPS:
         # An unusable flag value cannot be scoped, so it is an addressing
         # failure rather than an empty result (contract rule 5).
-        raise fail(f"Error: --only must be one of {', '.join(GROUPS)}; got '{only}'.")
+        raise fail(f"Error: --only must be one of {', '.join(ONLY_GROUPS)}; got '{only}'.")
+
+    if only == USAGE:
+        # Machine-wide and informational: no project scope, no notices, no
+        # verdict — printing it and exiting 0 is the whole contract (GAPS U35).
+        if strict:
+            raise fail("Error: --only usage is informational; --strict cannot gate on it.")
+        typer.echo("\n".join(render_usage()))
+        return
+
     groups = GROUPS if only is None else (only,)
 
     try:

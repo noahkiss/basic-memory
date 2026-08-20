@@ -107,6 +107,10 @@ def _render_value(key: str, value: Any) -> str:
         return NOT_SET
     if isinstance(value, Enum):
         value = value.value
+    # An empty string is a real value (e.g. bugs_followup unset-by-default), but
+    # a blank cell breaks the three-column list shape every parser relies on.
+    if value == "":
+        return '""'
     return _redact_for_display(key, str(value))
 
 

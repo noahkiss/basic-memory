@@ -28,6 +28,9 @@ COMMANDS_DIR = Path(commands_package.__file__).parent
 # unexplained exemption is how the next verb joins the list without a decision.
 EXEMPT: dict[tuple[str, str], str] = {
     # Config lives in config.json, not in any project's corpus.
+    # `bm bug` reports on the tool itself and must work when the database is
+    # the thing that is broken — it opens no project and no DB (GAPS U34).
+    ("bug.py", "bug"): "reports on bm itself; deliberately DB-free and project-free",
     ("config.py", "config_list"): "reads config.json; touches no project's records",
     ("config.py", "config_get"): "reads config.json; touches no project's records",
     ("config.py", "config_set"): "writes config.json; touches no project's records",

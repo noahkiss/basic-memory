@@ -7518,6 +7518,48 @@ newest commit, restores included), and a state-aware post-undo line derived from
 back`. Derived, not asserted: `latest_undoable_commit` runs again after the restore commit, so the
 line's answer is the walk's answer. The brief's toolbox (U31) teaches the same pair.
 
+### U34 — bm failures died in the terminal that saw them — **FOUND + FIXED 2026-08-20**
+
+**Found 2026-08-20** (user decision, designed across two sessions of discussion). bm's users are
+almost entirely agents on several machines. When bm misbehaved there was no way for the failure to
+reach this repo: the agent pasted an error into its session and the session ended. `BM-ISSUES.local.md`
+and inbox records worked only on the machine that owns this checkout — a work-machine failure had no
+path home. Separately, typos and misreached flags — the best signal about the tool's teaching
+surfaces — were invisible.
+
+**Fixed 2026-08-20.** Three pieces, one design:
+
+- **`cmdlog`** (`src/basic_memory/cmdlog.py`): every invocation appends one JSONL line — command
+  path, timestamp, exit, duration, project, version — to the XDG *state* dir (machine telemetry is
+  not project knowledge, so it lives outside the `BASIC_MEMORY_CONFIG_DIR` boundary, like the
+  fastembed cache). Ring-bounded (~150 KB → keep 500 lines). Best-effort throughout: a documented
+  exception to fail-fast, because telemetry that can break a verb is worse than none. The console
+  entry point moved from `app` to `main()` — the envelope that logs every exit shape; pointing the
+  scripts back at `app` would silently disable all of it (pyproject says so in place).
+- **`bm bug` + autocapture** (`src/basic_memory/bugs.py`, `cli/commands/bug.py`): `bm bug "…"`
+  writes a markdown report — message, version, platform, cwd, project, harness env fingerprint,
+  cmdlog tail — into `bugs_dir` (config; default `<data-dir>/bugs`). With `bugs_autocapture` (default
+  on), every nonzero exit and uncaught crash files one too, exit-2 typos included by decision.
+  Dedup keeps that sane: one file per failure shape (command + kind + first message line), repeats
+  bump `count:`/`last-seen:`. A recursion latch keeps a capture failure from capturing itself.
+  `bugs_followup` is an opaque user command run best-effort after a report lands — the cross-machine
+  story is configuration (a dotfiles-synced `bugs_dir` plus a sync command), never bm code.
+- The verb is deliberately DB-free and project-free (notice-guard exempt): a report must be
+  writable when the database is the broken thing.
+
+### U35 — nothing said which verbs earn their keep — **FOUND + FIXED 2026-08-20**
+
+**Found 2026-08-20** (user): "it would be good to have some sort of metrics so we know which
+commands are called the most, which are never called, across all projects on a machine." Surface
+design followed W2's rule — no second checking command — so the metrics landed in doctor.
+
+**Fixed 2026-08-20.** `bm doctor --only usage`: per-command counts and failure counts from the
+cmdlog, the coverage window, and a `never run:` list computed from the live Typer registry (a new
+verb appears there the day it ships, no list to maintain). Machine-wide and informational by
+contract: its header says so, it prints no notices, and it can never affect the exit code —
+`--strict` alongside it is refused rather than ignored. It joins `--only` but not the default
+all-groups run: every other section is project-scoped corpus checking, and usage is neither.
+
 ## Docs swept
 
 **2026-07-26.** A ten-reader sweep reconciled the following into this file. The gaps they contained

@@ -52,8 +52,10 @@ Repository = "https://github.com/noahkiss/basic-memory"
 Documentation = "https://github.com/noahkiss/basic-memory#readme"
 
 [project.scripts]
-basic-memory = "basic_memory.cli.main:app"
-bm = "basic_memory.cli.main:app"
+# `main`, not `app`: the wrapper is the telemetry envelope (cmdlog + bug
+# autocapture, GAPS U34) — pointing these at `app` would silently disable both.
+basic-memory = "basic_memory.cli.main:main"
+bm = "basic_memory.cli.main:main"
 
 [build-system]
 requires = ["hatchling", "uv-dynamic-versioning>=0.7.0"]

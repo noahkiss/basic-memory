@@ -311,6 +311,7 @@ NATIVE_COMMANDS = (
     (["undo", "--quiet"], " files restored"),
     (["rm", SEEDED, "--quiet"], "1 deleted"),
     (["project", "info", "--quiet"], ""),
+    (["bug", "guard probe report", "--quiet"], ".md"),
 )
 
 
@@ -365,6 +366,7 @@ def _probe(tmp_path, banned, command=("project", "list"), tail=" projects"):
         "undo",
         "rm",
         "project-info",
+        "bug",
     ],
 )
 def test_native_command_stays_off_api_and_mcp(tmp_path, command, tail):
