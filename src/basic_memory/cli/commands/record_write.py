@@ -445,7 +445,7 @@ async def edit_record(
 
 @app.command(name="edit")
 def edit(
-    record_id: Annotated[str, typer.Argument(help="The record's id, e.g. tnd-q8w3e1r5.")],
+    record_id: Annotated[str, typer.Argument(help="The record's id, e.g. finding-q8w3e1r5.")],
     title: Annotated[
         Optional[str],
         typer.Option("--title", help="Replace the record's title."),
@@ -479,7 +479,7 @@ def edit(
             "--rel",
             metavar="TYPE:ID",
             help=(
-                "Add a link to another record, e.g. --rel derived_from:tnd-q8w3e1r5. "
+                "Add a link to another record, e.g. --rel derived_from:task-q8w3e1r5. "
                 "On its own it works on every record type, including a task and a "
                 "finding. Repeatable; run 'bm types' to see the relation types this "
                 "project declares."
@@ -617,7 +617,7 @@ def _headline_footer(
 
 @app.command(name="mark")
 def mark(
-    record_id: Annotated[str, typer.Argument(help="The task's id, e.g. tnd-7k2m9x4p.")],
+    record_id: Annotated[str, typer.Argument(help="The task's id, e.g. task-7k2m9x4p.")],
     status: Annotated[str, typer.Argument(help="One of the statuses this project declares.")],
     project: Annotated[
         Optional[str],
@@ -657,7 +657,7 @@ def mark(
 
 @app.command(name="done")
 def done(
-    record_id: Annotated[str, typer.Argument(help="The task's id, e.g. tnd-7k2m9x4p.")],
+    record_id: Annotated[str, typer.Argument(help="The task's id, e.g. task-7k2m9x4p.")],
     project: Annotated[
         Optional[str],
         typer.Option("--project", "-p", help="Project to write to. Defaults to .bm.yml."),

@@ -17,7 +17,7 @@ Three decisions are load-bearing:
   After resolving an id, the permalink that came back must equal the id asked
   for. A title that happens to match is not-found. Enforced in `direct_record`.
 - **`bm path` prints the path and nothing else** (VERBS_PLAN D9). It exists for
-  `$EDITOR "$(bm path tnd-x)"`, and a count line, a notice, or an affordance
+  `$EDITOR "$(bm path task-x)"`, and a count line, a notice, or an affordance
   would land inside that command substitution. See `docs/OUTPUT_CONTRACT.md`.
 """
 
@@ -169,7 +169,7 @@ def ls(
 
 @app.command(name="show")
 def show(
-    record_id: Annotated[str, typer.Argument(help="The record's id, e.g. tnd-q8w3e1r5.")],
+    record_id: Annotated[str, typer.Argument(help="The record's id, e.g. finding-q8w3e1r5.")],
     project: Annotated[
         Optional[str],
         typer.Option(
@@ -241,7 +241,7 @@ def show(
 
 @app.command(name="path")
 def path(
-    record_id: Annotated[str, typer.Argument(help="The record's id, e.g. tnd-q8w3e1r5.")],
+    record_id: Annotated[str, typer.Argument(help="The record's id, e.g. finding-q8w3e1r5.")],
     project: Annotated[
         Optional[str],
         typer.Option(
@@ -253,7 +253,7 @@ def path(
 ) -> None:
     """Print the absolute path of a record's file, and nothing else.
 
-    Built for `$EDITOR "$(bm path tnd-q8w3e1r5)"`, which is why this verb prints
+    Built for `$EDITOR "$(bm path finding-q8w3e1r5)"`, which is why this verb prints
     no count line, no notices, and no hints: every one of them would land inside
     the command substitution (VERBS_PLAN D9, `docs/OUTPUT_CONTRACT.md`).
     """

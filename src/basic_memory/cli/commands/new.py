@@ -405,7 +405,7 @@ async def create_record(
         # `inbox`, which carries no date at all (GAPS U1).
         stamped_dates = date_fields(note_type, dates, today=date.today())
 
-        record_id = await allocate_record_id(session, project.project_id)
+        record_id = await allocate_record_id(session, project.project_id, note_type)
 
     file_path = record_path(note_type, record_id, title)
 
@@ -495,7 +495,7 @@ def new(
             "--rel",
             metavar="TYPE:ID",
             help=(
-                "Link this record to another one, e.g. --rel derived_from:tnd-q8w3e1r5. "
+                "Link this record to another one, e.g. --rel derived_from:task-q8w3e1r5. "
                 "Repeatable; run 'bm types' to see the relation types this project declares."
             ),
         ),

@@ -95,7 +95,7 @@ async def delete_records(project_name: str, record_ids: list[str]) -> list[Delet
 def rm(
     record_ids: Annotated[
         list[str],
-        typer.Argument(help="One or more record ids, e.g. tnd-q8w3e1r5."),
+        typer.Argument(help="One or more record ids, e.g. inbox-q8w3e1r5."),
     ],
     project: Annotated[
         Optional[str],

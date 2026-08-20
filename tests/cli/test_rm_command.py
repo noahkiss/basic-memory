@@ -88,7 +88,7 @@ def new_record(title: str) -> str:
     )
     assert result.exit_code == 0, result.output
     record_id = result.stdout.strip().splitlines()[0].split()[0]
-    assert record_id.startswith("tnd-"), result.stdout
+    assert record_id.startswith("task-"), result.stdout  # U30
     return record_id
 
 

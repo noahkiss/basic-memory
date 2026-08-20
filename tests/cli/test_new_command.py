@@ -306,7 +306,7 @@ def test_new_writes_a_permalink_equal_to_the_id() -> None:
     metadata = written_frontmatter(written_file(project, result.stdout))
     assert metadata["permalink"] == metadata["id"]
     assert metadata["id"] == result.stdout.split()[0]
-    assert metadata["id"].startswith("tnd-")
+    assert metadata["id"].startswith("state-")  # U30: the type word is the prefix
 
 
 def test_new_writes_the_type_date_with_its_provenance() -> None:
@@ -826,6 +826,8 @@ def test_new_files_an_unknown_type_as_inbox_and_says_so() -> None:
 
     assert result.exit_code == 0, result.output
     assert result.stdout.split()[1] == "inbox"
+    # U30: the hatch stamps inbox, so the id says inbox- — never the proposal.
+    assert result.stdout.split()[0].startswith("inbox-")
     metadata = written_frontmatter(written_file(project, result.stdout))
     assert metadata["type"] == "inbox"
     assert metadata["proposed-type"] == "runbook"
@@ -1109,7 +1111,7 @@ def test_new_prints_one_row_a_count_line_and_an_affordance() -> None:
     assert result.exit_code == 0, result.output
     lines = result.stdout.strip().splitlines()
     columns = lines[0].split("  ")
-    assert columns[0].startswith("tnd-")
+    assert columns[0].startswith("task-")  # U30
     assert columns[1] == "task"
     assert lines[1] == "1 record"
     assert lines[-1] == new_command.NEW_AFFORDANCE
@@ -1142,6 +1144,8 @@ def test_new_resolves_an_alias_and_stamps_the_canonical_type() -> None:
 
     assert result.exit_code == 0, result.output
     assert result.stdout.split()[1] == "finding"
+    # U30: the id carries the CANONICAL word, so an alias never reaches it.
+    assert result.stdout.split()[0].startswith("finding-")
     metadata = written_frontmatter(written_file(project, result.stdout))
     assert metadata["type"] == "finding"
     assert "proposed-type" not in metadata

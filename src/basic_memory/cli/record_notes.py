@@ -497,7 +497,7 @@ async def resolve_write_project(session: "AsyncSession", project_name: str) -> W
     )
 
 
-async def allocate_record_id(session: "AsyncSession", project_id: int) -> str:
+async def allocate_record_id(session: "AsyncSession", project_id: int, note_type: str) -> str:
     """Draw a record id no note in this project already claims.
 
     `vocabulary/ids.py` owns the draw, the attempt count and the error; only the
@@ -505,12 +505,16 @@ async def allocate_record_id(session: "AsyncSession", project_id: int) -> str:
     module's `allocate_record_id` takes a synchronous predicate. The permalink
     column is what is checked: `permalink == id` byte-for-byte is the record
     schema's identity rule (§2), so a taken permalink is a taken id.
+
+    ``note_type`` is the canonical type the write resolved — the id's prefix
+    carries it (U30), so the hatch's inbox records draw `inbox-…` ids and an
+    alias write draws the id of the type it stamped.
     """
     from basic_memory.repository.entity_repository import EntityRepository
 
     repository = EntityRepository(project_id=project_id)
     for _ in range(MAX_ID_ATTEMPTS):
-        candidate = new_record_id()
+        candidate = new_record_id(note_type)
         if not await repository.permalink_exists(session, candidate):
             return candidate
     raise IdAllocationError(

@@ -239,7 +239,8 @@ PROBE_SOURCE = (
         record_id = created.stdout.strip().splitlines()[0].split()[0]
         # The id leads the payload row. Asserting its shape here means a stray
         # line above it fails the probe instead of silently probing a bad id.
-        assert record_id.startswith("tnd-"), created.stdout
+        # U30: a fresh write's id opens with its canonical type word.
+        assert record_id.startswith(f"{seed_type}-"), created.stdout
         command = [record_id if part == SEEDED else part for part in command]
 
     if command[0] == "mine":

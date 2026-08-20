@@ -51,7 +51,7 @@ change to these rules, recorded here.
 **`bm path <id>` prints one absolute path and nothing else.** No count line, no notices, no
 affordances, and therefore no `--quiet` to turn them off.
 
-The reason is the verb's only use: `$EDITOR "$(bm path tnd-q8w3e1r5)"`. A command substitution
+The reason is the verb's only use: `$EDITOR "$(bm path finding-q8w3e1r5)"`. A command substitution
 takes every line of stdout, so a count line or a next-step hint would be passed to the editor as a
 file name. A verb whose output is an argument cannot carry commentary.
 

@@ -7432,6 +7432,36 @@ Test-fixture consequence, recorded because it will bite again: the CLI and regis
 `$HOME` — invisible by design after this fix. Six tests did; they now nest the marked tree one
 level down. Put new markers in a subdirectory of `tmp_path`, never at its root.
 
+### U30 — record ids opened with `tnd-`, a codename that told the reader nothing — **FOUND + FIXED 2026-08-20**
+
+**Found 2026-08-20** (user): agents report record ids back in conversation — "Recorded as
+`tnd-yke6e8dz`" — and several people asked what `tnd` means. It is the `tend` design codename
+(AGENTS.md: a codename, not a command), which no user-facing surface explains, so the one string
+every report quotes carried zero information. The user's proposal: the record's type, in full.
+
+**Fixed 2026-08-20.** A new id is `<canonical-type>-<8 chars>` from the unchanged 36-symbol
+alphabet: `task-yke6e8dz`, `finding-8xk3p2q1`. Decisions, all in `vocabulary/ids.py`:
+
+- **The prefix is the full type word, never an abbreviation.** It cannot lie because type is
+  set-once — there is no `bm edit --type`, and inbox triage is `bm new` + `bm rm` (U27). An alias
+  write stamps the canonical type before the draw, so `bm new todo` yields a `task-` id; the W4
+  hatch stamps `inbox`, so a proposal's id says `inbox-`, never the proposed name.
+- **Both shapes are valid forever.** An id is a permanent name: nothing rewrites an existing
+  record, and one validation pattern (`^[a-z][a-z0-9-]*-<8 chars>$`) covers old and new because
+  `tnd` parses as a well-formed type slug. The pattern stays ignorant of any project's declared
+  types — an id from another project or a since-narrowed vocabulary must still parse. The trailing
+  `-<8 chars>` is the discriminator; a prefix is never parsed back into a type.
+- **Custom declared types slugify into their prefix** (`Run Book` → `run-book-…`) with hyphen runs
+  collapsed, so an id can never contain the file name's `--` separator. A type name that folds to
+  nothing or opens with a digit takes `record-` — identity is the random body, so a generic prefix
+  is a cosmetic loss, never a refusal.
+- The old constant survives as `LEGACY_ID_PREFIX`, and `new_record_id`/`allocate_record_id` now
+  take the canonical type. Teaching examples in help text moved to the new shape; fixtures that
+  guard legacy acceptance deliberately keep `tnd-`.
+
+No migration: the ~3250 migrated records keep their `tnd-` names, links keep resolving, and mixed
+listings are expected output, not corruption.
+
 ## Docs swept
 
 **2026-07-26.** A ten-reader sweep reconciled the following into this file. The gaps they contained
