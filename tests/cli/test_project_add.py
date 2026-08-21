@@ -317,6 +317,30 @@ def test_project_add_here_writes_both_marker_keys(
     assert str(marker) in result.stdout
 
 
+def test_project_add_here_only_here_narrows_the_marker(
+    runner,
+    mock_config,
+    stub_create_project,
+    write_registry_file,
+    registry_external_id,
+    monkeypatch,
+    tmp_path,
+):
+    """`--only-here` is how a catch-all workspace project gets a home (GAPS U40)."""
+    work = tmp_path / "work"
+    work.mkdir()
+    monkeypatch.chdir(work)
+    write_registry_file({"workspace": str(tmp_path / "store")}, default="workspace")
+
+    result = runner.invoke(app, ["project", "add", "workspace", "--here", "--only-here"])
+
+    assert result.exit_code == 0, result.output
+    assert (work / ".bm.yml").read_text() == (
+        f"project: workspace\nid: {registry_external_id('workspace')}\nscope: here\n"
+    )
+    assert "(only here)" in result.stdout
+
+
 def test_project_add_without_here_writes_no_marker(
     runner, mock_config, stub_create_project, write_registry_file, monkeypatch, tmp_path
 ):
@@ -380,3 +404,13 @@ def test_project_add_here_records_the_repo(
     assert result.exit_code == 0, result.output
     assert lookup_project_repo("research") == "https://example.com/owner/research"
     assert "repo: https://example.com/owner/research" in result.stdout
+
+
+def test_add_only_here_without_here_is_refused(runner, tmp_path, monkeypatch):
+    """`--only-here` qualifies the marker `--here` writes; alone it would be a silent no-op."""
+    monkeypatch.chdir(tmp_path)
+    result = runner.invoke(app, ["project", "add", "orphan", "--only-here"])
+    assert result.exit_code != 0
+    assert "--only-here" in result.output
+    assert "pass both" in result.output
+    assert not (tmp_path / ".bm.yml").exists()

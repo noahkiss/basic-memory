@@ -61,6 +61,23 @@ def test_nested_marker_beats_its_parent(tmp_path, write_registry_file):
     assert scope.marker == nested.parent / ".bm.yml"
 
 
+def test_scope_here_marker_pins_its_own_directory_only(tmp_path, write_registry_file):
+    """A `scope: here` marker is a marker where it sits and nothing below it.
+
+    Reads in the workspace directory are pinned to the workspace project; reads
+    in a scratch folder under it are unscoped, because the walk climbs past the
+    narrowed marker as if it were absent (GAPS U40).
+    """
+    workspace = tmp_path / "develop"
+    scratch = workspace / "scratch"
+    scratch.mkdir(parents=True)
+    write_registry_file({"workspace": str(workspace), "other": "/tmp/other"}, default="other")
+    (workspace / ".bm.yml").write_text("project: workspace\nscope: here\n")
+
+    assert resolve_read_scope(None, workspace).project == "workspace"
+    assert resolve_read_scope(None, scratch).project is None
+
+
 def test_no_marker_reads_every_project(tmp_path, write_registry_file):
     """The decision: an unmarked cwd is unscoped, not the default project."""
     write_registry_file({"main": str(tmp_path)}, default="main")

@@ -7691,6 +7691,50 @@ The tripwire for the next defaults change lives in `tests/vocabulary/test_vocabu
 a pinned fingerprint literal fails the suite until the superseded generation is appended to
 `HISTORICAL_DEFAULT_DOCUMENTS`.
 
+### U40 — bare `~/develop` had no home, and a marker there would have claimed every scratch folder below it — **FOUND + FIXED 2026-08-21**
+
+**Decided against 2026-08-18** (record tnd-yqml1m8a): no workspace project. A marker at the
+workspace root is the U29 capture trap in its widest form, and the repos under it are marked
+individually anyway, so a project covering the whole directory looked like all cost and no gain.
+
+**Reversed 2026-08-21** (user): work happens in the bare directory too. A session started in
+`~/develop` itself — comparing repos, planning which one to open — had nowhere to put what it
+decided. Reads there were unscoped, which is honest, but writes fell through the marker chain to
+the **registry default project**, silently filing a workspace decision under whatever project
+happened to be default. The decision was right about the trap and wrong about the need: what was
+missing was a marker that does not inherit.
+
+**Fixed 2026-08-21.** A third marker key, `scope:`, with two values — `tree` (the default, and what
+every marker written before today means) and `here`:
+
+- **`scope: here` is transparent from below.** `find_marker` returns such a marker only when the
+  walk *starts* in its own directory; from a subdirectory it climbs past as if the file were not
+  there. Transparent, not a stop — a plain marker higher up still resolves. The `.git` check still
+  runs on the skipped directory, so a repo whose own marker is narrowed still bounds the walk.
+  Both chains (`resolve_cli_project`, `cli/scope.resolve_read_scope`) go through `find_marker`, so
+  one gate covers every verb.
+- **Strict, like the other keys.** Any other `scope:` value raises `MarkerError` naming the marker
+  and the value. A misspelling that silently widened the marker back to the tree is exactly the
+  failure this key exists to prevent.
+- **`--only-here`** on `bm project mark` and on `bm project add --here` writes it;
+  `render_marker(only_here=True)` appends the third fixed line, keeping the hand-written
+  one-key-per-line shape shell consumers grep. `mark` prints `marker: <path> (only here)`, read
+  back off the file rather than off the flag.
+
+**Judgment call — the retrofit preserves the scope.** `write_marker`'s `only_here` is three-state:
+`True`/`False` set it, `None` keeps what the existing marker declares. `bm project mark` with no
+argument is the U21 id-retrofit path and runs on markers a human narrowed; widening one as a side
+effect of filling in an id would undo this fix silently, months later, for a reason nothing in the
+output would explain. Widening is therefore deliberate only: delete the `scope:` line, or call the
+library with `only_here=False`. A bare CLI flag cannot express three states, so no flag maps to
+`None` rather than to `False`. `bm project add --only-here` without `--here` is refused outright:
+there is no marker for it to narrow, and a silent no-op would read as success.
+
+**Also, outside this repo:** the session hooks now honour a marker at the track root, so a session
+opened in the bare workspace directory tracks the workspace project instead of falling to the
+default. That change is on the machine, not in this tree; it is recorded here because the two only
+make sense together.
+
 ## Docs swept
 
 **2026-07-26.** A ten-reader sweep reconciled the following into this file. The gaps they contained

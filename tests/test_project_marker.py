@@ -16,6 +16,7 @@ from basic_memory.project_marker import (
     find_marker,
     marker_conflict,
     read_marker_id,
+    read_marker_only_here,
     read_marker_project,
     render_marker,
     resolve_cli_project,
@@ -108,6 +109,91 @@ def test_find_marker_without_git_still_walks_a_plain_tree(tmp_path):
     nested = tmp_path / "a" / "b" / "c"
     nested.mkdir(parents=True)
     assert find_marker(nested) == tmp_path / ".bm.yml"
+
+
+# --- find_marker and `scope: here` (GAPS U40) ---
+
+
+def test_find_marker_scope_here_applies_in_its_own_directory(tmp_path):
+    """The narrowed marker is a normal marker where it sits — that is the point."""
+    workspace = tmp_path / "develop"
+    workspace.mkdir()
+    (workspace / ".bm.yml").write_text("project: workspace\nid: abc-123\nscope: here\n")
+    assert find_marker(workspace) == workspace / ".bm.yml"
+
+
+def test_find_marker_scope_here_is_invisible_from_a_subdirectory(tmp_path):
+    """A scratch folder under the workspace has no repo of its own to stop the walk."""
+    workspace = tmp_path / "develop"
+    scratch = workspace / "scratch"
+    scratch.mkdir(parents=True)
+    (workspace / ".bm.yml").write_text("project: workspace\nid: abc-123\nscope: here\n")
+    assert find_marker(scratch) is None
+
+
+def test_find_marker_scope_here_is_transparent_not_a_stop(tmp_path):
+    """Skipping the marker means climbing past it, not ending the walk."""
+    workspace = tmp_path / "ws"
+    middle = workspace / "mid"
+    leaf = middle / "leaf"
+    leaf.mkdir(parents=True)
+    (workspace / ".bm.yml").write_text("project: workspace\n")
+    (middle / ".bm.yml").write_text("project: middle\nid: abc-123\nscope: here\n")
+    assert find_marker(leaf) == workspace / ".bm.yml"
+
+
+def test_find_marker_scope_here_still_stops_at_its_own_git(tmp_path):
+    """The repo boundary is checked after the marker, skipped marker or not.
+
+    Positive control for the transparency test above: the outer marker *would*
+    be found if the skip also skipped the `.git` in the same directory.
+    """
+    workspace = tmp_path / "ws"
+    repo = workspace / "repo"
+    nested = repo / "src"
+    nested.mkdir(parents=True)
+    (repo / ".git").mkdir()
+    (workspace / ".bm.yml").write_text("project: workspace\n")
+    (repo / ".bm.yml").write_text("project: repo\nid: abc-123\nscope: here\n")
+    assert find_marker(nested) is None
+
+
+# --- read_marker_only_here (GAPS U40) ---
+
+
+@pytest.mark.parametrize(
+    "content",
+    ["project: research\n", "project: research\nscope: tree\n"],
+)
+def test_read_marker_only_here_is_false_by_default(tmp_path, content):
+    """An absent key means `tree`, which is what every pre-U40 marker means."""
+    marker = tmp_path / ".bm.yml"
+    marker.write_text(content)
+    assert read_marker_only_here(marker) is False
+
+
+def test_read_marker_only_here_reads_the_narrowed_scope(tmp_path):
+    marker = tmp_path / ".bm.yml"
+    marker.write_text("project: research\nscope: here\n")
+    assert read_marker_only_here(marker) is True
+
+
+def test_find_marker_unknown_scope_raises_in_own_directory(tmp_path):
+    """Strictness is position-independent: the start directory's marker is parsed too."""
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    (workspace / ".bm.yml").write_text("project: research\nscope: everywhere\n")
+    with pytest.raises(MarkerError, match="everywhere"):
+        find_marker(workspace)
+
+
+def test_read_marker_unknown_scope_raises(tmp_path):
+    """A misspelled scope must not silently widen the marker back to the tree."""
+    marker = tmp_path / ".bm.yml"
+    marker.write_text("project: research\nscope: everywhere\n")
+    with pytest.raises(MarkerError, match="everywhere") as exc_info:
+        read_marker_only_here(marker)
+    assert str(marker) in str(exc_info.value)
 
 
 # --- read_marker_project (strict) ---
@@ -210,6 +296,28 @@ def test_write_marker_retrofits_a_name_only_marker(tmp_path):
     assert read_marker_id(marker) == "abc-123"
 
 
+def test_render_marker_only_here_adds_a_third_line():
+    """The narrowed shape is three fixed lines, still greppable one at a time."""
+    assert render_marker("research", "abc-123", only_here=True) == (
+        "project: research\nid: abc-123\nscope: here\n"
+    )
+
+
+def test_write_marker_preserves_an_existing_scope(tmp_path):
+    """The retrofit must not widen a marker as a side effect of filling in the id."""
+    (tmp_path / ".bm.yml").write_text("project: research\nscope: here\n")
+    marker = write_marker(tmp_path, "research", "abc-123")
+    assert read_marker_id(marker) == "abc-123"
+    assert read_marker_only_here(marker) is True
+
+
+def test_write_marker_widens_a_narrowed_marker_only_when_told(tmp_path):
+    """Positive control for the preserve path: False is how the scope comes off."""
+    (tmp_path / ".bm.yml").write_text("project: research\nscope: here\n")
+    marker = write_marker(tmp_path, "research", "abc-123", only_here=False)
+    assert marker.read_text() == "project: research\nid: abc-123\n"
+
+
 def test_write_marker_refuses_a_foreign_marker(tmp_path):
     (tmp_path / ".bm.yml").write_text("project: someone-else\n")
     with pytest.raises(MarkerError, match="already names project 'someone-else'"):
@@ -267,6 +375,25 @@ def test_resolve_unregistered_marker_raises(tmp_path, write_registry_file):
 def test_resolve_no_marker_falls_back_to_default(tmp_path, write_registry_file):
     write_registry_file({"main": str(tmp_path)}, default="main")
     assert resolve_cli_project(None, tmp_path) == "main"
+
+
+def test_resolve_scope_here_marker_covers_its_own_directory_only(tmp_path, write_registry_file):
+    """The write chain reads the same walk: narrowed here, default one level down.
+
+    A write in the workspace directory itself lands in the workspace project; a
+    write in a scratch folder under it falls to the registry default, exactly as
+    it did before the workspace was ever marked (GAPS U40).
+    """
+    workspace = tmp_path / "develop"
+    scratch = workspace / "scratch"
+    scratch.mkdir(parents=True)
+    write_registry_file(
+        {"workspace": str(tmp_path / "store"), "main": str(tmp_path / "other")}, default="main"
+    )
+    (workspace / ".bm.yml").write_text("project: workspace\nscope: here\n")
+
+    assert resolve_cli_project(None, workspace) == "workspace"
+    assert resolve_cli_project(None, scratch) == "main"
 
 
 def test_resolve_marker_without_project_key_falls_back(tmp_path, write_registry_file):

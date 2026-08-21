@@ -88,8 +88,8 @@ id. `bm` is the short name for `basic-memory`; both run the same commands.
 | `bm doctor` | Check the notes against the index and report what needs a person. Exits 1 when integrity found something; hygiene alone exits 0, `--strict` exits 1 on either. |
 | `bm status` | Report what is indexed and what is not. |
 | `bm project list` | List projects. `project info` describes one. |
-| `bm project add <name>` | Create a project, homed in the store. `--governed` turns the schema checks on; `--here` also writes a `.bm.yml` in the current directory pointing at it. |
-| `bm project mark [<name>]` | Point the current directory at a project by writing its `.bm.yml`. With no name it refreshes the marker that is already there, which is how a marker written before `bm` recorded ids gains one. |
+| `bm project add <name>` | Create a project, homed in the store. `--governed` turns the schema checks on; `--here` also writes a `.bm.yml` in the current directory pointing at it, and `--only-here` keeps that marker from covering subdirectories. |
+| `bm project mark [<name>]` | Point the current directory at a project by writing its `.bm.yml`. With no name it refreshes the marker that is already there, which is how a marker written before `bm` recorded ids gains one. `--only-here` writes `scope: here`, so subdirectories do not inherit the marker. |
 
 ### Dates on a record
 
@@ -124,13 +124,15 @@ project you added with a path of its own still works; it keeps no history, and
 says so on each write.
 
 Which project a command uses: `--project`, then the nearest `.bm.yml` above the
-working directory. A read with neither covers every project; a write with neither
-goes to the default project.
+working directory — skipping any that carries `scope: here`, which counts only
+in its own directory. A read with neither covers every project; a write with
+neither goes to the default project.
 
 ### Reading a project's files without running `bm`
 
-A `.bm.yml` carries two keys — `project:`, the name, and `id:`, the project's
-store directory. Any `bm` command costs at least 0.15 s, which is too slow for a
+A `.bm.yml` carries three keys — `project:`, the name; `id:`, the project's
+store directory; and an optional `scope: here`, which stops the marker covering
+subdirectories. Any `bm` command costs at least 0.15 s, which is too slow for a
 statusline, so a script reads the store directly instead:
 
 ```bash

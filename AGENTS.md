@@ -85,7 +85,9 @@ project-root-versus-store divergence to reconcile. The store path must derive fr
 A **`.bm.yml`** marker is a **pointer, not a container**. It sits at the root of a *working*
 directory — usually a code repo you run `bm` from — and says "when I am here, I mean this project."
 It never has note content beside it. The id in it is authoritative; any directory name inside the
-store is a human-browsing label that nothing reads.
+store is a human-browsing label that nothing reads. A marker that also carries `scope: here`
+(written by `--only-here`) claims its own directory alone — that is what lets a catch-all workspace
+project sit at `~/develop` without capturing the unmarked folders below it (GAPS U40).
 
 Consequences, all deliberate:
 

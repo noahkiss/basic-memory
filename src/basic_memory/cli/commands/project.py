@@ -108,7 +108,7 @@ def list_projects(
     emit_notices(ReadScope(project=None, origin="unscoped"), quiet=quiet, command="project list")
 
 
-def mark_here(name: str) -> None:
+def mark_here(name: str, only_here: Optional[bool] = None) -> None:
     """Write the current directory's `.bm.yml` for a registered project (GAPS U21).
 
     Both the marker's keys are resolved from the registry rather than taken from
@@ -116,11 +116,20 @@ def mark_here(name: str) -> None:
     written from a permalink still resolves, and `id:` is the project's
     `external_id`, which is also its store directory name.
 
+    `only_here` is the `scope:` key (GAPS U40): True narrows the marker to this
+    directory, False widens it to the tree, and None — what a caller that did
+    not ask passes — keeps whatever an existing marker declares.
+
     Reads the registry through the synchronous sqlite path, not the service
     layer — the marker write needs two columns of one row, and this keeps the
     verb off the SQLAlchemy import (AGENTS.md, "Measured baseline").
     """
-    from basic_memory.project_marker import MarkerError, repo_identity, write_marker
+    from basic_memory.project_marker import (
+        MarkerError,
+        read_marker_only_here,
+        repo_identity,
+        write_marker,
+    )
     from basic_memory.project_registry import (
         lookup_project_external_id,
         lookup_project_repo,
@@ -132,7 +141,7 @@ def mark_here(name: str) -> None:
         raise fail(f"Error: '{name}' is not a registered project (see 'bm project list')")
 
     try:
-        marker = write_marker(Path.cwd(), registered, external_id)
+        marker = write_marker(Path.cwd(), registered, external_id, only_here=only_here)
     except MarkerError as error:
         raise fail(f"Error: {error}")
     except OSError as error:
@@ -163,7 +172,11 @@ def mark_here(name: str) -> None:
     typer.echo(f"id: {external_id}")
     if repo_line is not None:
         typer.echo(f"repo: {repo_line}")
-    typer.echo(f"marker: {marker}")
+    # Read back rather than echo the flag: on the preserve path (`only_here` is
+    # None) the file is the only place that knows which shape was written, and
+    # what the user needs told is what is now on disk (GAPS U40).
+    scope_note = " (only here)" if read_marker_only_here(marker) else ""
+    typer.echo(f"marker: {marker}{scope_note}")
 
 
 @project_app.command("mark")
@@ -177,6 +190,11 @@ def mark_project(
         help="Mark only when a registered project's recorded repo equals this "
         "directory's git origin URL. Exit 3 on no match, 4 when several match.",
     ),
+    only_here: bool = typer.Option(
+        False,
+        "--only-here",
+        help="Mark only this directory; subdirectories do not inherit the marker",
+    ),
 ) -> None:
     """Point the current directory at a project by writing its `.bm.yml`.
 
@@ -184,6 +202,13 @@ def mark_project(
     reach `<store>/<id>/headline.md` without paying for a `bm` invocation. This
     is also the retrofit path: a marker written before the id existed carries
     only the name, and `bm project mark` with no argument fills the id in.
+
+    `--only-here` writes `scope: here`, which stops the marker at its own
+    directory: a catch-all workspace project can then sit at `~/develop`
+    without claiming the scratch folders under it (GAPS U40). Without the flag
+    the scope an existing marker declares is kept, so the retrofit above never
+    widens a marker behind the user's back — delete the `scope:` line to widen
+    one deliberately.
 
     Marking also records the directory's git origin URL on the project (GAPS
     U36), which is what `--if-repo-matches` later matches against: markers are
@@ -200,7 +225,12 @@ def mark_project(
         bm project mark research
         bm project mark
         bm project mark --if-repo-matches
+        bm project mark workspace --only-here
     """
+    # A bare flag is two-state, and the scope is three: absent must mean
+    # "preserve", not "widen to the tree" — see `write_marker` (GAPS U40).
+    requested_scope = True if only_here else None
+
     if if_repo_matches:
         from basic_memory.project_marker import repo_identity
         from basic_memory.project_registry import lookup_projects_by_repo
@@ -227,7 +257,7 @@ def mark_project(
             )
             raise typer.Exit(4)
 
-        mark_here(matches[0][0])
+        mark_here(matches[0][0], requested_scope)
         return
 
     if name is None:
@@ -246,7 +276,7 @@ def mark_project(
                 "Error: no .bm.yml here to refresh — name the project: bm project mark <name>"
             )
 
-    mark_here(name)
+    mark_here(name, requested_scope)
 
 
 @project_app.command("vocab-sync")
@@ -336,6 +366,11 @@ def add_project(
         "--here",
         help="Write a .bm.yml in the current directory pointing at the new project.",
     ),
+    only_here: bool = typer.Option(
+        False,
+        "--only-here",
+        help="Mark only this directory; subdirectories do not inherit the marker",
+    ),
     quiet: bool = typer.Option(False, "--quiet", help="Hide the status lines and next-step hints"),
 ) -> None:
     """Add a new project, homed in the store.
@@ -351,7 +386,8 @@ def add_project(
     a governed project — what governance costs is that every write is checked.
 
     `--here` leaves a `.bm.yml` in the current directory, so every `bm` command
-    run from it means this project without naming it.
+    run from it means this project without naming it. Add `--only-here` to stop
+    the marker at that directory, leaving subdirectories unclaimed (GAPS U40).
 
     Example:
         bm project add research
@@ -361,6 +397,8 @@ def add_project(
     # Why: refusing after the create would leave a registered project behind and
     #     report a failure, so the caller could not tell what had happened.
     # Outcome: a foreign marker fails the whole command with nothing created.
+    if only_here and not here:
+        raise fail("Error: --only-here narrows the marker that --here writes; pass both")
     if here:
         from basic_memory.project_marker import MarkerError, marker_conflict
 
@@ -410,7 +448,9 @@ def add_project(
     # `external_id` is assigned by the service, and the registry is where it is
     # readable without depending on what the response happened to carry.
     if here:
-        mark_here(name)
+        # Same two-into-three mapping as `mark`: no flag means "preserve", so
+        # no path in this file can widen a narrowed marker silently (GAPS U40).
+        mark_here(name, True if only_here else None)
 
     # Trigger: the caller named a directory instead of taking the store default.
     # Why: notes outside `store/<id>/` are not in the history repo's worktree, so

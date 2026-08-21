@@ -13,7 +13,7 @@ import pytest
 from typer.testing import CliRunner
 
 from basic_memory.cli.app import app
-from basic_memory.project_marker import read_marker_id, read_marker_project
+from basic_memory.project_marker import read_marker_id, read_marker_only_here, read_marker_project
 
 # Importing registers project subcommands on the shared app instance.
 import basic_memory.cli.commands.project  # noqa: F401
@@ -114,6 +114,43 @@ def test_mark_does_not_default_from_a_parent_marker(runner, work_dir, monkeypatc
     assert result.exit_code == 1
     assert "bm project mark <name>" in result.stderr
     assert not (nested / ".bm.yml").exists()
+
+
+# --- `--only-here`: the marker that claims one directory (GAPS U40) ---
+
+
+def test_mark_only_here_writes_the_scope_and_says_so(runner, work_dir, registry_external_id):
+    """The flag's whole job is visible in the file and in the output line."""
+    result = runner.invoke(app, ["project", "mark", "research", "--only-here"])
+
+    assert result.exit_code == 0, result.output
+    marker = work_dir / ".bm.yml"
+    assert marker.read_text() == (
+        f"project: research\nid: {registry_external_id('research')}\nscope: here\n"
+    )
+    assert "(only here)" in result.stdout
+
+
+def test_mark_without_the_flag_keeps_an_existing_scope(runner, work_dir, registry_external_id):
+    """The retrofit path must not widen a marker the human narrowed."""
+    (work_dir / ".bm.yml").write_text("project: research\nscope: here\n")
+
+    result = runner.invoke(app, ["project", "mark"])
+
+    assert result.exit_code == 0, result.output
+    marker = work_dir / ".bm.yml"
+    assert read_marker_id(marker) == registry_external_id("research")
+    assert read_marker_only_here(marker) is True
+    assert "(only here)" in result.stdout
+
+
+def test_mark_without_the_flag_leaves_a_plain_marker_plain(runner, work_dir):
+    """Positive control: the scope line is the flag's doing, not the verb's."""
+    result = runner.invoke(app, ["project", "mark", "research"])
+
+    assert result.exit_code == 0, result.output
+    assert "scope:" not in (work_dir / ".bm.yml").read_text()
+    assert "(only here)" not in result.stdout
 
 
 # --- repo identity capture and --if-repo-matches (GAPS U36) ---

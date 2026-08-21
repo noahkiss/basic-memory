@@ -10,11 +10,13 @@ The marker is a **pointer, not a container**: it sits at the root of a working
 directory (usually a code repo you run `bm` from) and never has note content
 beside it. Note content lives only in the central store at `store/<id>/`.
 
-A marker carries two keys and ignores everything else, so it stays
+A marker carries three keys and ignores everything else, so it stays
 forward-compatible with whatever it grows into:
 
 - `project:` — the project name, and the key **resolution** uses.
 - `id:` — the project's `external_id`, which is also its store directory name.
+- `scope:` — `tree` (the default, and the shape every marker had before GAPS
+  U40) or `here`, which makes the marker apply to its own directory alone.
 
 The id is written for consumers that cannot afford a `bm` call: a statusline
 reads `store/<id>/headline.md` directly, and the 0.15 s floor for any `bm`
@@ -28,9 +30,10 @@ that must never fail (`bm brief` on session start) catch `MarkerError` and
 degrade themselves.
 
 The marker *search* is bounded (GAPS U29): the walk up from cwd stops at the
-first `.git` boundary (inclusive) and never consults `$HOME` or its ancestors.
-Both the write chain here and the read scope in `cli/scope.py` resolve through
-the same `find_marker`, so the boundary holds for every verb at once.
+first `.git` boundary (inclusive) and never consults `$HOME` or its ancestors,
+and a `scope: here` marker bounds itself (GAPS U40). Both the write chain here
+and the read scope in `cli/scope.py` resolve through the same `find_marker`, so
+the boundaries hold for every verb at once.
 """
 
 from __future__ import annotations
@@ -39,6 +42,11 @@ from pathlib import Path
 from typing import Optional
 
 MARKER_FILENAME = ".bm.yml"
+
+# The two `scope:` values. `tree` is what every marker written before GAPS U40
+# means, so it is also what an absent key means; `here` is the narrowed shape.
+MARKER_SCOPE_TREE = "tree"
+MARKER_SCOPE_HERE = "here"
 
 
 class MarkerError(ValueError):
@@ -49,7 +57,7 @@ def find_marker(start: Path) -> Optional[Path]:
     """Walk up from `start` looking for a `.bm.yml` project marker.
 
     Returns the first marker found, so a nested project wins over the one above
-    it. The walk honours two boundaries (GAPS U29):
+    it. The walk honours three boundaries (GAPS U29, U40):
 
     - **A repo boundary is inclusive and final.** The first directory holding a
       `.git` (a directory, or the file a worktree or submodule leaves) is the
@@ -61,6 +69,16 @@ def find_marker(start: Path) -> Optional[Path]:
       the workspace-capture trap in its widest form. This ceiling is also what
       keeps a dotfiles-style `~/.git` from reading as a repo boundary: the walk
       stops at `$HOME` before it would ever consult it.
+    - **A `scope: here` marker is invisible from below.** It resolves only when
+      the walk *starts* in its own directory; from a subdirectory the walk
+      climbs past it as if the file were not there. That is what lets a
+      catch-all workspace project sit at `~/develop` — so a discussion held in
+      the bare directory has a home — without claiming the scratch folders
+      under it, which have no repo boundary of their own to stop the walk
+      (GAPS U40).
+
+    Raises MarkerError when a marker on the walk carries an unusable `scope:`
+    value; deciding whether the file applies means reading it.
     """
     home = Path.home()
     # $HOME itself and everything above it. Precomputed as a set: the walk
@@ -71,8 +89,15 @@ def find_marker(start: Path) -> Optional[Path]:
         if directory in never_searched:
             return None
         candidate = directory / MARKER_FILENAME
+        # The scope is read wherever a marker exists, including the start
+        # directory where it cannot change the answer: a malformed `scope:`
+        # must fail the same way from every directory, not only from below.
+        # The walk's usual step — a directory with no marker — stays a stat
+        # with no YAML parse behind it.
         if candidate.is_file():
-            return candidate
+            only_here = read_marker_only_here(candidate)
+            if directory == start or not only_here:
+                return candidate
         # After the marker check, so the repo root itself is still searched.
         if (directory / ".git").exists():
             return None
@@ -171,19 +196,43 @@ def read_marker_id(marker: Path) -> Optional[str]:
     return _read_marker_key(marker, "id")
 
 
-def render_marker(project: str, external_id: str) -> str:
-    """The two-key marker document, hand-written rather than dumped by PyYAML.
+def read_marker_only_here(marker: Path) -> bool:
+    """Whether this marker claims its own directory alone (`scope: here`).
+
+    An absent key reads as `tree`, which is what every marker written before
+    GAPS U40 means and what the walk has always done. Any other value raises:
+    a misspelled scope silently widening a marker back to the whole tree is the
+    exact failure U40 exists to prevent.
+    """
+    scope = _read_marker_key(marker, "scope")
+    if scope is None or scope == MARKER_SCOPE_TREE:
+        return False
+    if scope != MARKER_SCOPE_HERE:
+        raise MarkerError(
+            f"Invalid project marker {marker}: 'scope' must be "
+            f"'{MARKER_SCOPE_TREE}' or '{MARKER_SCOPE_HERE}', not '{scope}'"
+        )
+    return True
+
+
+def render_marker(project: str, external_id: str, *, only_here: bool = False) -> str:
+    """The marker document, hand-written rather than dumped by PyYAML.
 
     A marker is read by shell and JS consumers as often as by `bm`, and several
-    of them grep it line by line. Emitting the two keys in a fixed order, one per
+    of them grep it line by line. Emitting the keys in a fixed order, one per
     line, unquoted, is what keeps `grep '^id:'` a valid way to read it — a YAML
     dump reserves the right to reorder or quote, and a working marker would then
     stop parsing for reasons nothing in this tree would explain.
 
-    Neither value can need quoting: a project name is registry-validated and an
-    external id is a UUID4.
+    `only_here` appends the third line, `scope: here`. It is omitted otherwise
+    rather than written as `scope: tree`, so the file a plain marker produces is
+    byte-identical to the one every earlier version wrote.
+
+    No value can need quoting: a project name is registry-validated, an external
+    id is a UUID4, and the scope is one of two literals.
     """
-    return f"project: {project}\nid: {external_id}\n"
+    scope_line = f"scope: {MARKER_SCOPE_HERE}\n" if only_here else ""
+    return f"project: {project}\nid: {external_id}\n{scope_line}"
 
 
 def marker_conflict(directory: Path, project: str) -> Optional[str]:
@@ -201,13 +250,21 @@ def marker_conflict(directory: Path, project: str) -> Optional[str]:
     return existing if existing is not None and existing != project else None
 
 
-def write_marker(directory: Path, project: str, external_id: str) -> Path:
+def write_marker(
+    directory: Path, project: str, external_id: str, *, only_here: bool | None = None
+) -> Path:
     """Write `<directory>/.bm.yml` for `project`, and return where it landed.
 
     Refuses when a marker is already there naming a *different* project: that
     directory is somebody else's working tree, and silently repointing it would
     send every later write in it to the wrong project. A marker naming this same
     project is rewritten, which is how a name-only marker gains its `id:`.
+
+    `only_here` is three-state on purpose. True and False set the scope; None
+    **preserves** whatever the existing marker declares, because the rewrite is
+    also the id-retrofit path — a bare `bm project mark` must not widen a marker
+    a human narrowed to one directory as a side effect of filling in its id
+    (GAPS U40).
     """
     if conflict := marker_conflict(directory, project):
         raise MarkerError(
@@ -216,7 +273,9 @@ def write_marker(directory: Path, project: str, external_id: str) -> Path:
         )
 
     marker = directory / MARKER_FILENAME
-    marker.write_text(render_marker(project, external_id), encoding="utf-8")
+    if only_here is None:
+        only_here = marker.is_file() and read_marker_only_here(marker)
+    marker.write_text(render_marker(project, external_id, only_here=only_here), encoding="utf-8")
     return marker
 
 
