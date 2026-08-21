@@ -249,6 +249,76 @@ def mark_project(
     mark_here(name)
 
 
+@project_app.command("vocab-sync")
+def vocab_sync(
+    name: Optional[str] = typer.Argument(
+        None, help="Project to sync. Defaults to the .bm.yml above the current directory."
+    ),
+    quiet: bool = typer.Option(False, "--quiet", help="Hide the notices."),
+) -> None:
+    """Bring a governed project's vocabulary up to the current defaults, additively.
+
+    The explicit half of GAPS U39: an untouched machine snapshot upgrades
+    itself, but a hand-edited `vocabulary.yml` is the human's file, so new
+    default names (a type like `plan`, a relation like `part_of`) wait here for
+    a human to ask. Additive only — nothing the file declares is removed or
+    reordered; missing default types, statuses, relations and aliases are
+    appended, and `areas`, `fields` and `review_months` pass through untouched.
+
+    Running it on an untouched snapshot performs the same upgrade the automatic
+    path would. Running it twice is a no-op that says so.
+    """
+    from basic_memory.project_marker import resolve_cli_project
+    from basic_memory.project_registry import lookup_project_external_id
+    from basic_memory.vocabulary.model import (
+        VocabularyError,
+        defaults_delta,
+        load_vocabulary,
+        matches_superseded_defaults,
+        sync_vocabulary_with_defaults,
+        upgrade_snapshot_vocabulary,
+    )
+
+    resolved = name if name is not None else resolve_cli_project(None)
+    if not resolved:
+        raise fail(
+            "Error: no project — pass a name, or run from a directory whose .bm.yml names one"
+        )
+    registered, external_id = lookup_project_external_id(resolved)
+    if registered is None or external_id is None:
+        raise fail(f"Error: '{resolved}' is not a registered project (see 'bm project list')")
+
+    try:
+        vocabulary = load_vocabulary(external_id)
+    except VocabularyError as error:
+        raise fail(f"Error: {error}")
+    if vocabulary is None:
+        raise fail(
+            f"Error: '{registered}' is not governed — there is no vocabulary to sync "
+            "('bm project add --governed' writes one at creation)"
+        )
+
+    delta = defaults_delta(vocabulary)
+    if delta.empty:
+        typer.echo("vocabulary already current")
+    elif matches_superseded_defaults(vocabulary):
+        # A snapshot converges on the canonical current defaults, not on an
+        # append-merge: the file stays byte-identical to a fresh one, which is
+        # what keeps it snapshot-detectable at the NEXT generation too.
+        upgrade_snapshot_vocabulary(external_id)
+        typer.echo(f"added {delta.describe()}")
+    else:
+        sync_vocabulary_with_defaults(external_id, vocabulary)
+        typer.echo(f"added {delta.describe()}")
+
+    # The write chain resolved the project, so the scope is pinned the same way
+    # record_write pins its own — and the notice pass is what revalidates the
+    # project's records against the vocabulary this command just changed.
+    emit_notices(
+        ReadScope(project=registered, origin="write"), quiet=quiet, command="project vocab-sync"
+    )
+
+
 @project_app.command("add")
 def add_project(
     name: str = typer.Argument(..., help="Name of the project"),

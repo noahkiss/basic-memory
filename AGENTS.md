@@ -138,7 +138,7 @@ The boundary is structural now, not aspirational: `basic_memory.cli.direct` is t
 for a native command to reach the service layer, and
 `tests/cli/test_native_command_import_guard.py` runs each native verb — `project list`, `project info`,
 `types`, `mine`, `doctor`, `brief`, `ls`, `show`, `path`, `new`, `headline`, `edit`, `mark`,
-`done`, `undo`, `rm`, `bug` — in a
+`done`, `undo`, `rm`, `bug`, `project vocab-sync`, and bare `bm` — in a
 subprocess, cold and warm, and fails if
 `api.app`, `mcp.tools`, `mcp.async_client`, `mcp.clients`, `fastapi`, or `dateparser` ever enter
 `sys.modules`. Model new fast verbs on `fetch_project_list` in `cli/commands/project.py`.
@@ -472,7 +472,9 @@ separate `get_client()` + `get_active_project()` pair inside an MCP tool.
   hygiene, plus machine-wide `--only usage` command stats; `--only <group>`, exit 1 on integrity issues, `--strict` for any; `--self-test` checks the
   file ↔ DB loop instead)
 - Projects: `project list` / `project ls` / `project add "name" ~/path` / `project info` /
-  `project default` / `project move` / `project remove`
+  `project default` / `project move` / `project remove` / `project mark` /
+  `project vocab-sync` (append what the current default vocabulary declares and a
+  hand-edited `vocabulary.yml` lacks; untouched machine snapshots upgrade themselves)
 - Config: `config list` (effective values, env overrides marked) / `config get <key>` /
   `config set <key> <value>` (validated through the config model) / `config unset <key>`
 - MCP tools from the shell: `basic-memory tool <tool-name>` — e.g.

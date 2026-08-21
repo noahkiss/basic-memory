@@ -104,6 +104,9 @@ class NoticeCounts:
     # rows are left out of every count above, so this is what keeps the reduced
     # numbers from reading as good news (GAPS V-J2).
     unreadable: tuple["UnreadableVocabulary", ...] = ()
+    # Projects whose untouched default vocabulary snapshot was rewritten to the
+    # current defaults on this pass (GAPS U39). Named once, when it happens.
+    upgraded: tuple[str, ...] = ()
     # False when the scope covers every project, which is what decides whether
     # the top reason names its project (GAPS W5-C).
     pinned: bool = True
@@ -132,6 +135,14 @@ def notice_lines(counts: NoticeCounts) -> list[str]:
         lines.append(
             f"vocabulary unreadable in '{first.project}' — its records are not counted below: "
             f"{first.path}{others} — run 'bm types'"
+        )
+
+    # One line per upgraded project, above the counts: the counts below were
+    # computed against the vocabulary the upgrade just installed (GAPS U39).
+    for name in counts.upgraded:
+        lines.append(
+            f"vocabulary in '{name}' upgraded to current defaults "
+            f"(was an untouched snapshot) — run 'bm types'"
         )
 
     if counts.violations:
@@ -224,7 +235,9 @@ async def gather_notice_counts(scope: "ReadScope") -> NoticeCounts:
         names = {project.id: project.name for project in readable}
         project_ids = list(names)
         if not project_ids:
-            return NoticeCounts(unreadable=scan.unreadable, pinned=scope.is_pinned)
+            return NoticeCounts(
+                unreadable=scan.unreadable, upgraded=scan.upgraded, pinned=scope.is_pinned
+            )
 
         violations = ViolationRepository()
         total = await violations.count_for_projects(session, project_ids)
@@ -264,6 +277,7 @@ async def gather_notice_counts(scope: "ReadScope") -> NoticeCounts:
         review_due=review_due,
         inbox=inbox,
         unreadable=scan.unreadable,
+        upgraded=scan.upgraded,
         dirty=dirty,
         pinned=scope.is_pinned,
     )

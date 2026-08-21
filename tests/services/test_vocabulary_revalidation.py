@@ -93,9 +93,13 @@ async def stored_rules(session_maker, project: Project) -> list[tuple[str, str]]
 
 
 async def revalidate(session_maker, project: Project) -> int:
-    """Run the trigger on its own session, the way a command would."""
+    """Run the trigger on its own session, the way a command would.
+
+    Returns the record count alone so the assertions below stay arithmetic;
+    the U39 upgrade flag has its own tests at the end of this file.
+    """
     async with db.scoped_session(session_maker) as session:
-        return await revalidate_if_vocabulary_changed(session, project)
+        return (await revalidate_if_vocabulary_changed(session, project)).revalidated
 
 
 async def stamp_of(session_maker, project: Project) -> str | None:
@@ -389,3 +393,75 @@ async def test_the_stamp_changes_when_the_file_does(test_project: Project) -> No
 
     vocabulary_path(test_project.external_id).unlink()
     assert vocabulary_stamp(test_project.external_id) == ""
+
+
+# --- U39: the auto-upgrade for untouched default snapshots ---
+
+# The v0.1.3 generation (GAPS U39): what `--governed` serialized for the 48
+# migrated projects — no `plan`, no `part_of`, no `aliases` key. Written here
+# with deliberately un-canonical formatting, because detection must compare
+# parsed values, never bytes.
+SNAPSHOT_G4 = {
+    "types": ["task", "guide", "finding", "profile", "state", "inbox", "note"],
+    "statuses": ["open", "doing", "blocked", "shelved", "done", "dropped"],
+    "areas": [],
+    "relations": ["relates_to", "derived_from", "supersedes"],
+    "review_months": 12,
+    "fields": {},
+}
+
+
+@pytest.mark.asyncio
+async def test_stamp_carries_the_defaults_fingerprint(test_project: Project) -> None:
+    """A defaults change must invalidate stamps while the file holds still."""
+    from basic_memory.vocabulary.model import defaults_fingerprint
+
+    govern(test_project)
+
+    assert vocabulary_stamp(test_project.external_id).endswith(f":{defaults_fingerprint()}")
+
+
+@pytest.mark.asyncio
+async def test_an_untouched_snapshot_upgrades_to_current_defaults(
+    session_maker,
+    test_project: Project,
+    entity_repository: EntityRepository,
+) -> None:
+    """A file equal to a superseded generation is machine property and moves."""
+    from basic_memory.vocabulary import load_vocabulary
+    from basic_memory.vocabulary.model import DEFAULT_VOCABULARY
+
+    async with db.scoped_session(session_maker) as session:
+        await make_entity(session, entity_repository, ON_VOCABULARY, "notes/on.md")
+    govern(test_project, **SNAPSHOT_G4)
+
+    async with db.scoped_session(session_maker) as session:
+        result = await revalidate_if_vocabulary_changed(session, test_project)
+
+    assert result.upgraded is True
+    assert load_vocabulary(test_project.external_id) == DEFAULT_VOCABULARY
+    # The stamp was taken from the rewritten bytes, so the next call is warm.
+    async with db.scoped_session(session_maker) as session:
+        again = await revalidate_if_vocabulary_changed(session, test_project)
+    assert again.revalidated == 0 and again.upgraded is False
+
+
+@pytest.mark.asyncio
+async def test_a_hand_edited_vocabulary_is_never_auto_touched(
+    session_maker,
+    test_project: Project,
+) -> None:
+    """One declaration of the human's own keeps the file theirs."""
+    from basic_memory.vocabulary import vocabulary_path
+
+    snapshot_types = SNAPSHOT_G4["types"]
+    assert isinstance(snapshot_types, list)
+    edited = {**SNAPSHOT_G4, "types": [*snapshot_types, "runbook"]}
+    govern(test_project, **edited)
+    before = vocabulary_path(test_project.external_id).read_bytes()
+
+    async with db.scoped_session(session_maker) as session:
+        result = await revalidate_if_vocabulary_changed(session, test_project)
+
+    assert result.upgraded is False
+    assert vocabulary_path(test_project.external_id).read_bytes() == before

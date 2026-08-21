@@ -15,6 +15,7 @@ The warm path is a ``stat``, a hash of a few hundred bytes, and one string
 compare, which is what lets the caller run this before every count query.
 """
 
+from dataclasses import dataclass
 from hashlib import sha256
 
 from sqlalchemy import func, select, update
@@ -31,8 +32,13 @@ from basic_memory.vocabulary import (
     load_vocabulary,
     vocabulary_path,
 )
+from basic_memory.vocabulary.model import (
+    defaults_fingerprint,
+    matches_superseded_defaults,
+    upgrade_snapshot_vocabulary,
+)
 
-__all__ = ["revalidate_if_vocabulary_changed", "vocabulary_stamp"]
+__all__ = ["RevalidationResult", "revalidate_if_vocabulary_changed", "vocabulary_stamp"]
 
 # Records re-checked per round trip. Revalidation reads whole frontmatter blocks,
 # so the whole corpus must not land in memory at once; keyset paging on the
@@ -49,16 +55,23 @@ _UNDECIDABLE_RULES: tuple[str, ...] = tuple(sorted(RELATION_DERIVED_RULES | HIST
 
 
 def vocabulary_stamp(external_id: str) -> str:
-    """Return the sha256 of a project's ``vocabulary.yml``, or ``""`` when absent.
+    """Return the stamp for a project's ``vocabulary.yml``, or ``""`` when absent.
 
     ``""`` is a real state, not a missing value: it says "checked, and this
     project is not governed". ``None`` on the column means nothing has checked it
     yet, which is why the two are kept apart.
+
+    The stamp is the file's sha256 **plus the current defaults' fingerprint**
+    (GAPS U39): a defaults change arrives as a new binary while every file's
+    bytes hold still, and a bytes-only stamp would never look again — so the
+    upgrade check below would never run. Folding the fingerprint in invalidates
+    every stored stamp exactly once per generation, which is the cold pass the
+    upgrade rides on.
     """
     path = vocabulary_path(external_id)
     if not path.is_file():
         return ""
-    return sha256(path.read_bytes()).hexdigest()
+    return f"{sha256(path.read_bytes()).hexdigest()}:{defaults_fingerprint()}"
 
 
 async def _recheck_every_record(
@@ -107,11 +120,27 @@ async def _recheck_every_record(
         last_id = rows[-1][0]
 
 
-async def revalidate_if_vocabulary_changed(session: AsyncSession, project: Project) -> int:
-    """Re-check every record in ``project`` if its vocabulary changed. Return how many.
+@dataclass(frozen=True, slots=True)
+class RevalidationResult:
+    """What one trigger run did: records rechecked, and whether U39 fired."""
 
-    Returns 0 when the stamp matches, which is the ordinary case and costs one
-    hash and one compare.
+    revalidated: int = 0
+    upgraded: bool = False
+
+
+async def revalidate_if_vocabulary_changed(
+    session: AsyncSession, project: Project
+) -> RevalidationResult:
+    """Re-check every record in ``project`` if its vocabulary changed.
+
+    Returns ``RevalidationResult(0, False)`` when the stamp matches, which is
+    the ordinary case and costs one hash and one compare.
+
+    On the cold path, a vocabulary that is a provably-untouched machine
+    snapshot of superseded defaults is first rewritten to the current defaults
+    (GAPS U39) — machine wrote it, machine may move it — and the revalidation
+    then runs against what the file now says. A hand-edited file is never
+    touched here; doctor reports its delta instead.
 
     A malformed ``vocabulary.yml`` raises ``VocabularyError`` and leaves the stamp
     alone, so the next call raises again. Stamping a file that could not be parsed
@@ -128,12 +157,22 @@ async def revalidate_if_vocabulary_changed(session: AsyncSession, project: Proje
     """
     stamp = vocabulary_stamp(project.external_id)
     if stamp == project.vocabulary_stamp:
-        return 0
+        return RevalidationResult()
 
     # Read a second time, as text, and only on the cold path: `load_vocabulary`
     # owns the parse and its error, and duplicating that here to save one read of
     # a few hundred bytes would give the file two parsers to keep in step.
     vocabulary = load_vocabulary(project.external_id)
+
+    upgraded = False
+    if vocabulary is not None and matches_superseded_defaults(vocabulary):
+        upgrade_snapshot_vocabulary(project.external_id)
+        vocabulary = load_vocabulary(project.external_id)
+        # The rewrite changed the bytes; stamp what will actually be on disk so
+        # the next call is warm again.
+        stamp = vocabulary_stamp(project.external_id)
+        upgraded = True
+
     repository = ViolationRepository(project_id=project.id)
 
     if vocabulary is None:
@@ -160,4 +199,4 @@ async def revalidate_if_vocabulary_changed(session: AsyncSession, project: Proje
         update(Project).where(Project.id == project.id).values(vocabulary_stamp=stamp)
     )
     project.vocabulary_stamp = stamp
-    return revalidated
+    return RevalidationResult(revalidated=revalidated, upgraded=upgraded)

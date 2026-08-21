@@ -114,6 +114,9 @@ class RevalidationScan:
 
     revalidated: int
     unreadable: tuple[UnreadableVocabulary, ...] = ()
+    # Projects whose untouched default snapshot was rewritten to the current
+    # defaults on this pass (GAPS U39) — the notice layer names each one once.
+    upgraded: tuple[str, ...] = ()
 
 
 async def direct_revalidate_vocabulary(project_name: str | None = None) -> RevalidationScan:
@@ -168,9 +171,10 @@ async def direct_revalidate_vocabulary(project_name: str | None = None) -> Reval
 
         revalidated = 0
         unreadable: list[UnreadableVocabulary] = []
+        upgraded: list[str] = []
         for registered in projects:
             try:
-                revalidated += await revalidate_if_vocabulary_changed(session, registered)
+                result = await revalidate_if_vocabulary_changed(session, registered)
             except VocabularyError as exc:
                 unreadable.append(
                     UnreadableVocabulary(
@@ -179,7 +183,13 @@ async def direct_revalidate_vocabulary(project_name: str | None = None) -> Reval
                         reason=str(exc),
                     )
                 )
-        return RevalidationScan(revalidated=revalidated, unreadable=tuple(unreadable))
+                continue
+            revalidated += result.revalidated
+            if result.upgraded:
+                upgraded.append(registered.name)
+        return RevalidationScan(
+            revalidated=revalidated, unreadable=tuple(unreadable), upgraded=tuple(upgraded)
+        )
 
 
 # How long a `state` record may sit untouched before doctor asks about it.
@@ -225,6 +235,10 @@ class ProjectHygieneReport:
     stale_states: "list[HygieneRecord]" = field(default_factory=list)
     inbox: "list[HygieneRecord]" = field(default_factory=list)
     advisories: "list[ViolationRow]" = field(default_factory=list)
+    # A hand-edited vocabulary missing names the current defaults declare
+    # (GAPS U39): the delta as one human line, or None when current. Hygiene,
+    # not integrity — the human ignoring it is a decision, not a defect.
+    vocabulary_outdated: "str | None" = None
 
     @property
     def issue_count(self) -> int:
@@ -234,6 +248,7 @@ class ProjectHygieneReport:
             + len(self.stale_states)
             + len(self.inbox)
             + len(self.advisories)
+            + (1 if self.vocabulary_outdated else 0)
         )
 
 
@@ -263,6 +278,9 @@ class ProjectDoctorReport:
     project_name: str
     integrity: ProjectIntegrityReport = field(default_factory=ProjectIntegrityReport)
     hygiene: ProjectHygieneReport = field(default_factory=ProjectHygieneReport)
+    # True when this pass rewrote an untouched default snapshot to the current
+    # defaults (GAPS U39). Informational — never counted as an issue.
+    vocabulary_upgraded: bool = False
 
 
 async def direct_doctor_report(
@@ -336,6 +354,39 @@ async def direct_doctor_report(
                     errors=await violations.list_for_project(session, project.id, severity="error"),
                 )
 
+            # The doctor is the gardener (GAPS W2), so U39 runs here as well as
+            # on the notice path: an untouched default snapshot is upgraded
+            # before the hygiene report reads it, and a hand-edited file that
+            # lags the defaults becomes one hygiene line. Unreadable files are
+            # the revalidation pass's to report; here they just skip the check.
+            vocabulary_upgraded = False
+            vocabulary_line: str | None = None
+            if include_hygiene:
+                from basic_memory.vocabulary.model import (
+                    VocabularyError,
+                    defaults_delta,
+                    load_vocabulary,
+                    matches_superseded_defaults,
+                    upgrade_snapshot_vocabulary,
+                )
+
+                try:
+                    vocabulary = load_vocabulary(project.external_id)
+                except VocabularyError:
+                    vocabulary = None
+                if vocabulary is not None:
+                    if matches_superseded_defaults(vocabulary):
+                        upgrade_snapshot_vocabulary(project.external_id)
+                        vocabulary_upgraded = True
+                    else:
+                        delta = defaults_delta(vocabulary)
+                        if not delta.empty:
+                            vocabulary_line = (
+                                f"vocabulary predates current defaults: missing "
+                                f"{delta.describe()} — add them to vocabulary.yml or run "
+                                f"'bm project vocab-sync {project.name}'"
+                            )
+
             hygiene = ProjectHygieneReport()
             if include_hygiene:
                 hygiene = ProjectHygieneReport(
@@ -346,6 +397,7 @@ async def direct_doctor_report(
                     advisories=await violations.list_for_project(
                         session, project.id, severity="advisory"
                     ),
+                    vocabulary_outdated=vocabulary_line,
                 )
 
             reports.append(
@@ -353,6 +405,7 @@ async def direct_doctor_report(
                     project_name=project.name,
                     integrity=integrity,
                     hygiene=hygiene,
+                    vocabulary_upgraded=vocabulary_upgraded,
                 )
             )
         return reports

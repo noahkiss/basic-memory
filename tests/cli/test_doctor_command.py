@@ -559,3 +559,38 @@ def test_doctor_self_test_rejects_a_group(stub_report):
     assert result.exit_code == 1
     assert "--self-test takes no --only group" in result.stderr
     assert result.stdout == ""
+
+
+# --- U39: the vocabulary rows ---
+
+
+def test_render_hygiene_names_an_outdated_vocabulary():
+    from basic_memory.cli.commands.doctor import render_hygiene
+
+    report = ProjectDoctorReport(
+        project_name="alpha",
+        hygiene=ProjectHygieneReport(
+            vocabulary_outdated=(
+                "vocabulary predates current defaults: missing type plan, relation part_of "
+                "— add them to vocabulary.yml or run 'bm project vocab-sync alpha'"
+            )
+        ),
+    )
+
+    lines = render_hygiene(report)
+
+    assert any("vocabulary-outdated" in line and "type plan" in line for line in lines)
+    # It is a hygiene issue, so the count includes it.
+    assert lines[-1].endswith("1 issue")
+
+
+def test_render_hygiene_reports_an_upgrade_without_counting_it():
+    from basic_memory.cli.commands.doctor import NO_ISSUES, render_hygiene
+
+    report = ProjectDoctorReport(project_name="alpha", vocabulary_upgraded=True)
+
+    lines = render_hygiene(report)
+
+    assert any("vocabulary-upgraded" in line for line in lines)
+    # Informational only: the section still closes on "no issues".
+    assert lines[-1] == NO_ISSUES

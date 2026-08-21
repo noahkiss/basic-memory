@@ -149,6 +149,33 @@ PROBE_SOURCE = (
         connection.close()
         command = [*command, default_name]
 
+    if command[:2] == ["project", "vocab-sync"]:
+        # Seed a superseded-generation vocabulary (pre-plan, pre-part_of) so the
+        # sync has defaults to append — and resolve the name from this probe's
+        # temp registry, like the other project branches.
+        import sqlite3
+
+        from basic_memory.config_models import DATABASE_NAME, resolve_data_dir
+        from basic_memory.store.history import store_path
+
+        connection = sqlite3.connect(resolve_data_dir() / DATABASE_NAME)
+        default_name, external_id = connection.execute(
+            "SELECT name, external_id FROM project WHERE is_default = 1"
+        ).fetchone()
+        connection.close()
+
+        directory = store_path() / external_id
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "vocabulary.yml").write_text(
+            "types: [task, guide, finding, profile, state, inbox, note]\\n"
+            "statuses: [open, doing, blocked, shelved, done, dropped]\\n"
+            "areas: []\\n"
+            "relations: [relates_to, derived_from, supersedes]\\n"
+            "review_months: 12\\n"
+            "fields: {}\\n"
+        )
+        command = [*command, default_name]
+
     if first == "types":
         # `bm types` renders nothing but the ungoverned line until a vocabulary
         # file exists, so give it one — the guard has to cover the full render.
@@ -336,6 +363,7 @@ NATIVE_COMMANDS = (
     (["rm", SEEDED, "--quiet"], "1 deleted"),
     (["project", "info", "--quiet"], ""),
     (["bug", "guard probe report", "--quiet"], ".md"),
+    (["project", "vocab-sync", "--quiet"], "part_of"),
     # Bare `bm` — the board (GAPS U37). Runs without --quiet so the notice path
     # stays inside the import measurement; the affordance line closes it.
     ([], "the fuller picture"),
@@ -394,6 +422,7 @@ def _probe(tmp_path, banned, command=("project", "list"), tail=" projects"):
         "rm",
         "project-info",
         "bug",
+        "project-vocab-sync",
         "board",
     ],
 )

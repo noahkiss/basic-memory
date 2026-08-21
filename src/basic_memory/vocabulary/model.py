@@ -11,6 +11,7 @@ SQLAlchemy, no API, no MCP. It has to be importable on the fast CLI path.
 
 import re
 from calendar import monthrange
+from hashlib import sha256
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import date
@@ -25,6 +26,18 @@ from basic_memory.store.history import HistoryError, commit_paths, store_path
 from basic_memory.store.write_hook import session_id
 
 VOCABULARY_FILENAME = "vocabulary.yml"
+
+
+def defaults_fingerprint() -> str:
+    """A short fingerprint of the current default vocabulary's canonical text.
+
+    Folded into the revalidation stamp (GAPS U39) so a *defaults* change — new
+    binary, unchanged file — invalidates every stored stamp exactly once and
+    the upgrade check runs. A function, not a module constant, because the
+    serialization it hashes is defined further down this module.
+    """
+    return sha256(serialize_vocabulary(DEFAULT_VOCABULARY).encode("utf-8")).hexdigest()[:12]
+
 
 # The three kinds a declared optional field may take. Bounded on purpose: no
 # required-if, no cross-field rules, no defaults (GAPS W4 extension rules).
@@ -134,6 +147,161 @@ DEFAULT_VOCABULARY = Vocabulary(
     relations=DEFAULT_RELATIONS,
     aliases=DEFAULT_ALIASES,
 )
+
+
+# --- Default-vocabulary history (GAPS U39) ---
+#
+# Every mapping `vocabulary_document(DEFAULT_VOCABULARY)` has EVER produced,
+# oldest first — the exact content `bm project add --governed` serialized in
+# each era. A vocabulary file that parses equal to one of these is provably a
+# machine snapshot no human has touched, and the auto-upgrade path may rewrite
+# it to the current defaults. A file matching none of them is hand-edited and
+# is never auto-touched (doctor reports the delta instead).
+#
+# Documents, not `Vocabulary` values: a key absent from an old file fills from
+# the CURRENT defaults at parse time (`relations`, `aliases`), so freezing
+# parsed values here would drift the moment a default changes. Parsing these
+# beside the candidate at comparison time keeps both sides under one parser.
+#
+# One accepted edge: a hand-edit that exactly reproduces a generation below is
+# indistinguishable from the snapshot it recreates, and upgrades with it.
+#
+# WHEN YOU CHANGE `DEFAULT_VOCABULARY` OR `vocabulary_document`: append the
+# previous generation's document here and update the fingerprint literal in
+# `tests/vocabulary/test_vocabulary_upgrade.py` — that test exists to fail
+# until you do.
+HISTORICAL_DEFAULT_DOCUMENTS: tuple[Mapping[str, Any], ...] = (
+    # 2026-08-17 (7f756176): the first `--governed` writer.
+    {
+        "types": ["task", "guide", "finding", "profile", "state", "inbox"],
+        "statuses": ["open", "doing", "blocked", "done", "dropped"],
+        "areas": [],
+        "review_months": 12,
+        "fields": {},
+    },
+    # 2026-08-17 (df21d546, D8 follow-up): `note` declared.
+    {
+        "types": ["task", "guide", "finding", "profile", "state", "inbox", "note"],
+        "statuses": ["open", "doing", "blocked", "done", "dropped"],
+        "areas": [],
+        "review_months": 12,
+        "fields": {},
+    },
+    # 2026-08-18 (54c74667, U14): the `relations` key.
+    {
+        "types": ["task", "guide", "finding", "profile", "state", "inbox", "note"],
+        "statuses": ["open", "doing", "blocked", "done", "dropped"],
+        "areas": [],
+        "relations": ["relates_to", "derived_from", "supersedes"],
+        "review_months": 12,
+        "fields": {},
+    },
+    # 2026-08-18 (6c149513, U23): `shelved`. The generation the 48-project
+    # migration snapshot (v0.1.3).
+    {
+        "types": ["task", "guide", "finding", "profile", "state", "inbox", "note"],
+        "statuses": ["open", "doing", "blocked", "shelved", "done", "dropped"],
+        "areas": [],
+        "relations": ["relates_to", "derived_from", "supersedes"],
+        "review_months": 12,
+        "fields": {},
+    },
+    # 2026-08-19 (80b1a9cb, U25): the `aliases` key (v0.1.4).
+    {
+        "types": ["task", "guide", "finding", "profile", "state", "inbox", "note"],
+        "statuses": ["open", "doing", "blocked", "shelved", "done", "dropped"],
+        "areas": [],
+        "relations": ["relates_to", "derived_from", "supersedes"],
+        "aliases": {"decision": "finding", "todo": "task", "idea": "inbox"},
+        "review_months": 12,
+        "fields": {},
+    },
+)
+
+
+def matches_superseded_defaults(vocabulary: Vocabulary) -> bool:
+    """True when ``vocabulary`` equals a superseded machine snapshot exactly.
+
+    Both sides go through ``parse_vocabulary`` so absent-key defaulting applies
+    equally, making the compare immune to yaml formatting and to how the
+    parser's own defaults have since evolved.
+    """
+    return any(
+        vocabulary == parse_vocabulary(document, source="<historical default>")
+        for document in HISTORICAL_DEFAULT_DOCUMENTS
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class VocabularyDelta:
+    """What the current defaults declare that one vocabulary does not."""
+
+    types: tuple[str, ...] = ()
+    statuses: tuple[str, ...] = ()
+    relations: tuple[str, ...] = ()
+    aliases: tuple[str, ...] = ()
+
+    @property
+    def empty(self) -> bool:
+        return not (self.types or self.statuses or self.relations or self.aliases)
+
+    def describe(self) -> str:
+        """A one-line human summary: ``type plan, relation part_of``."""
+        parts = [
+            *(f"type {name}" for name in self.types),
+            *(f"status {name}" for name in self.statuses),
+            *(f"relation {name}" for name in self.relations),
+            *(f"alias {name}" for name in self.aliases),
+        ]
+        return ", ".join(parts)
+
+
+def defaults_delta(vocabulary: Vocabulary) -> VocabularyDelta:
+    """Which default names ``merged_with_defaults`` would add to ``vocabulary``.
+
+    Additive only, so removals a human made never appear here: a project that
+    dropped ``dropped`` deliberately would re-gain it — that is what the sync
+    being an explicit human act is for, and the doctor line that quotes this
+    delta is the human's chance to disagree by doing nothing.
+    """
+    declared_types = set(vocabulary.types)
+    merged_types = declared_types | set(DEFAULT_VOCABULARY.types)
+    return VocabularyDelta(
+        types=tuple(n for n in DEFAULT_VOCABULARY.types if n not in declared_types),
+        statuses=tuple(n for n in DEFAULT_VOCABULARY.statuses if n not in set(vocabulary.statuses)),
+        relations=tuple(
+            n for n in DEFAULT_VOCABULARY.relations if n not in set(vocabulary.relations)
+        ),
+        aliases=tuple(
+            name
+            for name, target in DEFAULT_ALIASES.items()
+            if name not in vocabulary.aliases
+            and name not in merged_types
+            and target in merged_types
+        ),
+    )
+
+
+def merged_with_defaults(vocabulary: Vocabulary) -> Vocabulary:
+    """``vocabulary`` plus every default name it lacks. Additive, order-preserving.
+
+    Human declarations stay first and untouched — missing defaults are appended
+    in default order. ``areas``, ``fields`` and ``review_months`` are the
+    human's alone and pass through unchanged.
+    """
+    delta = defaults_delta(vocabulary)
+    merged_aliases = dict(vocabulary.aliases)
+    for name in delta.aliases:
+        merged_aliases[name] = DEFAULT_ALIASES[name]
+    return Vocabulary(
+        types=vocabulary.types + delta.types,
+        statuses=vocabulary.statuses + delta.statuses,
+        areas=vocabulary.areas,
+        review_months=vocabulary.review_months,
+        fields=vocabulary.fields,
+        relations=vocabulary.relations + delta.relations,
+        aliases=MappingProxyType(merged_aliases),
+    )
 
 
 # The status names that close a task. A vocabulary declares its statuses but
@@ -290,6 +458,60 @@ def vocabulary_document(vocabulary: Vocabulary) -> dict[str, object]:
     }
 
 
+def serialize_vocabulary(vocabulary: Vocabulary) -> str:
+    """The canonical file text for one vocabulary — the only spelling bm writes."""
+    return yaml.safe_dump(vocabulary_document(vocabulary), sort_keys=False)
+
+
+def _write_and_commit(external_id: str, vocabulary: Vocabulary, message: str) -> Path:
+    """Write one project's vocabulary file canonically and commit it (W3-B).
+
+    The commit failure path mirrors ``write_default_vocabulary``'s: the file is
+    already on disk, so the write is kept and the missing history entry costs a
+    warning — nothing is lost, which is W3-A's rule for a create.
+    """
+    path = vocabulary_path(external_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(serialize_vocabulary(vocabulary), encoding="utf-8")
+    try:
+        commit_paths(
+            [f"{external_id}/{path.name}"],
+            message,
+            actor="cli",
+            session_id=session_id(),
+        )
+    except HistoryError as error:
+        logger.warning(f"Could not record {path} in the note history: {error}")
+    return path
+
+
+def upgrade_snapshot_vocabulary(external_id: str) -> Path:
+    """Rewrite a provably-untouched snapshot to the current defaults (GAPS U39).
+
+    The caller has already established ``matches_superseded_defaults``; this
+    only performs the rewrite. Machine wrote the file, machine may move it —
+    the hand-edited case never reaches here.
+    """
+    return _write_and_commit(
+        external_id,
+        DEFAULT_VOCABULARY,
+        f"upgrade {external_id}/{VOCABULARY_FILENAME} to current defaults",
+    )
+
+
+def sync_vocabulary_with_defaults(external_id: str, vocabulary: Vocabulary) -> Path:
+    """Write the additive merge of ``vocabulary`` with the current defaults.
+
+    The explicit human act behind `bm project vocab-sync`: appends what
+    ``defaults_delta`` names and touches nothing the human declared.
+    """
+    return _write_and_commit(
+        external_id,
+        merged_with_defaults(vocabulary),
+        f"sync {external_id}/{VOCABULARY_FILENAME} with current defaults",
+    )
+
+
 def write_default_vocabulary(external_id: str) -> Path | None:
     """Give a project the default vocabulary, and return where it landed.
 
@@ -313,30 +535,12 @@ def write_default_vocabulary(external_id: str) -> Path | None:
     path = vocabulary_path(external_id)
     if path.exists():
         return None
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        yaml.safe_dump(vocabulary_document(DEFAULT_VOCABULARY), sort_keys=False),
-        encoding="utf-8",
+    # Committed by the shared writer, not left for a later write to notice: the
+    # file sits in the store's worktree, so an uncommitted one is reported as
+    # somebody else's dirty work by every note write that follows it (W3-B).
+    return _write_and_commit(
+        external_id, DEFAULT_VOCABULARY, f"create {external_id}/{VOCABULARY_FILENAME}"
     )
-
-    # Committed here, not left for a later write to notice. The file sits in the
-    # store's worktree, so an uncommitted one is reported as somebody else's
-    # dirty work by every note write that follows it, forever (GAPS W3-B).
-    # Trigger: the store repository is unusable — a stale lock, a broken config.
-    # Why: the vocabulary is already on disk and the project is already in the
-    #     registry, so failing the add would leave both behind anyway.
-    # Outcome: log for the operator and keep the project, which is W3-A's rule
-    #     for a create: nothing is lost, so a missing entry costs a warning.
-    try:
-        commit_paths(
-            [f"{external_id}/{path.name}"],
-            f"create {external_id}/{path.name}",
-            actor="cli",
-            session_id=session_id(),
-        )
-    except HistoryError as error:
-        logger.warning(f"Could not record {path} in the note history: {error}")
-    return path
 
 
 # --- Parsing helpers ---

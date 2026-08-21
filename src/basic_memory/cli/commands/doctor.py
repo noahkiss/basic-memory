@@ -178,6 +178,14 @@ def render_hygiene(report: "ProjectDoctorReport") -> list[str]:
     lines = [f"{HYGIENE}  project '{report.project_name}'"]
     hygiene = report.hygiene
 
+    # Informational, above the rows and outside the count: the upgrade already
+    # happened (GAPS U39), so this only says why the vocabulary looks new.
+    if report.vocabulary_upgraded:
+        lines.append(
+            "  vocabulary.yml  vocabulary-upgraded  rewritten to current defaults "
+            "(was an untouched snapshot)"
+        )
+
     lines.extend(_hygiene_lines("review-due", hygiene.review_due, "review-by "))
     lines.extend(_hygiene_lines("date-inferred", hygiene.inferred_dates, "date "))
     lines.extend(
@@ -210,6 +218,10 @@ def render_hygiene(report: "ProjectDoctorReport") -> list[str]:
         )
         lines.append(f"  {record.file_path}  inbox  {state}")
     lines.extend(_violation_lines(hygiene.advisories))
+    # A hand-edited vocabulary lagging the defaults is one row (GAPS U39); the
+    # detail already names the missing pieces and the sync command.
+    if hygiene.vocabulary_outdated:
+        lines.append(f"  vocabulary.yml  vocabulary-outdated  {hygiene.vocabulary_outdated}")
 
     if hygiene.issue_count == 0:
         lines.append(NO_ISSUES)

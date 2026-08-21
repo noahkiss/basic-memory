@@ -7653,6 +7653,44 @@ follows U14's rule instead: a file that omits the key gets the defaults, `part_o
 only an explicit `relations:` list excludes it. Ungoverned and freshly governed projects get both
 immediately.
 
+### U39 — a vocabulary written by `--governed` was a snapshot that never followed the defaults — **FOUND + FIXED 2026-08-20**
+
+**Found 2026-08-20** shipping U38: adding `plan` to this repo's own project took a hand `sed` into
+`store/<id>/vocabulary.yml` — there was no upgrade path at all. Every governed project's file is a
+serialization of `DEFAULT_VOCABULARY` *as of the day it was created*, so all 48 migrated projects
+hold the v0.1.3 generation (no `plan`, no `part_of`, no `aliases` key), and every defaults change
+since would have had to be applied by hand, per project, forever. The user's framing: beans has an
+auto-upgrade path; bm needs one.
+
+**Fixed 2026-08-20.** The upgrade path splits on provable authorship:
+
+- **`HISTORICAL_DEFAULT_DOCUMENTS`** (`vocabulary/model.py`) holds every mapping
+  `vocabulary_document(DEFAULT_VOCABULARY)` has ever produced — five generations, reconstructed
+  from git (7f756176 → df21d546 `note` → 54c74667 `relations` → 6c149513 `shelved` → 80b1a9cb
+  `aliases`). Documents, not parsed values: an absent key fills from the *current* defaults at
+  parse time, so both sides of the compare go through `parse_vocabulary` together. A file equal to
+  one of these is a machine snapshot no human touched. (Accepted edge: a hand-edit that exactly
+  recreates a generation is indistinguishable from it, and upgrades with it.)
+- **Auto-upgrade for snapshots.** The revalidation stamp now carries the current defaults'
+  fingerprint (`<file-sha256>:<defaults-fingerprint>`), so a new binary invalidates every stored
+  stamp exactly once; on that cold pass, `revalidate_if_vocabulary_changed` rewrites a snapshot to
+  the current defaults, commits it to store history, and revalidates against what the file now
+  says. `bm doctor` performs the same upgrade in its report builder (the doctor is the gardener,
+  W2) and prints an informational `vocabulary-upgraded` line. The notice layer names each upgraded
+  project once. Warm path cost is unchanged: one stat, one hash, one compare.
+- **Hand-edited files are never auto-touched.** Doctor hygiene gains one row —
+  `vocabulary-outdated`, naming exactly the missing default pieces ("missing type plan, relation
+  part_of") and the command that applies them. **`bm project vocab-sync [name]`** is that command:
+  additive only — missing default types/statuses/relations/aliases are appended, nothing the human
+  declared is removed or reordered, `areas`/`fields`/`review_months` pass through. Running it on a
+  snapshot performs the same upgrade the automatic path would; running it twice says "vocabulary
+  already current". Native verb; emits notices, which is also what revalidates the project's
+  records against the file it just changed.
+
+The tripwire for the next defaults change lives in `tests/vocabulary/test_vocabulary_upgrade.py`:
+a pinned fingerprint literal fails the suite until the superseded generation is appended to
+`HISTORICAL_DEFAULT_DOCUMENTS`.
+
 ## Docs swept
 
 **2026-07-26.** A ten-reader sweep reconciled the following into this file. The gaps they contained
