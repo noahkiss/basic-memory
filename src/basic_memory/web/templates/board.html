@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}bm board{% if selected %} — {{ selected }}{% endif %}{% endblock %}
+{# The refresh lives on this page only. A record page a reader is part-way
+   through must not reload itself out from under them. #}
+{% block head %}<meta http-equiv="refresh" content="{{ refresh_seconds }}">{% endblock %}
+{% block main %}
+{% if not lanes %}
+<p class="empty">No projects are registered on this machine. <code>bm project add</code> makes one.</p>
+{% endif %}
+{% for lane in lanes %}
+<section class="lane">
+  <h2><a href="/?project={{ lane.project | urlencode }}">{{ lane.project }}</a></h2>
+  {% if lane.headline %}
+  <p class="headline">{{ lane.headline }}</p>
+  {% else %}
+  <p class="headline" data-set="no">no headline set</p>
+  {% endif %}
+  <p class="counts">
+    {{ lane.live }} open · shelved {{ lane.shelved }} · inbox {{ lane.inbox }}
+  </p>
+  <ol class="columns">
+    {% for column in lane.columns %}
+    <li data-status="{{ column.status }}" data-live="{{ 'no' if column.status in lane.inactive else 'yes' }}">
+      <h3>{{ column.status }} <span>{{ column.total }}</span></h3>
+      {% if column.cards %}
+      <ul class="cards">
+        {% for card in column.cards %}
+        <li>
+          <a href="/p/{{ lane.project | urlencode }}/r/{{ card.record_id | urlencode }}">{{ card.title }}</a>
+          <span class="id">{{ card.record_id }}</span>
+          {% if card.note_type == "plan" %}<span class="badge">plan</span>{% endif %}
+          {% if card.superseded %}<span class="badge" data-kind="superseded">superseded</span>{% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+      {% if column.hidden %}
+      <p class="more">+{{ column.hidden }} more — <code>bm ls -p {{ lane.project }} --status {{ column.status }}</code></p>
+      {% endif %}
+      {% else %}
+      <p class="empty">nothing</p>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ol>
+  {% if lane.other %}
+  <details class="other">
+    <summary>other records ({{ lane.other | sum(attribute='total') }})</summary>
+    {% for group in lane.other %}
+    <h4>{{ group.note_type }} — {{ group.total }}</h4>
+    <ul>
+      {% for card in group.cards %}
+      <li>
+        <a href="/p/{{ lane.project | urlencode }}/r/{{ card.record_id | urlencode }}">{{ card.title }}</a>
+        <span class="id">{{ card.record_id }}</span>
+        {% if card.superseded %}<span class="badge" data-kind="superseded">superseded</span>{% endif %}
+      </li>
+      {% endfor %}
+      {% if group.hidden %}
+      <li class="more">+{{ group.hidden }} more — <code>bm ls -p {{ lane.project }} --type {{ group.note_type }}</code></li>
+      {% endif %}
+    </ul>
+    {% endfor %}
+  </details>
+  {% endif %}
+</section>
+{% endfor %}
+{% endblock %}

@@ -86,6 +86,13 @@ EXEMPT: dict[tuple[str, str], str] = {
     ("tool.py", "recent_activity"): "the MCP tool layer; W20 treats it separately",
     ("tool.py", "search_notes"): "the MCP tool layer; W20 treats it separately",
     ("tool.py", "list_projects"): "the MCP tool layer; W20 treats it separately",
+    # `bm web install` / `bm web uninstall` write and remove a systemd unit file.
+    # Neither opens the database, and a broken index must not stop an operator
+    # from setting the board server up or taking it down (GAPS U41). The server
+    # itself is a long-lived process, not a record write: its payload is HTML on
+    # a socket, and there is no stdout listing for a notice to close.
+    ("web.py", "install"): "writes a unit file; never opens the database",
+    ("web.py", "uninstall"): "removes a unit file; never opens the database",
 }
 
 HINT = (

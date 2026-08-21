@@ -38,7 +38,12 @@ RING_KEEP_LINES = 500
 
 # Sub-command groups whose first argument is part of the command's name:
 # "project list" is one command, not "project" with an argument.
-_GROUPS = frozenset({"project", "import", "config", "tool", "db", "claude"})
+#
+# `web` is a group that also runs bare (`bm web` serves the board), so it is
+# listed here for the same reason as the rest: without it `bm web install` would
+# log as `web`, and the usage report could not tell one operator setting the
+# unit up from a machine running the server (GAPS U41).
+_GROUPS = frozenset({"project", "import", "config", "tool", "db", "claude", "web"})
 
 
 def state_dir() -> Path:

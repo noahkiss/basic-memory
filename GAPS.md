@@ -7740,6 +7740,57 @@ opened in the bare workspace directory tracks the workspace project instead of f
 default. That change is on the machine, not in this tree; it is recorded here because the two only
 make sense together.
 
+### U41 — there was no way to see what is stored where — **FOUND + FIXED 2026-08-21**
+
+**The ask** (user, 2026-08-21): a per-machine, always-on, read-only board across every project.
+`bm brief` orients one session, bare `bm` answers "what is open here", and `bm ls` goes wide in one
+project — but nothing answered *what is stored where*. That question is asked with the eyes, not
+with a flag: a human wants every project's lanes side by side, at a glance, without typing a verb
+per project and reading six terminal payloads back into one picture.
+
+**The design.** One verb group, `bm web`, three spellings and only one of them run more than once:
+
+- `bm web` serves the board in the foreground on `127.0.0.1:2749`. That is what the unit executes,
+  and what a human runs to try it before installing anything.
+- `bm web install` writes `bm-web.service` into `$XDG_CONFIG_HOME/systemd/user` (else
+  `~/.config/systemd/user`), reloads, and enables it — restarting instead when it is already up, so
+  an upgrade cannot leave the old process serving old code. `--print` renders the unit and writes
+  nothing. On a non-Linux machine it says so and stops; launchd is a later item.
+- `bm web uninstall` disables and removes it.
+
+**Localhost, and the operator exposes it.** The board is every project on the machine with no
+authentication in front of it. Binding it anywhere routable is a decision, not a default: a reverse
+proxy or a tunnel goes in front of it, and `--host` exists for the operator who means it.
+
+**Shapes worth recording.** Columns are the project's own `vocabulary.yml` statuses, in the order
+that file states them — the board is the one place that order is visible as a shape rather than a
+list. A status a record actually carries that the vocabulary does not declare still gets a column,
+appended: `bm doctor` reports the violation, and hiding the work while the count includes it would
+be the worse failure. Tasks and plans get cards (a plan carries a visible badge); everything else is
+a collapsed "other records" group, because a finding has no lifecycle and a column for it would be
+a column of one. `install` and `uninstall` never open the database — a broken index must not stop
+an operator setting the server up or taking it down.
+
+**What v1 leaves out, deliberately:**
+
+- **Writes.** No route mutates anything. Drag-to-mark is the obvious next ask and the reason to
+  refuse it now is that it needs a write path, a CSRF story and an actor trail, none of which a
+  read-only board needs to be useful. `bm mark` still moves a card; the board picks it up on its
+  next 30-second refresh.
+- **Per-record history.** The store repo has every commit, but nothing yet lists the commits that
+  touched one record's file, so a record page cannot render its own history without a query that
+  does not exist. `bm history` is the shell answer meanwhile.
+- **launchd.** `install` is systemd-only, stated rather than silently broken.
+
+**The import-guard judgment.** `bm web` is the one verb allowed to import fastapi, uvicorn and
+jinja2, so it is deliberately **absent** from `tests/cli/test_native_command_import_guard.py`'s
+`NATIVE_COMMANDS`. The boundary that keeps that from leaking is `cli/commands/web.py`, which defers
+every one of those imports into the function that starts the server: `cli/main.py` imports every
+command module on every invocation, so a module-scope import there would be a tax on `bm ls`.
+`tests/cli/test_web_command.py` probes that in a subprocess, with a positive control that imports
+`basic_memory.web.app` and proves the probe can see the graph when it is really there.
+
+
 ## Docs swept
 
 **2026-07-26.** A ten-reader sweep reconciled the following into this file. The gaps they contained

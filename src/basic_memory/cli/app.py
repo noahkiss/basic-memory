@@ -120,6 +120,14 @@ def app_callback(
         "reindex",
         "undo",
         "watch",
+        # 'web' covers all three spellings, because the gate keys on the group.
+        # The server opens the database in its own lifespan, once, for the life
+        # of the process — running initialize_app first would be a second copy
+        # of that work before the server has even bound a socket. `web install`
+        # and `web uninstall` must not open it at all: they write and remove a
+        # unit file, and a broken index must never stop an operator from setting
+        # the server up or taking it down (GAPS U41).
+        "web",
     }
     if (
         not version

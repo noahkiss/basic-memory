@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}bm search{% if query %} — {{ query }}{% endif %}{% endblock %}
+{% block main %}
+<article>
+  <h1>Search</h1>
+  {% if not query %}
+  <p>Type a query in the box above. Titles and bodies are matched across every project.</p>
+  {% else %}
+  {# A count line closes the listing the way it does in `bm ls` — an empty
+     result is a result, stated rather than silent (contract rule 5). #}
+  <ul class="results">
+    {% for hit in hits %}
+    <li>
+      <a href="/p/{{ hit.project | urlencode }}/r/{{ hit.ref | urlencode }}">{{ hit.title }}</a>
+      <span class="id">{{ hit.ref }}</span> · {{ hit.project }}
+    </li>
+    {% endfor %}
+  </ul>
+  <p class="counts">{{ hits | length }} result{{ '' if hits | length == 1 else 's' }} for “{{ query }}”</p>
+  {% endif %}
+</article>
+{% endblock %}

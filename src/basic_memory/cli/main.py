@@ -39,6 +39,7 @@ if not _version_only_invocation(sys.argv[1:]):
         status,
         tool,
         types,
+        web,
     )
 
 warnings.filterwarnings("ignore")  # pragma: no cover

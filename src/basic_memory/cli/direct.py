@@ -558,8 +558,12 @@ class ResolvedRecord:
     references: tuple[OutgoingReference, ...] = ()
 
 
-async def _projects_in_scope(session: "AsyncSession", project_name: str | None) -> list["Project"]:
+async def projects_in_scope(session: "AsyncSession", project_name: str | None) -> list["Project"]:
     """Every registered project, or the one named. Ordered by id, which is stable.
+
+    Session-taking on purpose: the CLI wrappers below open a session per call,
+    but `bm web` holds one open for the life of a request and passes it in, so
+    the scoping rule has one implementation rather than two.
 
     Raises ValueError for an unknown name: a request that cannot be scoped is an
     addressing failure, never an empty result (contract rule 5).
@@ -597,7 +601,7 @@ async def direct_record_listing(
     await ensure_project_registry(config, bootstrap=False)
 
     async with db.scoped_session(session_maker) as session:
-        projects = await _projects_in_scope(session, project_name)
+        projects = await projects_in_scope(session, project_name)
         names = {project.id: project.name for project in projects}
         # One row past the limit: that row is the whole evidence for "more
         # records match", and it costs a row rather than a second COUNT.
@@ -652,7 +656,7 @@ async def direct_board(project_name: str) -> BoardData:
     await ensure_project_registry(config, bootstrap=False)
 
     async with db.scoped_session(session_maker) as session:
-        (project,) = await _projects_in_scope(session, project_name)
+        (project,) = await projects_in_scope(session, project_name)
 
         status = Entity.entity_metadata["status"].as_string()
         is_live = or_(status.is_(None), status.not_in(sorted(inactive_statuses())))
@@ -701,6 +705,49 @@ async def direct_board(project_name: str) -> BoardData:
     )
 
 
+async def resolve_record(
+    session: "AsyncSession", project_name: str | None, record_id: str
+) -> ResolvedRecord:
+    """Locate one record by id on a caller-owned session, verifying identity.
+
+    Session-taking so the CLI wrapper and `bm web` share one resolver: the web
+    server holds a session open for the whole request and must not open a second
+    one inside it — the pool holds a single connection.
+
+    Raises RecordNotFound when no project in scope holds that permalink, and
+    AmbiguousRecord when an unscoped lookup finds it in more than one.
+    """
+    from basic_memory.repository.entity_repository import EntityRepository
+
+    found: list[ResolvedRecord] = []
+    for project in await projects_in_scope(session, project_name):
+        entity = await EntityRepository(project_id=project.id).get_by_permalink(session, record_id)
+        # Trigger: a lookup that returned a row whose permalink is not the id.
+        # Why: BM's resolver legitimately matches on title and file path, so a
+        #     non-empty result is not by itself proof of identity (GAPS T10).
+        # Outcome: treat it as not-found rather than as a near-match.
+        if entity is None or entity.permalink != record_id:
+            continue
+        found.append(
+            ResolvedRecord(
+                project=project.name,
+                # `record_id`, not `entity.permalink`: the guard above proves
+                # they are equal, and the column is nullable in the model.
+                record_id=record_id,
+                path=Path(project.path) / entity.file_path,
+                superseded_by=_supersessions(entity),
+                referenced_by=_incoming_references(entity),
+                references=_outgoing_references(entity),
+            )
+        )
+
+    if not found:
+        raise RecordNotFound(record_id)
+    if len(found) > 1:
+        raise AmbiguousRecord(", ".join(sorted(record.project for record in found)))
+    return found[0]
+
+
 async def direct_record(project_name: str | None, record_id: str) -> ResolvedRecord:
     """Locate one record by id, verifying identity (GAPS T9/T10).
 
@@ -711,7 +758,6 @@ async def direct_record(project_name: str | None, record_id: str) -> ResolvedRec
     # load at CLI import time — only when a command actually runs (#886).
     from basic_memory import db
     from basic_memory.config import ConfigManager
-    from basic_memory.repository.entity_repository import EntityRepository
     from basic_memory.services.initialization import ensure_project_registry
 
     config = ConfigManager().config
@@ -719,35 +765,7 @@ async def direct_record(project_name: str | None, record_id: str) -> ResolvedRec
     await ensure_project_registry(config, bootstrap=False)
 
     async with db.scoped_session(session_maker) as session:
-        found: list[ResolvedRecord] = []
-        for project in await _projects_in_scope(session, project_name):
-            entity = await EntityRepository(project_id=project.id).get_by_permalink(
-                session, record_id
-            )
-            # Trigger: a lookup that returned a row whose permalink is not the id.
-            # Why: BM's resolver legitimately matches on title and file path, so a
-            #     non-empty result is not by itself proof of identity (GAPS T10).
-            # Outcome: treat it as not-found rather than as a near-match.
-            if entity is None or entity.permalink != record_id:
-                continue
-            found.append(
-                ResolvedRecord(
-                    project=project.name,
-                    # `record_id`, not `entity.permalink`: the guard above proves
-                    # they are equal, and the column is nullable in the model.
-                    record_id=record_id,
-                    path=Path(project.path) / entity.file_path,
-                    superseded_by=_supersessions(entity),
-                    referenced_by=_incoming_references(entity),
-                    references=_outgoing_references(entity),
-                )
-            )
-
-    if not found:
-        raise RecordNotFound(record_id)
-    if len(found) > 1:
-        raise AmbiguousRecord(", ".join(sorted(record.project for record in found)))
-    return found[0]
+        return await resolve_record(session, project_name, record_id)
 
 
 def _supersessions(entity: "Entity") -> tuple[Supersession, ...]:

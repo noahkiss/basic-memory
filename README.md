@@ -183,6 +183,34 @@ payload. `--quiet` drops them. A project whose `vocabulary.yml` cannot be parsed
 is named there too, with its file: its records are left out of the counts, and
 the other projects still report theirs.
 
+## The board in a browser
+
+`bm web` serves a read-only board over every project on this machine, at
+`http://127.0.0.1:2749/`. One lane per project: its headline, one column per
+status in that project's own vocabulary order, task and plan cards (a plan is
+badged), and a collapsed list of everything else grouped by type. Click a card
+to read the record — frontmatter as a table, the body rendered, its relations
+linked. There is a search box, and the board refreshes itself every 30 seconds.
+
+Nothing on it writes. Marking a card is still `bm mark <id> <status>`; the board
+picks the change up on its next refresh.
+
+```bash
+bm web                  # foreground, ctrl-c to stop
+bm web install          # systemd user unit, enabled and started
+bm web install --print  # show the unit, write nothing
+bm web uninstall
+```
+
+`install` writes `bm-web.service` under `$XDG_CONFIG_HOME/systemd/user` (or
+`~/.config/systemd/user`) and bakes `--port` into it. It is systemd-only; on
+other platforms run `bm web` in the foreground.
+
+The server binds localhost and has no authentication, because it shows every
+project on the machine. Reaching it from anywhere else is the operator's job —
+put a reverse proxy or a tunnel in front of it, and use `--host` only when you
+mean to.
+
 ## Pick up where you left off
 
 https://github.com/user-attachments/assets/a55d8238-8dd0-454a-be4c-8860dbbd0ddc
@@ -432,6 +460,10 @@ basic-memory project add research ~/research
 basic-memory config list                        # all settings, effective values, env overrides
 basic-memory config set cli_output_style plain  # validated through the config model
 basic-memory config unset cli_output_style      # revert to default
+
+# Board in a browser (read-only)
+basic-memory web                 # serve on 127.0.0.1:2749
+basic-memory web install         # install and start the systemd user unit
 
 # Health & maintenance
 basic-memory status

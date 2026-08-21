@@ -1,0 +1,216 @@
+{# The page skeleton: one inline stylesheet, no external assets, no scripts.
+   The board has to render correctly on a machine with no route to the
+   internet, so every byte it needs is in this file. #}
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}bm{% endblock %}</title>
+{% block head %}{% endblock %}
+<style>
+/* Catppuccin Latte by default, Mocha under a dark system preference. Every
+   colour is a token so a status rule names a role, never a hex value. */
+:root {
+  --bg: #eff1f5;
+  --fg: #4c4f69;
+  --muted: #acb0be;
+  --surface: #d8dae1;
+  --primary: #1e66f5;
+  --success: #40a02b;
+  --warning: #df8e1d;
+  --error: #d20f39;
+  --accent: #ea76cb;
+  --subtle: #179299;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1e1e2e;
+    --fg: #cdd6f4;
+    --muted: #a6adc8;
+    --surface: #353748;
+    --primary: #89b4fa;
+    --success: #a6e3a1;
+    --warning: #f9e2af;
+    --error: #f38ba8;
+    --accent: #f5c2e7;
+    --subtle: #94e2d5;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 15px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  /* The page itself never scrolls sideways; wide content scrolls in its own
+     box, which is what keeps a long status row from dragging the whole board. */
+  overflow-x: hidden;
+}
+
+a { color: var(--primary); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem 1.25rem;
+  padding: 0.7rem 1rem;
+  border-bottom: 1px solid var(--surface);
+}
+header h1 { margin: 0; font-size: 1rem; letter-spacing: 0.04em; }
+header h1 a { color: var(--accent); }
+header nav { display: flex; flex-wrap: wrap; gap: 0.65rem; font-size: 0.85rem; }
+header nav a[aria-current="page"] { color: var(--fg); font-weight: 600; }
+header form { margin-left: auto; }
+header input {
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 0.25rem 0.5rem;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--surface);
+  border-radius: 4px;
+}
+
+main { padding: 1rem; }
+
+.id { font-family: var(--mono); font-size: 0.82em; color: var(--subtle); }
+
+/* --- Lanes and columns --- */
+
+.lane { margin: 0 0 2rem; }
+.lane > h2 { margin: 0; font-size: 1.05rem; }
+.lane > h2 a { color: var(--fg); }
+.headline { margin: 0.15rem 0 0; color: var(--accent); }
+.headline[data-set="no"] { color: var(--muted); font-style: italic; }
+.counts { margin: 0.15rem 0 0.7rem; color: var(--muted); font-size: 0.85rem; }
+
+.columns {
+  display: flex;
+  gap: 0.7rem;
+  margin: 0;
+  padding: 0 0 0.5rem;
+  list-style: none;
+  overflow-x: auto;
+}
+.columns > li {
+  flex: 0 0 17rem;
+  min-width: 17rem;
+  background: var(--surface);
+  border-radius: 6px;
+  padding: 0.5rem;
+}
+/* The default first, so a status the vocabulary added but this stylesheet has
+   never heard of still reads as ordinary open work rather than as unstyled. */
+.columns > li { --status: var(--fg); }
+.columns > li[data-status="doing"] { --status: var(--primary); }
+.columns > li[data-status="blocked"] { --status: var(--error); }
+.columns > li[data-status="open"] { --status: var(--fg); }
+.columns > li[data-status="shelved"] { --status: var(--muted); }
+.columns > li[data-status="done"] { --status: var(--success); }
+.columns > li[data-status="dropped"] { --status: var(--muted); }
+.columns > li[data-live="no"] { opacity: 0.72; }
+
+.columns > li > h3 {
+  margin: 0 0 0.5rem;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--status);
+  border-left: 3px solid var(--status);
+  padding-left: 0.4rem;
+}
+.columns > li > h3 > span { color: var(--muted); font-weight: 400; }
+
+.cards { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.4rem; }
+.cards > li {
+  background: var(--bg);
+  border: 1px solid var(--surface);
+  border-left: 3px solid var(--status);
+  border-radius: 4px;
+  padding: 0.4rem 0.5rem;
+}
+.cards a { color: var(--fg); display: block; }
+.cards .id { display: block; }
+
+.badge {
+  display: inline-block;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 0 0.35rem;
+  border-radius: 3px;
+  background: var(--accent);
+  color: var(--bg);
+  vertical-align: 0.1em;
+}
+.badge[data-kind="superseded"] { background: var(--warning); }
+
+.more { margin: 0.4rem 0 0; font-size: 0.8rem; color: var(--muted); }
+.empty { margin: 0; font-size: 0.8rem; color: var(--muted); }
+
+details.other { margin-top: 0.6rem; }
+details.other > summary { cursor: pointer; color: var(--muted); font-size: 0.85rem; }
+details.other ul { list-style: none; margin: 0.4rem 0 0; padding: 0 0 0 1rem; }
+details.other li { margin: 0.15rem 0; }
+details.other h4 { margin: 0.6rem 0 0.2rem; font-size: 0.85rem; color: var(--subtle); }
+
+/* --- The record page --- */
+
+article { max-width: 46rem; }
+article h1 { font-size: 1.3rem; margin: 0 0 0.2rem; }
+article table { border-collapse: collapse; margin: 0.8rem 0; font-size: 0.88rem; }
+article th, article td {
+  text-align: left;
+  vertical-align: top;
+  padding: 0.2rem 0.9rem 0.2rem 0;
+  border-bottom: 1px solid var(--surface);
+}
+article th { color: var(--muted); font-weight: 500; white-space: nowrap; }
+article pre, article table { overflow-x: auto; max-width: 100%; }
+article pre {
+  background: var(--surface);
+  padding: 0.6rem 0.7rem;
+  border-radius: 4px;
+  font-family: var(--mono);
+  font-size: 0.85em;
+}
+article code { font-family: var(--mono); font-size: 0.88em; }
+article blockquote {
+  margin: 0.8rem 0;
+  padding-left: 0.8rem;
+  border-left: 3px solid var(--surface);
+  color: var(--muted);
+}
+article img { max-width: 100%; }
+.relations { list-style: none; margin: 0; padding: 0; }
+.relations li { margin: 0.15rem 0; }
+.path { color: var(--muted); font-family: var(--mono); font-size: 0.82rem; }
+
+.results { list-style: none; margin: 0; padding: 0; }
+.results li { margin: 0.35rem 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1><a href="/">bm</a></h1>
+  <nav>
+    <a href="/"{% if selected is not defined or not selected %} aria-current="page"{% endif %}>all projects</a>
+    {% for name in projects %}
+    <a href="/?project={{ name | urlencode }}"{% if selected is defined and selected == name %} aria-current="page"{% endif %}>{{ name }}</a>
+    {% endfor %}
+  </nav>
+  <form action="/search" method="get" role="search">
+    <input type="search" name="q" value="{{ query | default('', true) }}" placeholder="search titles" aria-label="Search records">
+  </form>
+</header>
+<main>
+{% block main %}{% endblock %}
+</main>
+</body>
+</html>

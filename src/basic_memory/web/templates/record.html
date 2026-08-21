@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}{{ metadata.get('title') or record.record_id }}{% endblock %}
+{% block main %}
+<article>
+  <h1>{{ metadata.get('title') or record.record_id }}</h1>
+  <p><span class="id">{{ record.record_id }}</span> · in
+    <a href="/?project={{ record.project | urlencode }}">{{ record.project }}</a></p>
+
+  {% if metadata %}
+  <table>
+    <tbody>
+      {% for key, value in metadata.items() %}
+      <tr><th scope="row">{{ key }}</th><td>{{ value }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty">This file carries no frontmatter.</p>
+  {% endif %}
+
+  {# `body` is HTML this server produced from the file's markdown with raw HTML
+     escaping on (see web/render.py). It is the one value on any page that is
+     deliberately not re-escaped. #}
+  {{ body | safe }}
+
+  {% if relations %}
+  <h2>Relations</h2>
+  <ul class="relations">
+    {% for relation in relations %}
+    <li><a href="/r/{{ relation.record_id | urlencode }}">{{ relation.text }}</a></li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+
+  <p class="path">{{ location }}</p>
+</article>
+{% endblock %}

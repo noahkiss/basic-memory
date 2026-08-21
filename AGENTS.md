@@ -104,8 +104,8 @@ Consequences, all deliberate:
 **Naming:** `tend` is a **codename for the design, not a command.** There is no `tend` binary and no
 `bm tend` namespace — the verbs ship flat under `bm` (`bm ls`, `bm new`, `bm edit`, `bm path`,
 `bm mine`, `bm done`, `bm show`, `bm history`, `bm undo`, `bm mark`, `bm rm`, `bm types`,
-`bm brief`, `bm headline`, `bm bug`, `bm doctor`, `bm status`, `bm project`; bare `bm` renders the
-project board — GAPS U37). **There is no `bm check`** —
+`bm brief`, `bm headline`, `bm bug`, `bm doctor`, `bm status`, `bm project`, `bm web`; bare `bm`
+renders the project board — GAPS U37). **There is no `bm check`** —
 the schema and integrity checks land inside the existing `bm doctor` (see `GAPS.md` W5), because a
 second checking command would immediately be the one nobody runs.
 
@@ -155,6 +155,11 @@ imports every command module on every invocation. The *other* project subcommand
 `remove`, `default`, `move`) still route through the in-process ASGI app and cost ~3.5 s — they
 are mutations or one-shots where correctness, not latency, is the constraint. `project info`
 joined the fast path 2026-08-20: it is a read, and reads pay the direct-path price.
+
+`bm web` is a long-lived server and is the one verb allowed to import fastapi, so it is
+deliberately absent from the native-command guard and its `cli/commands/web.py` must keep those
+imports inside function bodies — `cli/main.py` imports every command module on every invocation
+(GAPS U41).
 
 Embedding model `qdrant/bge-small-en-v1.5-onnx-q` (64 MB) caches to the shared
 `$XDG_CACHE_HOME/fastembed` in this fork, not inside `BASIC_MEMORY_CONFIG_DIR` as upstream had it —
@@ -384,6 +389,8 @@ layers implement.
 - `/index` - Local runtime indexing adapters, watch service + `watch_coordinator.py` for lifecycle management
 - `/indexing` - Portable indexing runners and planners shared by local and hosted runtimes
 - `/runtime` - RuntimeMode resolution + runtime Protocol contracts
+- `/web` - the `bm web` board server: its own FastAPI app, Jinja2 templates, and the
+  session-taking queries behind them (GAPS U41). Nothing on the fast CLI path imports it.
 
 **Composition Roots:**
 Each entrypoint (API, MCP, CLI) has a composition root that:
@@ -475,6 +482,8 @@ separate `get_client()` + `get_active_project()` pair inside an MCP tool.
 - Sync status: `basic-memory status` · corpus check: `basic-memory doctor` (integrity and
   hygiene, plus machine-wide `--only usage` command stats; `--only <group>`, exit 1 on integrity issues, `--strict` for any; `--self-test` checks the
   file ↔ DB loop instead)
+- Board in a browser: `bm web` serves it on `127.0.0.1:2749`; `bm web install` /
+  `bm web uninstall` manage the systemd user unit. Read-only.
 - Projects: `project list` / `project ls` / `project add "name" ~/path` / `project info` /
   `project default` / `project move` / `project remove` / `project mark` /
   `project vocab-sync` (append what the current default vocabulary declares and a
