@@ -219,16 +219,45 @@ HISTORICAL_DEFAULT_DOCUMENTS: tuple[Mapping[str, Any], ...] = (
 )
 
 
+def _declaration_fingerprint(vocabulary: Vocabulary) -> tuple[object, ...]:
+    """What a vocabulary *declares*, ignoring list order.
+
+    Two files with the same names in different orders carry the same human
+    information: none, when the names are exactly a defaults generation's. This
+    is what lets a merge-shaped file (defaults appended at the end rather than
+    serialized canonically) stay in the auto-upgrade lane — the 2026-08-20 case
+    was hn-app and zellij, whose files were value-equal to the current defaults
+    but ordered by append, and a byte-lineage compare would have exiled them to
+    the hand-edited lane forever.
+    """
+    return (
+        frozenset(vocabulary.types),
+        frozenset(vocabulary.statuses),
+        frozenset(vocabulary.relations),
+        tuple(sorted(vocabulary.aliases.items())),
+        vocabulary.review_months,
+        frozenset(vocabulary.areas),
+        frozenset(vocabulary.fields),
+    )
+
+
 def matches_superseded_defaults(vocabulary: Vocabulary) -> bool:
-    """True when ``vocabulary`` equals a superseded machine snapshot exactly.
+    """True when ``vocabulary`` declares exactly what some defaults generation did.
 
     Both sides go through ``parse_vocabulary`` so absent-key defaulting applies
     equally, making the compare immune to yaml formatting and to how the
-    parser's own defaults have since evolved.
+    parser's own defaults have since evolved. Comparison is by declaration
+    fingerprint, not tuple order — reordering encodes nothing, so it does not
+    make a file human. The *current* defaults document is included: a file
+    value-equal to today's defaults but non-canonically serialized is
+    re-canonicalized so the next generation still recognizes it.
     """
+    fingerprint = _declaration_fingerprint(vocabulary)
+    documents = (*HISTORICAL_DEFAULT_DOCUMENTS, vocabulary_document(DEFAULT_VOCABULARY))
     return any(
-        vocabulary == parse_vocabulary(document, source="<historical default>")
-        for document in HISTORICAL_DEFAULT_DOCUMENTS
+        fingerprint
+        == _declaration_fingerprint(parse_vocabulary(document, source="<historical default>"))
+        for document in documents
     )
 
 
@@ -491,7 +520,15 @@ def upgrade_snapshot_vocabulary(external_id: str) -> Path:
     The caller has already established ``matches_superseded_defaults``; this
     only performs the rewrite. Machine wrote the file, machine may move it —
     the hand-edited case never reaches here.
+
+    No-op skip: a file already byte-equal to the canonical target is not
+    rewritten — the current defaults are themselves a match (declaration
+    fingerprint), so without this every cold pass would mint an empty commit.
     """
+    path = vocabulary_path(external_id)
+    target = serialize_vocabulary(DEFAULT_VOCABULARY)
+    if path.is_file() and path.read_text(encoding="utf-8") == target:
+        return path
     return _write_and_commit(
         external_id,
         DEFAULT_VOCABULARY,

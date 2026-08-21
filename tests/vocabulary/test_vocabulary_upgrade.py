@@ -31,10 +31,12 @@ def test_every_recorded_generation_is_detected():
         assert matches_superseded_defaults(parsed), document
 
 
-def test_current_defaults_are_not_a_superseded_generation():
-    # A file already at the current defaults needs no upgrade, so it must not
-    # match: the auto path would otherwise rewrite it on every generation bump.
-    assert not matches_superseded_defaults(DEFAULT_VOCABULARY)
+def test_current_defaults_match_and_upgrade_is_a_byte_noop():
+    # Reversal (U39 follow-up): the current defaults DO match, so a value-equal
+    # but non-canonically ordered file re-enters the auto lane. The cost that
+    # made the old assertion right — a rewrite on every cold pass — is paid by
+    # upgrade_snapshot_vocabulary's byte no-op skip instead.
+    assert matches_superseded_defaults(DEFAULT_VOCABULARY)
 
 
 def test_detection_survives_yaml_reformatting():
@@ -122,3 +124,53 @@ def test_merge_is_idempotent():
 
 def test_current_defaults_have_an_empty_delta():
     assert defaults_delta(DEFAULT_VOCABULARY).empty
+
+
+# --- Order-insensitive detection (U39 follow-up) ---------------------------
+
+
+def test_merge_shaped_defaults_still_read_as_a_snapshot():
+    """A file value-equal to current defaults but append-ordered stays in the
+    auto lane — the hn-app/zellij case: defaults merged onto a G4 snapshot."""
+    from basic_memory.vocabulary.model import matches_superseded_defaults, parse_vocabulary
+
+    merged = parse_vocabulary(
+        {
+            "types": ["task", "guide", "finding", "profile", "state", "inbox", "note", "plan"],
+            "statuses": ["open", "doing", "blocked", "shelved", "done", "dropped"],
+            "areas": [],
+            "relations": ["relates_to", "derived_from", "supersedes", "part_of"],
+            "review_months": 12,
+            "fields": {},
+        },
+        source="v.yml",
+    )
+    assert matches_superseded_defaults(merged)
+
+
+def test_a_human_addition_is_never_a_snapshot():
+    from basic_memory.vocabulary.model import matches_superseded_defaults, parse_vocabulary
+
+    edited = parse_vocabulary({"types": ["task", "guide", "runbook"]}, source="v.yml")
+    assert not matches_superseded_defaults(edited)
+
+
+def test_upgrade_skips_an_already_canonical_file(monkeypatch, tmp_path):
+    """The current defaults now match the fingerprint, so without the byte
+    no-op skip every cold pass would mint an empty history commit."""
+    from basic_memory.vocabulary.model import (
+        DEFAULT_VOCABULARY,
+        serialize_vocabulary,
+        upgrade_snapshot_vocabulary,
+        vocabulary_path,
+    )
+
+    monkeypatch.setenv("BASIC_MEMORY_CONFIG_DIR", str(tmp_path / "data"))
+    external_id = "0d0b2f1e-6d3a-4a4e-9d2e-2f8a1b7c5e40"
+    path = vocabulary_path(external_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(serialize_vocabulary(DEFAULT_VOCABULARY), encoding="utf-8")
+    before = path.stat().st_mtime_ns
+
+    assert upgrade_snapshot_vocabulary(external_id) == path
+    assert path.stat().st_mtime_ns == before

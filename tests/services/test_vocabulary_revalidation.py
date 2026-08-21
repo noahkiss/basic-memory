@@ -123,12 +123,15 @@ async def test_creating_a_vocabulary_populates_the_violations(
     """
     async with db.scoped_session(session_maker) as session:
         await make_entity(session, entity_repository, OFF_VOCABULARY, "notes/off.md")
-    expected_stamp = govern(test_project)
+    govern(test_project)
 
     assert await revalidate(session_maker, test_project) == 1
 
     assert await stored_rules(session_maker, test_project) == [("unknown-type", "type")]
-    assert await stamp_of(session_maker, test_project) == expected_stamp
+    # An empty mapping is value-equal to the defaults, so the cold pass
+    # re-canonicalizes it (U39 order-insensitive detection); the stamp is the
+    # rewritten file's, read after the fact rather than predicted before it.
+    assert await stamp_of(session_maker, test_project) == vocabulary_stamp(test_project.external_id)
 
 
 @pytest.mark.asyncio
