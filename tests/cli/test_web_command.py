@@ -142,7 +142,7 @@ def test_install_print_writes_nothing_and_speaks_to_no_systemd(
     assert result.stdout.startswith("[Unit]\n")
     assert result.stdout.endswith("WantedBy=default.target\n")
     assert f"Environment=HOME={Path.home()}\n" in result.stdout
-    assert f"ExecStart={installed_bm.resolve()} web --host 127.0.0.1 --port 2749\n" in result.stdout
+    assert f"ExecStart={installed_bm} web --host 127.0.0.1 --port 2749\n" in result.stdout
     assert systemctl.calls == []
     assert not unit_root.exists()
 
@@ -166,12 +166,7 @@ def test_install_writes_the_unit_at_the_xdg_path_and_enables_it(
     assert result.exit_code == 0, result.output
     unit = unit_root / web_command.UNIT_NAME
     assert unit.is_file()
-    # `.resolve()`, because the unit's ExecStart runs with systemd's PATH: the
-    # command resolves the executable to a real path, and on a host where the
-    # temp root is a symlink the two spellings differ.
-    assert (
-        f"ExecStart={installed_bm.resolve()} web --host 127.0.0.1 --port 2749" in unit.read_text()
-    )
+    assert f"ExecStart={installed_bm} web --host 127.0.0.1 --port 2749" in unit.read_text()
     assert systemctl.calls == [
         ["daemon-reload"],
         ["is-active", "--quiet", web_command.UNIT_NAME],
@@ -281,3 +276,23 @@ def test_the_probe_sees_the_server_graph_when_it_is_actually_imported() -> None:
     assert "fastapi" in loaded
     assert "jinja2" in loaded
     assert "basic_memory.web.app" in loaded
+
+
+def test_install_keeps_the_symlink_spelling_of_a_package_managed_bm(
+    linux, tmp_path, unit_root, systemctl, monkeypatch
+) -> None:
+    """The versioned target dies on the next upgrade; the `bin/bm` symlink survives it."""
+    target = tmp_path / "cellar" / "0.1.9" / "bm"
+    target.parent.mkdir(parents=True)
+    target.write_text("#!/bin/sh\n", encoding="utf-8")
+    link = tmp_path / "bin" / "bm"
+    link.parent.mkdir()
+    link.symlink_to(target)
+    monkeypatch.setattr(web_command.shutil, "which", lambda name: str(link))
+
+    result = runner.invoke(app, ["web", "install"])
+
+    assert result.exit_code == 0, result.output
+    unit_text = (unit_root / web_command.UNIT_NAME).read_text()
+    assert f"ExecStart={link} web" in unit_text
+    assert str(target) not in unit_text

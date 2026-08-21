@@ -118,12 +118,15 @@ def resolve_executable() -> Path:
     the one their PATH will keep resolving to. `sys.argv[0]` is the fallback for
     an install run out of a checkout or a venv that is not on PATH.
 
-    Both are resolved to real paths: a unit's `ExecStart` runs with systemd's
-    PATH, not the shell's, so a relative or symlinked entry would start failing
-    the moment the shell that wrote it exited.
+    The path is made absolute but **not** resolved through symlinks: a unit's
+    `ExecStart` runs with systemd's PATH, not the shell's, so a relative entry
+    would fail once the shell that wrote it exited — but the symlink is the
+    stable spelling. A package manager's `bin/bm` points at a versioned
+    install directory that the next upgrade deletes; writing the resolved
+    target into the unit would break the service on every upgrade.
     """
     found = shutil.which("bm")
-    candidate = Path(found if found else sys.argv[0]).resolve()
+    candidate = Path(found if found else sys.argv[0]).absolute()
     if not candidate.is_file():
         raise fail(
             f"Error: cannot find the bm executable to run from the unit (looked at {candidate})"
