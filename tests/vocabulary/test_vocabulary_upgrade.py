@@ -172,5 +172,5 @@ def test_upgrade_skips_an_already_canonical_file(monkeypatch, tmp_path):
     path.write_text(serialize_vocabulary(DEFAULT_VOCABULARY), encoding="utf-8")
     before = path.stat().st_mtime_ns
 
-    assert upgrade_snapshot_vocabulary(external_id) == path
+    assert upgrade_snapshot_vocabulary(external_id) is False
     assert path.stat().st_mtime_ns == before

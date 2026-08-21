@@ -514,26 +514,28 @@ def _write_and_commit(external_id: str, vocabulary: Vocabulary, message: str) ->
     return path
 
 
-def upgrade_snapshot_vocabulary(external_id: str) -> Path:
+def upgrade_snapshot_vocabulary(external_id: str) -> bool:
     """Rewrite a provably-untouched snapshot to the current defaults (GAPS U39).
 
     The caller has already established ``matches_superseded_defaults``; this
     only performs the rewrite. Machine wrote the file, machine may move it —
     the hand-edited case never reaches here.
 
-    No-op skip: a file already byte-equal to the canonical target is not
-    rewritten — the current defaults are themselves a match (declaration
-    fingerprint), so without this every cold pass would mint an empty commit.
+    Returns True only when the file changed: the current defaults are
+    themselves a fingerprint match, so an already-canonical file reaches here
+    on every cold pass — reporting it "upgraded" each time (or minting an
+    empty commit) would turn the notice into noise.
     """
     path = vocabulary_path(external_id)
     target = serialize_vocabulary(DEFAULT_VOCABULARY)
     if path.is_file() and path.read_text(encoding="utf-8") == target:
-        return path
-    return _write_and_commit(
+        return False
+    _write_and_commit(
         external_id,
         DEFAULT_VOCABULARY,
         f"upgrade {external_id}/{VOCABULARY_FILENAME} to current defaults",
     )
+    return True
 
 
 def sync_vocabulary_with_defaults(external_id: str, vocabulary: Vocabulary) -> Path:

@@ -166,12 +166,12 @@ async def revalidate_if_vocabulary_changed(
 
     upgraded = False
     if vocabulary is not None and matches_superseded_defaults(vocabulary):
-        upgrade_snapshot_vocabulary(project.external_id)
-        vocabulary = load_vocabulary(project.external_id)
-        # The rewrite changed the bytes; stamp what will actually be on disk so
-        # the next call is warm again.
-        stamp = vocabulary_stamp(project.external_id)
-        upgraded = True
+        upgraded = upgrade_snapshot_vocabulary(project.external_id)
+        if upgraded:
+            vocabulary = load_vocabulary(project.external_id)
+            # The rewrite changed the bytes; stamp what will actually be on
+            # disk so the next call is warm again.
+            stamp = vocabulary_stamp(project.external_id)
 
     repository = ViolationRepository(project_id=project.id)
 

@@ -376,8 +376,8 @@ async def direct_doctor_report(
                     vocabulary = None
                 if vocabulary is not None:
                     if matches_superseded_defaults(vocabulary):
-                        upgrade_snapshot_vocabulary(project.external_id)
-                        vocabulary_upgraded = True
+                        # False = already canonical; only a real rewrite is news.
+                        vocabulary_upgraded = upgrade_snapshot_vocabulary(project.external_id)
                     else:
                         delta = defaults_delta(vocabulary)
                         if not delta.empty:
