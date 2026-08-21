@@ -492,7 +492,8 @@ release version:
     echo "    uv tool install --reinstall 'git+https://github.com/noahkiss/basic-memory@{{version}}'"
     echo
     echo "Migrations auto-apply on first run. Before upgrading across a schema"
-    echo "change, snapshot the index:  cp ~/.basic-memory/memory.db{,.bak}"
+    echo "change, snapshot the index:  cp <data dir>/memory.db{,.bak}"
+    echo 'data dir: $BASIC_MEMORY_CONFIG_DIR, else $XDG_CONFIG_HOME/basic-memory when set, else ~/.basic-memory'
     echo "Recovery if the index goes bad:  bm reset --reindex"
 
 # Show what `just release` would tag and release, without writing or pushing anything

@@ -375,9 +375,11 @@ def add_project(
 ) -> None:
     """Add a new project, homed in the store.
 
-    A project's notes live under `~/.basic-memory/store/<id>/`, which is what
-    puts every write in the note history. A path argument names an *import
-    source* — somewhere notes already are — and that project keeps living there.
+    A project's notes live under `<data dir>/store/<id>/`, which is what puts
+    every write in the note history. The data dir is `$BASIC_MEMORY_CONFIG_DIR`,
+    else `$XDG_CONFIG_HOME/basic-memory` when that variable is set, else
+    `~/.basic-memory`. A path argument names an *import source* — somewhere notes
+    already are — and that project keeps living there.
 
     `--governed` writes the default record vocabulary into the project, which
     turns the schema checks on for every write to it. Without it the project is

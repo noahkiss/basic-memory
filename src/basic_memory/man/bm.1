@@ -98,12 +98,21 @@ bm reindex           # runs project indexing
 .fi
 .SH FILES
 .TP
-.I ~/.basic-memory/config.json
+.I <data dir>/config.json
 Global settings. The project registry is not here \(em the database owns it.
 .TP
-.I ~/.basic-memory/memory.db
+.I <data dir>/memory.db
 SQLite index and project registry.
+.PP
+The data dir is $BASIC_MEMORY_CONFIG_DIR, else $XDG_CONFIG_HOME/basic-memory when
+that variable is set, else ~/.basic-memory.
 .SH ENVIRONMENT
+.TP
+.B BASIC_MEMORY_CONFIG_DIR
+Data directory override; see FILES.
+.TP
+.B XDG_CONFIG_HOME
+Data directory base when set; see FILES.
 .TP
 .B BASIC_MEMORY_LOG_LEVEL
 Logging verbosity (e.g. DEBUG).

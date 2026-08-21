@@ -118,10 +118,11 @@ clock, not out of your source, and the record says so. `bm new` refuses a date
 flag the record's type does not carry — a guide, a state, and an inbox note have
 no date field at all.
 
-Notes live under `~/.basic-memory/store`, which is a local git repository. Every
-write there is committed, which is what gives `bm undo` something to put back. A
-project you added with a path of its own still works; it keeps no history, and
-says so on each write.
+Notes live under `<data dir>/store`, which is a local git repository — see
+[Reading a project's files without running `bm`](#reading-a-projects-files-without-running-bm)
+for how `bm` resolves the data dir. Every write there is committed, which is what
+gives `bm undo` something to put back. A project you added with a path of its own
+still works; it keeps no history, and says so on each write.
 
 Which project a command uses: `--project`, then the nearest `.bm.yml` above the
 working directory — skipping any that carries `scope: here`, which counts only
@@ -457,8 +458,9 @@ by entry point:
 | MCP server | File only | Stdout would corrupt JSON-RPC |
 | API server | File only | Same sink as the CLI |
 
-Log file: `~/.basic-memory/basic-memory.log` (10MB rotation, 10 days
-retention).
+Log file: `<data dir>/basic-memory.log` (10MB rotation, 10 days retention).
+`bm` resolves the data dir as shown in
+[Reading a project's files without running `bm`](#reading-a-projects-files-without-running-bm).
 
 ### Environment variables
 
@@ -470,7 +472,7 @@ retention).
 
 ```bash
 BASIC_MEMORY_LOG_LEVEL=DEBUG basic-memory reindex
-tail -f ~/.basic-memory/basic-memory.log
+tail -f "$root/basic-memory.log"   # $root from that same block
 ```
 
 ## Development

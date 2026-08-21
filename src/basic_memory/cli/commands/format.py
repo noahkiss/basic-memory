@@ -100,7 +100,9 @@ async def run_format(
             "formatter_command or formatters in your config.[/yellow]"
         )
         console.print(
-            "\nExample config (~/.basic-memory/config.json):\n"
+            "\nExample config (<data dir>/config.json; the data dir is "
+            "$BASIC_MEMORY_CONFIG_DIR,\nelse $XDG_CONFIG_HOME/basic-memory when set, "
+            "else ~/.basic-memory):\n"
             '  "format_on_save": true,\n'
             '  "formatter_command": "prettier --write {file}"\n'
         )

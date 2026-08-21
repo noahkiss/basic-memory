@@ -7188,6 +7188,11 @@ running `bm`", as a shell snippet: `$BASIC_MEMORY_CONFIG_DIR`, else `$XDG_CONFIG
 **when that variable is set**, else `~/.basic-memory`; headline at `<root>/store/<id>/headline.md`.
 `resolve_data_dir`'s own docstring had that order backwards and was fixed in the same pass.
 
+**2026-08-21:** the remaining `~/.basic-memory` hardcodes in AGENTS.md, README.md, the justfile,
+two help strings, the man page, and a config comment were swept to "the data dir" with a pointer to
+the rule; `~/.basic-memory` is only the no-XDG fallback, and on a machine with `XDG_CONFIG_HOME` set
+the real directory is `~/.config/basic-memory`.
+
 ### U22 — `[[x]]` inside inline code is indexed as a `links_to` relation — **FIXED 2026-08-18**
 
 **Found 2026-08-18** by the batch-1 migration (briefcase). A finding's body read

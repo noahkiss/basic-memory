@@ -75,12 +75,14 @@ entry that records how, and the constraints below still bind anything that chang
    in conversation and never written down. **Shipped:** `bm mine`, which parses and never judges —
    an agent reads its output and writes any keeper with `bm new` (GAPS W1).
 
-**The store is the only home for note content.** Every note lives in a single plain git repo at
-**`~/.basic-memory/store/`**, under `store/<id>/` — central and id-keyed, not one repo per project,
-and never a mirror of content that lives somewhere else. Nothing is copied on write, so there is no
-project-root-versus-store divergence to reconcile. The store path must derive from
+**The store is the only home for note content.** Every note lives in a single plain git repo in the
+data dir at **`<data dir>/store/`**, under `store/<id>/` — central and id-keyed, not one repo per
+project, and never a mirror of content that lives somewhere else. Nothing is copied on write, so
+there is no project-root-versus-store divergence to reconcile. The store path must derive from
 `resolve_data_dir()` so it honours `BASIC_MEMORY_CONFIG_DIR` like `config.json` and `memory.db` do
-— never hardcode it.
+— never hardcode it. The data dir is `$BASIC_MEMORY_CONFIG_DIR`, else `$XDG_CONFIG_HOME/basic-memory`
+when that variable is set, else `~/.basic-memory` — see README, *Reading a project's files without
+running `bm`*.
 
 A **`.bm.yml`** marker is a **pointer, not a container**. It sits at the root of a *working*
 directory — usually a code repo you run `bm` from — and says "when I am here, I mean this project."
@@ -235,7 +237,7 @@ Everything else in this file is a rule to follow. These four are decisions to br
 
 - Deleting or force-pushing anything already published to `origin`.
 - Deleting a subsystem not already named for deletion in `GAPS.md`.
-- Anything touching the user's machine outside this repo and `~/.basic-memory/`.
+- Anything touching the user's machine outside this repo and the bm data dir.
 - A change in what the product *is* — new verbs, dropped verbs, a different store design.
 
 Moved here 2026-08-07 from `.forked/campaign.md`, which was deleted; it was the only home for this.

@@ -177,7 +177,7 @@ class BasicMemoryConfig(BaseSettings):
 
     env: Environment = Field(default="dev", description="Environment name")
 
-    # overridden by ~/.basic-memory/config.json
+    # overridden by config.json in the data dir (see ``resolve_data_dir`` above)
     log_level: str = "INFO"
 
     # Semantic search configuration
