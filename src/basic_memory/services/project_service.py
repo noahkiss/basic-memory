@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from basic_memory import db
 from basic_memory.models import Project
+from basic_memory.project_registry import PROJECT_HOME_EXTERNAL
 from basic_memory.repository.project_repository import ProjectRepository
 from basic_memory.schemas import (
     ActivityMetrics,
@@ -139,6 +140,7 @@ class ProjectService:
         path: str | None = None,
         set_default: bool = False,
         governed: bool = True,
+        home: str | None = None,
     ) -> None:
         """Add a new project to the registry.
 
@@ -156,10 +158,34 @@ class ProjectService:
                 default** since GAPS U49 (2026-08-22): a new project is governed
                 unless the caller opts out. Passing False leaves no
                 ``vocabulary.yml``, which is what "ungoverned" means (GAPS W4).
+            home: Declare where the notes live. ``None`` is the default — the
+                store, or wherever ``path`` points. ``PROJECT_HOME_EXTERNAL``
+                says the directory is versioned by something else (a Claude Code
+                skill under yadm), which silences the off-store notice and keeps
+                the project's ``vocabulary.yml`` beside its records.
 
         Raises:
-            ValueError: If the project already exists or path collides with existing project
+            ValueError: If the project already exists, the path collides with an
+                existing project, or ``home`` is neither None nor
+                ``PROJECT_HOME_EXTERNAL``
         """
+        # Fail fast on the declared home. The API validates it as a Literal, but
+        # the CLI reaches this service directly (AGENTS.md, "Measured baseline"),
+        # so the invariant has to hold here too: an unreadable value would sit in
+        # the registry as a row no reader can interpret.
+        if home is not None and home != PROJECT_HOME_EXTERNAL:
+            raise ValueError(
+                f"Unknown project home '{home}'; the only declared home is "
+                f"'{PROJECT_HOME_EXTERNAL}'"
+            )
+        # An external home names a directory by definition — that directory is
+        # the whole point. Without a path the project would be store-homed and
+        # the declaration would contradict its own row.
+        if home == PROJECT_HOME_EXTERNAL and path is None:
+            raise ValueError(
+                f"A project homed '{PROJECT_HOME_EXTERNAL}' needs the directory its notes live in"
+            )
+
         # If project_root is set, constrain all projects to that directory
         project_root = self.config_manager.config.project_root
         sanitized_name = None
@@ -271,6 +297,9 @@ class ProjectService:
                 "path": resolved_path,
                 "permalink": sanitized_name,
                 "is_active": True,
+                # NULL unless declared: that is the value for a store-homed
+                # project and for a legacy off-store one alike.
+                "home": home,
                 # Don't set is_default=False to avoid UNIQUE constraint issues
                 # Let it default to NULL, only set to True when explicitly making default
             }
@@ -376,7 +405,8 @@ class ProjectService:
             new_path: The new absolute path for the project
 
         Raises:
-            ValueError: If the project doesn't exist or repository isn't initialized
+            ValueError: If the project doesn't exist, declares an external home,
+                or the repository isn't initialized
         """
         if not self.repository:  # pragma: no cover
             raise ValueError("Repository is required for move_project")  # pragma: no cover
@@ -384,21 +414,39 @@ class ProjectService:
         # Resolve to absolute path
         resolved_path = Path(os.path.abspath(os.path.expanduser(new_path))).as_posix()
 
-        # Create the new directory if it doesn't exist.
-        # Trigger: project_root not set means the caller chose the directory itself
-        # Why: FileService owns filesystem writes; direct Path.mkdir() bypasses it
-        # Outcome: destination directory exists before the registry is updated
-        if not self.config_manager.config.project_root:
-            if self.file_service is None:
-                raise ValueError("file_service is required for local project directory creation")
-            await self.file_service.ensure_directory(Path(resolved_path))
-
         async with db.scoped_session(self.session_maker) as session:
             project = await self.repository.get_by_name(
                 session, name
             ) or await self.repository.get_by_permalink(session, name)
             if project is None:
                 raise ValueError(f"Project '{name}' not found")
+
+            # Trigger: the project declares its notes live in a directory
+            #     something else versions.
+            # Why: move only rewrites the registry path — it never moves a file —
+            #     so it would leave the notes behind and point the project at an
+            #     empty directory. For a store-homed project that is harmless
+            #     (the store follows the id); for this one it is data loss.
+            # Outcome: refuse, and name the verb that re-homes a project properly.
+            if project.is_externally_homed:
+                raise ValueError(
+                    f"Project '{name}' is homed at '{project.path}', which something else "
+                    "versions. Moving it would repoint the registry and leave the notes "
+                    "behind. Run `bm project adopt` from the new directory instead."
+                )
+
+            # Create the new directory if it doesn't exist.
+            # Trigger: project_root not set means the caller chose the directory itself
+            # Why: FileService owns filesystem writes; direct Path.mkdir() bypasses it
+            # Outcome: destination directory exists before the registry is updated —
+            #     and, since the refusal above runs first, a refused move creates
+            #     nothing.
+            if not self.config_manager.config.project_root:
+                if self.file_service is None:
+                    raise ValueError(
+                        "file_service is required for local project directory creation"
+                    )
+                await self.file_service.ensure_directory(Path(resolved_path))
 
             old_path = project.path
             await self.repository.update_path(session, project.id, resolved_path)
@@ -479,6 +527,7 @@ class ProjectService:
         resolved_project_name = db_project.name
         resolved_project_path = db_project.path
         resolved_project_repo = db_project.repo
+        resolved_project_home = db_project.home
 
         # Get statistics for the specified project
         statistics = await self.get_statistics(db_project.id)
@@ -503,6 +552,9 @@ class ProjectService:
                 "id": project.id,
                 "is_default": bool(project.is_default),
                 "permalink": project.permalink,
+                # None for every project that declared nothing, which is all of
+                # them until one is created with a declared home.
+                "home": project.home,
             }
             for project in db_projects
         }
@@ -512,6 +564,7 @@ class ProjectService:
             project_name=resolved_project_name,
             project_path=resolved_project_path,
             project_repo=resolved_project_repo,
+            project_home=resolved_project_home,
             available_projects=enhanced_projects,
             default_project=default_project,
             statistics=statistics,

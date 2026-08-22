@@ -115,6 +115,13 @@ class ProjectInfoResponse(BaseModel):
     project_repo: Optional[str] = Field(
         default=None, description="Origin URL of the working repo recorded at marking time"
     )
+    # None means the project declared no home: store-homed, or a legacy
+    # off-store one. Named `project_home` rather than `home` because
+    # `ProjectItem.home` already means the project's directory as a Path, and
+    # five MCP tools read it that way.
+    project_home: Optional[str] = Field(
+        default=None, description='Declared home ("external" when notes live outside the store)'
+    )
     available_projects: Dict[str, Dict[str, Any]] = Field(
         description="Map of configured project names to detailed project information"
     )
@@ -154,6 +161,15 @@ class ProjectInfoRequest(BaseModel):
     # only what creation writes. A caller that wants none sends `governed=False`.
     governed: bool = Field(
         default=True, description="Write the default record vocabulary into the project's store"
+    )
+    # The declared home, spelled as a Literal so anything but the one legal
+    # value is a 422 rather than a row nothing can read back. The value is
+    # `project_registry.PROJECT_HOME_EXTERNAL`, written out because `Literal`
+    # takes literals, not names; `tests/test_project_home_migration.py` guards
+    # the two against drift. None is the default and means "store-homed, or wherever `path`
+    # points" — the state every project was in before this field existed.
+    home: Optional[Literal["external"]] = Field(
+        default=None, description='Declare the notes live outside the store ("external")'
     )
 
 

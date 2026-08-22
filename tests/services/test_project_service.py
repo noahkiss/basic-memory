@@ -929,3 +929,97 @@ async def test_add_project_with_a_path_keeps_it(project_service: ProjectService)
         project = await _get_project(project_service, name)
         assert project is not None
         assert Path(project.path) == source
+
+
+# --- The declared home (skill-homed projects) ---
+
+
+@pytest.mark.asyncio
+async def test_add_project_records_a_declared_external_home(project_service: ProjectService):
+    """`home="external"` says the notes live where something else versions them.
+
+    The registry keeps the intent, not just the path: a path outside the store
+    is already possible for a legacy off-store project, and the two behave
+    differently from here on (the off-store notice, history, `move`).
+    """
+    from basic_memory.project_registry import PROJECT_HOME_EXTERNAL
+
+    name = f"test-external-home-{os.urandom(4).hex()}"
+    with tempfile.TemporaryDirectory() as temp_dir:
+        skill_notes = Path(temp_dir) / "skill" / ".bm"
+        skill_notes.mkdir(parents=True, exist_ok=True)
+
+        await project_service.add_project(name, str(skill_notes), home=PROJECT_HOME_EXTERNAL)
+
+        project = await _get_project(project_service, name)
+        assert project is not None
+        assert project.home == PROJECT_HOME_EXTERNAL
+        assert project.is_externally_homed is True
+        assert Path(project.path) == skill_notes
+
+
+@pytest.mark.asyncio
+async def test_add_project_leaves_the_home_undeclared_by_default(project_service: ProjectService):
+    """Every project that says nothing stays NULL — the state before this column.
+
+    Positive control for the test above: without it, "records the declaration"
+    could mean "records it for everyone".
+    """
+    name = f"test-undeclared-home-{os.urandom(4).hex()}"
+
+    await project_service.add_project(name)
+
+    project = await _get_project(project_service, name)
+    assert project is not None
+    assert project.home is None
+    assert project.is_externally_homed is False
+
+
+@pytest.mark.asyncio
+async def test_add_project_rejects_an_unknown_home(project_service: ProjectService):
+    """The CLI reaches the service directly, so the value is checked here too."""
+    name = f"test-bad-home-{os.urandom(4).hex()}"
+    with tempfile.TemporaryDirectory() as temp_dir:
+        with pytest.raises(ValueError, match="Unknown project home"):
+            await project_service.add_project(name, temp_dir, home="elsewhere")
+
+    assert await _get_project(project_service, name) is None
+
+
+@pytest.mark.asyncio
+async def test_add_project_rejects_an_external_home_without_a_directory(
+    project_service: ProjectService,
+):
+    """An external home names a directory; without one the row contradicts itself."""
+    from basic_memory.project_registry import PROJECT_HOME_EXTERNAL
+
+    name = f"test-external-no-path-{os.urandom(4).hex()}"
+
+    with pytest.raises(ValueError, match="needs the directory"):
+        await project_service.add_project(name, home=PROJECT_HOME_EXTERNAL)
+
+    assert await _get_project(project_service, name) is None
+
+
+@pytest.mark.asyncio
+async def test_move_project_refuses_an_externally_homed_project(project_service: ProjectService):
+    """Move only rewrites the registry path, so it would orphan external notes."""
+    from basic_memory.project_registry import PROJECT_HOME_EXTERNAL
+
+    name = f"test-move-external-{os.urandom(4).hex()}"
+    with tempfile.TemporaryDirectory() as temp_dir:
+        skill_notes = Path(temp_dir) / "skill" / ".bm"
+        skill_notes.mkdir(parents=True, exist_ok=True)
+        destination = Path(temp_dir) / "somewhere-else"
+
+        await project_service.add_project(name, str(skill_notes), home=PROJECT_HOME_EXTERNAL)
+
+        with pytest.raises(ValueError, match="bm project adopt"):
+            await project_service.move_project(name, str(destination))
+
+        # The refusal is complete: the registry still points at the notes, and
+        # the destination was never created — the check runs before the mkdir.
+        project = await _get_project(project_service, name)
+        assert project is not None
+        assert Path(project.path) == skill_notes
+        assert not destination.exists()

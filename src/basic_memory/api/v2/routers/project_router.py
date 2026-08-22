@@ -160,6 +160,7 @@ async def add_project(
             project_data.path,
             set_default=project_data.set_default,
             governed=project_data.governed,
+            home=project_data.home,
         )
 
         # Fetch the newly created project to get its ID

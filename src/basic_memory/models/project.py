@@ -17,6 +17,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from basic_memory.models.base import Base
+from basic_memory.project_registry import PROJECT_HOME_EXTERNAL
 from basic_memory.utils import generate_permalink
 
 
@@ -79,6 +80,16 @@ class Project(Base):
     # Exact-match semantics: ssh and https spellings of one repo stay distinct.
     repo: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
+    # Declared home (skill-homed projects): "external" says this project's notes
+    # live outside the store, in a directory something else already versions —
+    # a Claude Code skill yadm transports, for instance. NULL is the default and
+    # covers both a store-homed project and a legacy off-store one, neither of
+    # which declared anything. TEXT rather than a boolean because a fourth
+    # intent ("elsewhere, but bm still records history") is plausible and would
+    # force a rename. `path` already carries the directory; what is not
+    # derivable from it is the intent, which this column records.
+    home: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+
     # Revalidation trigger (GAPS W5 item 4): sha256 of the project's vocabulary.yml
     # bytes when its violations were last computed, "" when the file is absent, and
     # NULL when nothing has validated this project yet. Hashing beats mtime because
@@ -88,6 +99,17 @@ class Project(Base):
     # Define relationships to entities, observations, and relations
     # These relationships will be established once we add project_id to those models
     entities = relationship("Entity", back_populates="project", cascade="all, delete-orphan")
+
+    @property
+    def is_externally_homed(self) -> bool:
+        """True when this project declares its notes live outside the store.
+
+        The one question callers ask of `home`, so the string comparison lives
+        here rather than in each of them. `PROJECT_HOME_EXTERNAL` is defined in
+        `project_registry`, which stays off the SQLAlchemy import this module
+        needs — see that module's docstring.
+        """
+        return self.home == PROJECT_HOME_EXTERNAL
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"Project(id={self.id}, external_id='{self.external_id}', name='{self.name}', permalink='{self.permalink}', path='{self.path}')"
