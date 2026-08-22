@@ -8098,6 +8098,60 @@ bodies, including a fenced block (six backticks, even, silent) and `$100 and (pa
 `tests/cli/test_record_write_commands.py` (47 → 50) covers the same ground for `bm edit`.
 `tests/cli/test_brief.py` (31 → 32) pins the doctrine line, including the quoted `<<'EOF'`.
 
+### U47 — the man page was a second, hand-maintained copy of `--help` — **DECIDED 2026-08-21, DONE 2026-08-22**
+
+**User decision, 2026-08-21: delete `bm.1` and everything that serves it.** A groff page is a
+manually written duplicate of a surface Typer already renders, and nothing checks the two against
+each other. This tree has the evidence that the copy drifts: the W21 review found three false
+statements in `bm.1` at once (a `bm schema` command that does not exist, `bm tool *` emitting JSON
+after W20 removed `--json`, and `config.json` owning the project registry after B2 moved it to the
+database), and O9's own control grep was recorded wrongly because the page was the one `src` hit
+nobody expected. Fixing it bought one green pass and no mechanism — the next verb change staled it
+again. `bm --help` cannot drift, because it is generated from the code it documents.
+
+**`bm man` goes with the page.** The group has one command, `bm man install`, and its only job is
+copying the two `.1` files into `~/.local/share/man`. With no page to install, the verb has no
+subject. That also retires the `manpath(1)` probe and its `MANPATH` hint — a shell-out this fork
+now never makes.
+
+**Deleted:**
+
+- `src/basic_memory/man/bm.1` and `src/basic_memory/man/basic-memory.1` (the `.so` alias stub) —
+  the whole directory. No packaging rule named it: hatchling takes the `src/basic_memory` tree
+  whole, and there is no `MANIFEST.in`.
+- `src/basic_memory/cli/commands/man.py` — the `man` Typer group and `install`.
+- `tests/cli/test_man_command.py` — 5 `def test_` lines, all of them about `install`.
+- `docs/manual-pages.md` — upstream's design for a manual written *as notes*, in Unix section
+  layout, under a `Manpage` schema. It documents three things this fork no longer has: the
+  picoschema linter (stripped, O-picoschema), the `manpage.md` seed schema in the Claude Code
+  plugin package (stripped with the rest of the harness surface), and `bm man`. Its remaining
+  roadmap item was the `bm man <topic>` reader that this decision cancels. Nothing links to it
+  outside this file's own history.
+
+**Edited:** `cli/commands/__init__.py` (import and `__all__`), `cli/main.py` (the registration
+import), `cli/app.py` (`man` out of `skip_init_commands`, with the comment that explained why it
+was there), `tests/cli/test_notice_guard.py` (the `("man.py", "install")` exemption — leaving it
+would have failed `test_exempt_names_only_commands_that_exist`, which is exactly the stale-entry
+case that guard exists to catch).
+
+**Test arithmetic:** −5. `tests/cli/test_man_command.py` held five and is gone; the notice-guard
+edit removes a dict entry, not a test.
+
+**Control, run after the edits:**
+
+```
+$ git grep -n -i -E 'bm\.1|manpage|man page|\bman\b|MANPATH' -- . ':!GAPS.md'
+                                        # no output
+$ git grep -c -i -E 'bm\.1|manpage|man page|\bman\b|MANPATH' -- .
+GAPS.md:30
+```
+
+The second command is the positive control: the same regex still finds 30 lines, so the search
+reaches the tree and the empty first result is a real negative rather than a broken pattern. Those
+30 are this file — 13 lines of O9 and W21 history, which stays as written, and 17 in this entry.
+A filename sweep (`git ls-files | grep -i man`) returns only `*project_management*` files, which
+the T17 lesson demands be checked separately from the content grep.
+
 ## Docs swept
 
 **2026-07-26.** A ten-reader sweep reconciled the following into this file. The gaps they contained

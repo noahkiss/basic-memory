@@ -58,8 +58,6 @@ EXEMPT: dict[tuple[str, str], str] = {
     ("import_claude_conversations.py", "import_claude"): "a one-shot import, not a read",
     ("import_claude_projects.py", "import_projects"): "a one-shot import, not a read",
     ("import_memory_json.py", "memory_json"): "a one-shot import, not a read",
-    # Copies packaged documentation into place. A broken corpus must not block it.
-    ("man.py", "install"): "copies packaged docs; never opens the database",
     # Starts the MCP server. It has no payload to append a line to, and its
     # stdout is a protocol stream.
     ("mcp.py", "mcp"): "a long-running server; its stdout carries the MCP protocol",

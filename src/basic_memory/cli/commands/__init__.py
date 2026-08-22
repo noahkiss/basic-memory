@@ -4,7 +4,6 @@ from . import status, db, doctor, import_memory_json, mcp, import_claude_convers
 from . import (
     import_claude_projects,
     import_chatgpt,
-    man,
     tool,
     project,
     config,
@@ -25,5 +24,4 @@ __all__ = [
     "project",
     "config",
     "format",
-    "man",
 ]
