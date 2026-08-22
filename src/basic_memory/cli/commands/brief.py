@@ -225,6 +225,16 @@ class Brief:
     def row_count(self) -> int:
         return sum(len(section.rows) for section in self.sections)
 
+    @property
+    def match_total(self) -> int:
+        """How many records the payload matched, before `MAX_ROWS` cut it (GAPS U6).
+
+        Read `total` the way `_heading_count` does, falling back to the rows when a
+        section carries none: a Section built by the render tests has no total, and a
+        closing count below the rows it sits under would be a bug of its own.
+        """
+        return sum(max(section.total, len(section.rows)) for section in self.sections)
+
 
 @dataclass(frozen=True, slots=True)
 class ProjectRow:
@@ -355,11 +365,11 @@ async def query(session_maker, scope: ReadScope, query_text: Optional[str] = Non
         # A search reads no vocabulary, so it covers every in-scope project even
         # when one of them has a malformed file. Only the section path degrades.
         if query_text is not None:
-            rows = await search_pointers(session, session_maker, projects, query_text)
+            rows, matched = await search_pointers(session, session_maker, projects, query_text)
             heading = f'Matches for "{query_text}"'
             return Brief(
                 project=scope.project,
-                sections=(Section(heading=heading, rows=rows),),
+                sections=(Section(heading=heading, rows=rows, total=matched),),
                 query=query_text,
             )
 
@@ -506,12 +516,17 @@ async def query(session_maker, scope: ReadScope, query_text: Optional[str] = Non
 
 async def search_pointers(
     session, session_maker, projects: Sequence[ProjectRow], query_text: str
-) -> tuple[Row, ...]:
+) -> tuple[tuple[Row, ...], int]:
     """Full-text search reduced to pointers: permalink and title, never content.
 
     W8 item 1 in one sentence — a brief may say *where* something is and must never
     say what it contains. `content_snippet` is on every hit and is deliberately
     dropped on the floor.
+
+    Returns the capped rows **and** how many notes actually matched, summed over the
+    in-scope projects (GAPS U6). The two are different numbers and the second one is
+    the honest count: reporting `len(rows)` said "5 results" over a corpus with forty
+    matches, and nothing in the output distinguished that from a corpus with five.
 
     The repository is built directly rather than through `create_search_repository`,
     which instantiates the embedding provider when semantic search is enabled — a
@@ -528,8 +543,19 @@ async def search_pointers(
     from basic_memory.schemas.search import SearchItemType, SearchRetrievalMode
 
     scored: list[tuple[float, Row]] = []
+    total = 0
     for project in projects:
         repository = SQLiteSearchRepository(session_maker, project_id=project.id)
+        # Two queries per project over one predicate, the shape the standing sections
+        # already use: an unlimited COUNT for the honest total, a capped SELECT for the
+        # rows. The argument lists must stay in step — a count over a wider predicate
+        # than the rows fetches would report a pile that is not the one being shown.
+        total += await repository.count(
+            search_text=query_text,
+            search_item_types=[SearchItemType.ENTITY],
+            retrieval_mode=SearchRetrievalMode.FTS,
+            session=session,
+        )
         hits = await repository.search(
             search_text=query_text,
             search_item_types=[SearchItemType.ENTITY],
@@ -552,7 +578,7 @@ async def search_pointers(
         )
 
     scored.sort(key=lambda pair: pair[0])
-    return tuple(row for _, row in scored[:MAX_ROWS])
+    return tuple(row for _, row in scored[:MAX_ROWS]), total
 
 
 async def gather(scope: ReadScope, query_text: Optional[str] = None) -> Brief:
@@ -795,7 +821,17 @@ def render(brief: Brief) -> str:
     # Contract rule 3: a record listing closes with its count, on its own line. Outside
     # the fence, because it is bm speaking rather than data bm retrieved. Only the
     # search payload is a record listing; the standing sections carry their own counts.
-    tail = f"\n{brief.row_count} results" if brief.query is not None else ""
+    #
+    # The count is the corpus's, not the cap's, and it says so when the two differ —
+    # the same pair `_heading_count` prints, for the same reason (GAPS U6, U4). A tail
+    # reading "5 results" over forty matches was a count of MAX_ROWS wearing a corpus
+    # count's clothes, and contract rule "counts are honest" forbids exactly that.
+    tail = ""
+    if brief.query is not None:
+        matched = brief.match_total
+        shown = brief.row_count
+        capped = f", showing {shown}" if shown < matched else ""
+        tail = f"\n{matched} results{capped}"
 
     # Overhead is the opening, both fences, the "text\n" info line, the newline before
     # the closing fence, and the count line: len(opening) + 2*len(marks) + 6 + len(tail).

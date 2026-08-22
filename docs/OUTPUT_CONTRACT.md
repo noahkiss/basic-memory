@@ -1,6 +1,7 @@
 # CLI Output Contract
 
-**Version 2.1** — rule 6 gained a partial-corpus clause on 2026-08-16 (GAPS O10). `bm path`'s
+**Version 2.2** — rule 3 gained a capped-count clause on 2026-08-22 (GAPS U6). Version 2.1 —
+rule 6 gained a partial-corpus clause on 2026-08-16 (GAPS O10). `bm path`'s
 exception was documented on 2026-08-17; it adds a verb, not a rule change, so the version holds.
 Version 2 dates from 2026-08-10. This contract governs every `bm` command's output. Version 1 mandated
 a `--json` mode; v2 removes it (GAPS W20, decided 2026-08-06): every consumer of `bm` output is an
@@ -26,7 +27,11 @@ change to these rules, recorded here.
    so it is findable without counting columns.
 3. **A count on its own line at the end** of a record listing (`N results`), or nothing when the
    count is unknown — absence *is* the signal; never a sentinel. Pagination when the count is
-   unknown says `more results available` as a notice.
+   unknown says `more results available` as a notice. **When the verb caps the listing and knows
+   the true count, it prints both** — `N results, showing M` — and a section heading over the same
+   listing says it the same way, `(N, showing M)`. A bare `M results` under a cap is the count of
+   the cap wearing a corpus count's clothes, which is the one thing "counts are honest" forbids
+   (GAPS U4, U6). When nothing was cut, the plain form stands.
 4. **Notices, then affordances, after the payload**, each on its own line, on stdout. A notice
    states a condition (`3 files not indexed — invisible to search until reindex`); an affordance
    names the next command (`Run 'bm reindex' to index them.`). They never interrupt or precede the

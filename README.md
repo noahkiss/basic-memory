@@ -188,8 +188,10 @@ directory pins one. When nothing is open it says so in one line
 came back empty.
 
 `bm brief --query "<text>"` searches instead, printing one line per hit —
-permalink and title, never note content. A search that matches nothing says
-`0 results`.
+permalink and title, never note content. It prints at most five hits, and the
+count is the corpus's rather than the cap's: forty matches head the list
+`Matches for "x" (40, showing 5)` and close it with `40 results, showing 5`. A
+search that matches nothing says `0 results`.
 
 Wire it into your agent by hand; this fork ships no plugin package. For Claude
 Code, add it as a `SessionStart` hook in `~/.claude/settings.json`.

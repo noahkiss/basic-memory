@@ -6456,7 +6456,7 @@ Tests added (2): `test_doctor_asks_a_plain_inbox_record_for_something_it_can_do`
 `test_doctor_hygiene_section_lists_every_check` changed one expected line from `proposes no type` to
 the new message; that line was the defect, written down.
 
-### U6 — `bm brief --query` counts the hits it printed, not the hits there are — **OPEN**
+### U6 — `bm brief --query` counts the hits it printed, not the hits there are — **FIXED 2026-08-22**
 
 Found while closing U4, which fixed the same defect in the standing sections. The search path still
 has it: `search_pointers` asks each in-scope project's FTS index for `MAX_ROWS` hits, keeps the best
@@ -6473,6 +6473,41 @@ summed) and print `(40, showing 5)` the way the standing sections now do, or dro
 `more results available` as a notice, which is what `docs/OUTPUT_CONTRACT.md` rule 3 prescribes for a
 count that is not known. The second is cheaper and the contract already names it; the first is
 better and costs one query per project.
+
+**Closed 2026-08-22**, taking the first option — the better one, and the one that leaves the two
+count surfaces in `bm brief` saying the same thing in the same words. A heading now reads
+`## Matches for "x" (40, showing 5)` and the listing closes with `40 results, showing 5`; under the
+cap both keep the plain form, and a search that matched nothing still prints `0 results` (U7,
+contract rule 5) because the renderer stays silent on an empty brief and the verb speaks for it.
+
+- `search_pointers` in `cli/commands/brief.py` returns `(rows, total)` instead of rows, summing one
+  unlimited `COUNT` per in-scope project over the predicate its capped `SELECT` already used. The
+  query path feeds that into `Section.total`, so U4's `_heading_count` prints the pair with no
+  change of its own. Two queries per project, the same shape U4 chose for the standing sections.
+- No new repository method was needed: `SQLiteSearchRepository.count()` already builds its
+  predicate through the same `_build_fts_query_parts` as `search()`. It gained one thing — a
+  `session: AsyncSession | None = None` passthrough mirroring `search()`'s, because brief holds the
+  pool's single connection and a repository opening its own inside brief's `async with` deadlocks.
+- The tail reads `Brief.match_total` rather than `Brief.row_count`, and appends `, showing N` only
+  when the cap actually cut the list.
+
+*Judgment call:* `docs/OUTPUT_CONTRACT.md` prescribed no shape for a known-but-capped count, so
+rule 3 gained a clause naming `N results, showing M` and the matching `(N, showing M)` heading, and
+the contract went to **version 2.2**. Writing the form into the contract rather than into brief
+alone is what stops the next capped verb inventing a third spelling.
+
+**Left open, and not filed as a new entry** (the brief is what U6 is about): `bm web`'s `/search`
+page has the same defect — `web/templates/search.html` prints `{{ hits | length }} results` over
+the same capped `search_pointers` call. The true total now reaches `web/app.py` and is discarded
+there with a comment. One line of template plus one context key closes it.
+
+Files: `src/basic_memory/cli/commands/brief.py`,
+`src/basic_memory/repository/sqlite_search_repository.py`, `src/basic_memory/web/app.py`,
+`docs/OUTPUT_CONTRACT.md`, `README.md`.
+
+Tests added to `tests/cli/test_brief.py` (3): `test_a_capped_query_reports_the_true_match_count`,
+`test_an_uncapped_query_keeps_the_plain_count`, `test_a_query_with_no_matches_totals_zero`. None
+removed.
 
 ### U7 — an empty `bm brief` is still zero bytes, which W20 rule 5 forbids — **FIXED 2026-08-18**
 

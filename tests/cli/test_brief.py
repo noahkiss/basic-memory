@@ -575,6 +575,92 @@ async def test_query_that_matches_nothing_is_empty(
     assert render(result) == ""
 
 
+# --- `--query`: the count is the corpus's, not the cap's (GAPS U6) ---
+
+
+async def _index_note(entity_service, search_service, title: str, content: str) -> None:
+    """Write a note through the real path and index it, so FTS can find it."""
+    from basic_memory.schemas.base import Entity as EntitySchema
+
+    entity, _ = await entity_service.create_or_update_entity(
+        EntitySchema(title=title, note_type="finding", directory="test", content=content)
+    )
+    await search_service.index_entity(entity)
+
+
+@pytest.mark.asyncio
+async def test_a_capped_query_reports_the_true_match_count(
+    session_maker, test_project, config_home, entity_service, search_service
+):
+    """GAPS U6: more matches than the cap, so both counts say so.
+
+    Before this, a query matching eight notes printed five rows, headed them `(5)`,
+    and closed with `5 results` — three statements that agreed with each other and
+    with nothing in the corpus.
+    """
+    matches = MAX_ROWS + 3
+    for position in range(matches):
+        await _index_note(
+            entity_service,
+            search_service,
+            f"Quokka note {position}",
+            f"# Quokka note {position}\n\nThe quokka is a small macropod.\n",
+        )
+
+    result = await query(session_maker, _scope(test_project.name), query_text="quokka")
+
+    section = result.sections[0]
+    assert len(section.rows) == MAX_ROWS
+    assert section.total == matches
+    out = render(result)
+    assert f'## Matches for "quokka" ({matches}, showing {MAX_ROWS})' in out
+    assert out.endswith(f"{matches} results, showing {MAX_ROWS}")
+
+
+@pytest.mark.asyncio
+async def test_an_uncapped_query_keeps_the_plain_count(
+    session_maker, test_project, config_home, entity_service, search_service
+):
+    """The positive control: under the cap, nothing claims a list was cut."""
+    for position in range(2):
+        await _index_note(
+            entity_service,
+            search_service,
+            f"Wombat note {position}",
+            f"# Wombat note {position}\n\nThe wombat digs.\n",
+        )
+
+    result = await query(session_maker, _scope(test_project.name), query_text="wombat")
+
+    section = result.sections[0]
+    assert section.total == len(section.rows) == 2
+    out = render(result)
+    assert '## Matches for "wombat" (2)' in out
+    assert out.endswith("2 results")
+    assert "showing" not in out
+
+
+@pytest.mark.asyncio
+async def test_a_query_with_no_matches_totals_zero(
+    session_maker, test_project, config_home, entity_service, search_service
+):
+    """Zero is still zero: the count line stays `0 results` (contract rule 5, U7).
+
+    The seeded note is the control — the index holds something, so an empty result
+    is the search's answer rather than an empty corpus.
+    """
+    await _index_note(
+        entity_service, search_service, "Numbat note", "# Numbat note\n\nThe numbat eats ants.\n"
+    )
+
+    result = await query(session_maker, _scope(test_project.name), query_text="zzzznomatch")
+
+    assert result.sections[0].total == 0
+    assert result.match_total == 0
+    # The verb prints `0 results` for this state; the renderer stays silent (GAPS U7).
+    assert render(result) == ""
+
+
 # --- render ---
 
 

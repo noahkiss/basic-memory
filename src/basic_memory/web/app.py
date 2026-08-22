@@ -198,6 +198,7 @@ def create_app() -> FastAPI:
 
         query_text = q.strip()
         hits: Sequence[object] = ()
+        matched = 0
         async with session_for(request) as session:
             rows = sorted(await projects_in_scope(session, None), key=lambda row: row.name)
             known = [row.name for row in rows]
@@ -205,7 +206,9 @@ def create_app() -> FastAPI:
                 # The caller's session goes through: the pool holds one
                 # connection, so letting the search repository open its own
                 # inside this scope would deadlock.
-                hits = await search_pointers(
+                # The match total travels to the template so its count line can
+                # say `40 results, showing 5` instead of counting the cap (GAPS U6).
+                hits, matched = await search_pointers(
                     session,
                     request.app.state.session_maker,
                     [
@@ -215,7 +218,9 @@ def create_app() -> FastAPI:
                     query_text,
                 )
 
-        return page(request, "search.html", query=query_text, hits=hits, projects=known)
+        return page(
+            request, "search.html", query=query_text, hits=hits, matched=matched, projects=known
+        )
 
     # --- Liveness ---
 

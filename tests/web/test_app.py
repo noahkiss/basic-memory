@@ -307,3 +307,19 @@ async def test_healthz_reports_ok(client: AsyncClient) -> None:
 
     assert response.status_code == 200
     assert response.json() == {"ok": True}
+
+
+@pytest.mark.asyncio
+async def test_search_count_line_reports_the_true_match_total(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """GAPS U6 on the board: the count line names every match, not the cap."""
+    from basic_memory.cli.commands import brief as brief_module
+
+    async def capped_search(session, session_maker, rows, query_text):  # noqa: ANN001
+        return [], 40
+
+    monkeypatch.setattr(brief_module, "search_pointers", capped_search)
+    response = await client.get("/search", params={"q": "anything"})
+    assert response.status_code == 200
+    assert "40 results, showing 0" in response.text

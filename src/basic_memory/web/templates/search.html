@@ -16,7 +16,7 @@
     </li>
     {% endfor %}
   </ul>
-  <p class="counts">{{ hits | length }} result{{ '' if hits | length == 1 else 's' }} for “{{ query }}”</p>
+  <p class="counts">{{ matched }} result{{ '' if matched == 1 else 's' }}{% if matched > hits | length %}, showing {{ hits | length }}{% endif %} for “{{ query }}”</p>
   {% endif %}
 </article>
 {% endblock %}

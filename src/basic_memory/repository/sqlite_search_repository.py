@@ -1160,8 +1160,15 @@ class SQLiteSearchRepository(SearchRepositoryBase):
         retrieval_mode: SearchRetrievalMode = SearchRetrievalMode.FTS,
         min_similarity: Optional[float] = None,
         allow_relaxed: bool = False,
+        session: AsyncSession | None = None,
     ) -> int:
-        """Count indexed content matching the SQLite FTS query."""
+        """Count indexed content matching the SQLite FTS query.
+
+        Constraint: `session` exists for the same reason `search()`'s does. A caller
+        already inside its own `async with` — `cli/commands/brief.py` pairs this count
+        with a capped `search()` over one predicate — holds the pool's single
+        connection, so opening a second one here would deadlock.
+        """
         if retrieval_mode != SearchRetrievalMode.FTS:
             # Same contract as search(): a silently ignored staleness cutoff is
             # worse than an error (O4).
@@ -1195,18 +1202,22 @@ class SQLiteSearchRepository(SearchRepositoryBase):
         )
         sql = f"SELECT COUNT(*) FROM {from_clause} WHERE {where_clause}"
         logger.trace(f"Count {sql} params: {params}")
-        try:
-            async with db.scoped_session(self.session_maker) as session:
-                result = await session.execute(text(sql), params)
+
+        async def run_count(active_session: AsyncSession) -> int:
+            result = await active_session.execute(text(sql), params)
+            total = int(result.scalar_one())
+            relaxed = self._relaxed_fts_text(search_text) if allow_relaxed and total == 0 else None
+            if relaxed and params.get("text"):
+                params["text"] = relaxed
+                result = await active_session.execute(text(sql), params)
                 total = int(result.scalar_one())
-                relaxed = (
-                    self._relaxed_fts_text(search_text) if allow_relaxed and total == 0 else None
-                )
-                if relaxed and params.get("text"):
-                    params["text"] = relaxed
-                    result = await session.execute(text(sql), params)
-                    total = int(result.scalar_one())
-                return total
+            return total
+
+        try:
+            if session is not None:
+                return await run_count(session)
+            async with db.scoped_session(self.session_maker) as owned_session:
+                return await run_count(owned_session)
         except Exception as e:
             if self._is_fts5_syntax_error(e):  # pragma: no cover
                 logger.warning(f"FTS5 syntax error for search term: {search_text}, error: {e}")
