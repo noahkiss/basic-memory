@@ -1042,6 +1042,22 @@ def test_toolbox_teaches_the_verbs_the_doctrine_and_the_undo_pair():
     assert "never a PLAN.md file" in block
 
 
+def test_the_toolbox_teaches_the_stdin_body_form():
+    """The one defence bm has against the shell rewriting a `--body` (GAPS U46).
+
+    The expansion happens before `bm` is started, so the doctrine line is the
+    whole fix — it has to name the flag and the quoted delimiter, because
+    `<<EOF` unquoted expands exactly as double quotes do.
+    """
+    from basic_memory.cli.commands.brief import toolbox_lines
+
+    block = "\n".join(toolbox_lines())
+
+    assert "backticks or $(" in block
+    assert "--body -" in block
+    assert "<<'EOF'" in block
+
+
 def test_the_toolbox_prints_under_quiet(monkeypatch, capsys):
     """Payload, not a hint: the session hook runs --quiet and is the one consumer.
 

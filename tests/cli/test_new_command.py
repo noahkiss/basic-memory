@@ -1211,3 +1211,96 @@ def test_new_a_declared_type_beats_the_default_alias_of_the_same_name() -> None:
     assert result.stdout.split()[1] == "decision"
     assert written_frontmatter(written_file(project, result.stdout))["type"] == "decision"
     assert "alias" not in result.stdout
+
+
+# --- A body the shell may have rewritten (GAPS U46) ---
+
+
+@pytest.mark.parametrize(
+    ("body", "mangled"),
+    [
+        ("a `code` span", False),
+        ("an unpaired ` backtick", True),
+        ("```\nfenced\n```", False),
+        ("it printed $(date) instead", True),
+        ("plain prose", False),
+        # Neither trigger: a lone `$` and a lone `(` are not a substitution.
+        ("$100 and (parentheses)", False),
+    ],
+)
+def test_body_looks_shell_mangled_reads_the_two_triggers(body: str, mangled: bool) -> None:
+    """Odd backticks or a bare `$(` — and nothing else fires it."""
+    from basic_memory.cli.record_notes import body_looks_shell_mangled
+
+    assert body_looks_shell_mangled(body) is mangled
+
+
+def test_new_notices_a_body_with_an_unpaired_backtick() -> None:
+    """One backtick means its pair is gone, which is what the shell ate (GAPS U46)."""
+    project = seed_project(GOVERNED)
+
+    result = runner.invoke(
+        app, ["new", "state", "Half A Span", "-b", "run ` first", "-p", GOVERNED]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "the shell may have rewritten it" in result.stdout
+    assert "--body -" in result.stdout
+    # A notice, never a refusal: the content still lands.
+    assert written_file(project, result.stdout).is_file()
+
+
+def test_new_notices_a_command_substitution_in_the_body() -> None:
+    """`$(` survived this time; the same text under double quotes would not."""
+    seed_project(GOVERNED)
+
+    result = runner.invoke(
+        app, ["new", "state", "Substituted", "-b", "it printed $(date)", "-p", GOVERNED]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "the shell may have rewritten it" in result.stdout
+
+
+def test_a_body_with_paired_backticks_earns_no_notice() -> None:
+    """Positive control for the two above: a well-formed code span is silent."""
+    project = seed_project(GOVERNED)
+
+    result = runner.invoke(
+        app, ["new", "state", "Whole Span", "-b", "run `bm doctor` first", "-p", GOVERNED]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "rewritten" not in result.stdout
+    assert "`bm doctor`" in written_file(project, result.stdout).read_text(encoding="utf-8")
+
+
+def test_quiet_hides_the_shell_notice() -> None:
+    """Rule 7: `--quiet` drops it like every other notice."""
+    seed_project(GOVERNED)
+
+    result = runner.invoke(
+        app, ["new", "state", "Quietly Half", "-b", "run ` first", "-p", GOVERNED, "--quiet"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "rewritten" not in result.stdout
+
+
+def test_a_body_read_from_stdin_earns_no_notice() -> None:
+    """`--body -` is the route the notice recommends, so it never scolds it.
+
+    The body carries both triggers. Read from stdin they are what the writer
+    typed, byte for byte — there was no shell between them and the record.
+    """
+    project = seed_project(GOVERNED)
+
+    result = runner.invoke(
+        app,
+        ["new", "state", "Piped Verbatim", "--body", "-", "-p", GOVERNED],
+        input="run ` and $(date)\n",
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "rewritten" not in result.stdout
+    assert "$(date)" in written_file(project, result.stdout).read_text(encoding="utf-8")

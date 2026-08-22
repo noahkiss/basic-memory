@@ -101,9 +101,6 @@ FIELD_BEARING_TYPE = "profile"
 # abandoning it are different outcomes, and only the first has a verb.
 DONE_STATUS = "done"
 
-# `--body -` reads the new body from stdin, the way `git commit -F -` does.
-STDIN_BODY = "-"
-
 
 def fail(message: str) -> typer.Exit:
     """Write one error line to stderr and return the exit the caller raises.
@@ -342,8 +339,12 @@ def _next_body(current: str, body: Optional[str], *, may_open_editor: bool) -> s
     `bm edit <id> --title "…"` asked for a title and nothing else, and opening an
     editor on the body would make the same command mean two different things
     depending on whether a terminal happened to be attached.
+
+    `--body -` reads stdin, the way `git commit -F -` does. It is also the only
+    route a shell never parsed, which is why a body holding backticks or `$(`
+    belongs on it (GAPS U46).
     """
-    from basic_memory.cli.record_notes import body_from_editor
+    from basic_memory.cli.record_notes import STDIN_BODY, body_from_editor
 
     if body == STDIN_BODY:
         return sys.stdin.read()
@@ -387,6 +388,7 @@ async def edit_record(
         carry_relations,
         check_relation_types,
         record_exists,
+        shell_mangled_notices,
     )
     from basic_memory.file_utils import remove_frontmatter
     from basic_memory.vocabulary.model import load_vocabulary
@@ -484,6 +486,10 @@ async def edit_record(
         detail=result.file_path,
         project=project.name,
         notices=(
+            # Read off the flag the caller typed, not off `next_body`: `--body -`
+            # and an absent `--body` came from stdin and from `$EDITOR`, and
+            # neither passed through a shell (GAPS U46).
+            *shell_mangled_notices(body),
             *result.notices,
             *_override_notices(record, override=override),
             *_ungoverned_notices(project.external_id),
@@ -505,8 +511,9 @@ def edit(
             "-b",
             help=(
                 "Replace the body, keeping the record's '## Relations' section. "
-                "Use '-' to read it from stdin; omit both --title and --body to "
-                "open $EDITOR."
+                "A body with backticks or $( must come from stdin: '--body -' with a "
+                "quoted heredoc (<<'EOF'), or the shell rewrites it first. Omit both "
+                "--title and --body to open $EDITOR."
             ),
         ),
     ] = None,
@@ -561,6 +568,9 @@ def edit(
     `--rel <type>:<id>` on its own adds a link to any record. Every other field
     set at creation stays set, `status` included: `bm mark` and `bm done` are
     what move it.
+
+    A body with backticks or `$(` must come from stdin: `--body -` with a quoted
+    heredoc (`<<'EOF'`), or the shell rewrites it first.
     """
     from basic_memory.cli.record_notes import parse_relations, write_project_name
 

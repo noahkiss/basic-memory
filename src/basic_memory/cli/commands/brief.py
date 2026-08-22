@@ -691,7 +691,9 @@ def toolbox_lines() -> list[str]:
     seventeen open tasks with zero ever closed, and corrections whose stale
     predecessors nothing flagged. The edit line is U44's: `bm edit` used to refuse
     a task outright, so agents quoted stale ones as fact — it now refuses only a
-    finding, and even that yields to `--override`.
+    finding, and even that yields to `--override`. The stdin line is U46's: the
+    shell expands a `--body` before `bm` is started, so teaching is the only
+    defence the tool has.
     """
     from basic_memory.vocabulary.glossary import PICKING_QUESTIONS, SUPERSEDES_RELATION
     from basic_memory.vocabulary.model import DEFAULT_VOCABULARY
@@ -725,6 +727,10 @@ def toolbox_lines() -> list[str]:
         "narrative and an ordered list of [[task-id]] stage links; each stage is a task "
         "--rel part_of:<plan-id>; bm show <plan-id> renders the live checklist — "
         "never a PLAN.md file",
+        # The shell expands the body before bm is started, so bm cannot catch this
+        # one — only teach it (GAPS U46).
+        "a body with backticks or $( must come from stdin: --body - with a quoted heredoc "
+        "(<<'EOF'), or the shell rewrites it first",
     ]
 
 

@@ -295,6 +295,54 @@ def body_from_editor(text: str) -> str:
         scratch.unlink(missing_ok=True)
 
 
+# --- A body the shell may have rewritten before bm saw it (GAPS U46) ---
+
+# `--body -` reads the body from stdin, which is the one route no shell parses.
+# Stated here as well as in each verb, because the check below is the thing that
+# has to know which value means "not from the command line".
+STDIN_BODY = "-"
+
+# What the write verbs say about a body that carries shell syntax. A notice, not
+# a refusal: bm is downstream of the expansion and cannot tell a rewritten body
+# from a body that meant to say `$(`, and the content still has to land.
+SHELL_MANGLED_NOTICE = (
+    "note: the body holds $( or an unpaired backtick — the shell may have rewritten it. "
+    "Pass it on stdin: --body - with a quoted heredoc (<<'EOF')."
+)
+
+
+def body_looks_shell_mangled(body: str) -> bool:
+    """True when a body carries the shell's marks, or the scar of an expansion.
+
+    Two triggers, and only two:
+
+    - **an odd number of backticks.** A code span is written in pairs, so an odd
+      count means one of them is gone. Under double quotes a shell reads the pair
+      as command substitution and leaves the command's *output* in its place,
+      which is how a record ends up with a word missing mid-sentence.
+    - **a bare `$(`.** The other spelling of the same substitution. It survived
+      this time — the body was single-quoted — so the same text typed under
+      double quotes would not, and the writer should learn that before it does.
+
+    Neither is proof, which is why the caller notices rather than refuses: a body
+    that legitimately holds one backtick is still a body bm has to write.
+    """
+    return body.count("`") % 2 == 1 or "$(" in body
+
+
+def shell_mangled_notices(flag_value: Optional[str]) -> tuple[str, ...]:
+    """The notice a `--body` argument earns, judged on the argument itself.
+
+    The *raw* flag value is what is read, not the resolved body, and that is what
+    makes the stdin exemption free: `--body -` and an absent `--body` are the two
+    routes a shell never parsed — stdin and `$EDITOR` — so both return nothing to
+    say.
+    """
+    if flag_value is None or flag_value == STDIN_BODY:
+        return ()
+    return (SHELL_MANGLED_NOTICE,) if body_looks_shell_mangled(flag_value) else ()
+
+
 # --- The edges a record carries (GAPS U14) ---
 
 

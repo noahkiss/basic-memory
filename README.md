@@ -72,7 +72,7 @@ id. `bm` is the short name for `basic-memory`; both run the same commands.
 
 | Command | What it does |
 |---|---|
-| `bm new <type> "<title>"` | Write a record and print its id. `--rel type:id` links it to a record the project already holds, repeatably. A type this project does not declare is filed as an inbox note proposing it — unless the project declares no `inbox` type, when the write is refused and says so. |
+| `bm new <type> "<title>"` | Write a record and print its id. `--rel type:id` links it to a record the project already holds, repeatably. A type this project does not declare is filed as an inbox note proposing it — unless the project declares no `inbox` type, when the write is refused and says so. `--body -` reads the body from stdin, which is what a body holding backticks or `$(` needs (below). |
 | `bm ls` | List records: id, type, status, title. Filter with `--type`, `--status`, `--area`. A record some other record supersedes reads `superseded` in the status column. |
 | `bm show <id>` | Print a record's file, exactly as it is on disk. |
 | `bm path <id>` | Print a record's file path and nothing else, for `$EDITOR "$(bm path <id>)"`. |
@@ -90,6 +90,24 @@ id. `bm` is the short name for `basic-memory`; both run the same commands.
 | `bm project list` | List projects. `project info` describes one. |
 | `bm project add <name>` | Create a project, homed in the store. `--governed` turns the schema checks on; `--here` also writes a `.bm.yml` in the current directory pointing at it, and `--only-here` keeps that marker from covering subdirectories. |
 | `bm project mark [<name>]` | Point the current directory at a project by writing its `.bm.yml`. With no name it refreshes the marker that is already there, which is how a marker written before `bm` recorded ids gains one. `--only-here` writes `scope: here`, so subdirectories do not inherit the marker. |
+
+### A body with backticks or `$(`
+
+The shell expands `` `code` `` and `$(…)` before `bm` ever starts, so a body
+typed inline arrives with its code spans gone or replaced by command output.
+`bm` cannot prevent that — it is downstream of it — so read the body from stdin
+with a quoted heredoc instead:
+
+```bash
+bm new finding "title" --body - <<'EOF'
+body with `code` and $(literal)
+EOF
+```
+
+Quote the delimiter. `<<'EOF'` passes the text through untouched; `<<EOF`
+expands it exactly as double quotes would. The same form works for
+`bm edit <id> --body -`. When a body that arrived on the command line still
+carries `$(` or an unpaired backtick, the write prints a notice saying so.
 
 ### Dates on a record
 

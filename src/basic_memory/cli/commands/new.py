@@ -59,9 +59,6 @@ from basic_memory.vocabulary.glossary import (
 # shortcut: a hint that appears only sometimes teaches the surface unreliably.
 NEW_AFFORDANCE = "bm show <id> read it back · bm ls list what is here · bm done <id> close a task"
 
-# `--body -` reads the note's body from stdin, the way `git commit -F -` does.
-STDIN_BODY = "-"
-
 # The status every task opens at. `bm mark` is what moves it; nothing else does
 # (`.forked/schema.md` §4 — status is one of the four mutable things).
 INITIAL_TASK_STATUS = "open"
@@ -277,8 +274,12 @@ def read_body(body: Optional[str]) -> str:
     no terminal attached, and an editor launched there is a hang with no prompt
     to explain it — so the same invocation writes an empty body instead, which
     `bm edit` can fill in.
+
+    `--body -` reads stdin, the way `git commit -F -` does. It is also the only
+    route a shell never parsed, which is why a body holding backticks or `$(`
+    belongs on it (GAPS U46).
     """
-    from basic_memory.cli.record_notes import body_from_editor
+    from basic_memory.cli.record_notes import STDIN_BODY, body_from_editor
 
     if body == STDIN_BODY:
         return sys.stdin.read()
@@ -476,7 +477,11 @@ def new(
         typer.Option(
             "--body",
             "-b",
-            help="The note's body. Use '-' to read it from stdin; omit it to open $EDITOR.",
+            help=(
+                "The note's body. A body with backticks or $( must come from stdin: "
+                "'--body -' with a quoted heredoc (<<'EOF'), or the shell rewrites it "
+                "first. Omit it to open $EDITOR."
+            ),
         ),
     ] = None,
     source: Annotated[
@@ -585,8 +590,16 @@ def new(
     `--date-source`. With no date flag the record gets today's date declared
     `inferred`, which is what puts it in `bm doctor`'s review pile rather than
     passing a guess off as a date read from the source.
+
+    A body with backticks or `$(` must come from stdin: `--body -` with a quoted
+    heredoc (`<<'EOF'`), or the shell rewrites it first.
     """
-    from basic_memory.cli.record_notes import DEFAULT_SOURCE, parse_relations, write_project_name
+    from basic_memory.cli.record_notes import (
+        DEFAULT_SOURCE,
+        parse_relations,
+        shell_mangled_notices,
+        write_project_name,
+    )
     from basic_memory.vocabulary.ids import is_record_id
 
     # Trigger: --supersedes given a value that is not a record id.
@@ -648,7 +661,10 @@ def new(
     typer.echo("1 record")
 
     if not quiet:
-        for line in outcome.notices:
+        # The shell notice reads the flag the caller typed, not the body that
+        # arrived: `--body -` and an absent `--body` came from stdin and from
+        # `$EDITOR`, and neither passed through a shell (GAPS U46).
+        for line in (*shell_mangled_notices(body), *outcome.notices):
             typer.echo(line)
     emit_notices(ReadScope(project=outcome.project, origin="write"), quiet=quiet, command="new")
     if not quiet:

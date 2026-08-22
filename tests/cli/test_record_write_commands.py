@@ -1144,3 +1144,54 @@ def test_mark_shelved_and_back_to_open_round_trips() -> None:
     assert revived.exit_code == 0, revived.output
     assert frontmatter_of(path)["status"] == "open"
     assert path.read_text(encoding="utf-8").split("---\n", 2)[2] == body_before
+
+
+# --- A body the shell may have rewritten (GAPS U46) ---
+
+
+def test_edit_notices_a_body_the_shell_may_have_rewritten() -> None:
+    """Both triggers earn one notice, and the edit still lands (GAPS U46)."""
+    project = seed_project()
+    record_id = create(GOVERNED, "state", "Disk Usage")
+
+    backtick = runner.invoke(app, ["edit", record_id, "-b", "run ` first", "-p", GOVERNED])
+    substitution = runner.invoke(app, ["edit", record_id, "-b", "saw $(date)", "-p", GOVERNED])
+
+    assert backtick.exit_code == 0, backtick.output
+    assert substitution.exit_code == 0, substitution.output
+    assert "the shell may have rewritten it" in backtick.stdout
+    assert "the shell may have rewritten it" in substitution.stdout
+    assert "saw $(date)" in written_path(project, substitution.stdout).read_text(encoding="utf-8")
+
+
+def test_edit_says_nothing_about_a_paired_span_or_a_piped_body() -> None:
+    """Positive control, and the exemption: stdin is the route the notice names.
+
+    A well-formed code span carries no unpaired backtick, and a body read from
+    stdin never passed through a shell — so neither earns the line, even though
+    the piped one carries both triggers verbatim.
+    """
+    project = seed_project()
+    record_id = create(GOVERNED, "state", "Disk Usage")
+
+    paired = runner.invoke(app, ["edit", record_id, "-b", "run `bm doctor`", "-p", GOVERNED])
+    piped = runner.invoke(
+        app, ["edit", record_id, "--body", "-", "-p", GOVERNED], input="run ` and $(date)\n"
+    )
+
+    assert paired.exit_code == 0, paired.output
+    assert piped.exit_code == 0, piped.output
+    assert "rewritten" not in paired.stdout
+    assert "rewritten" not in piped.stdout
+    assert "$(date)" in written_path(project, piped.stdout).read_text(encoding="utf-8")
+
+
+def test_quiet_hides_the_shell_notice_on_an_edit() -> None:
+    """Rule 7: `--quiet` leaves the payload and drops the commentary."""
+    seed_project()
+    record_id = create(GOVERNED, "state", "Disk Usage")
+
+    result = runner.invoke(app, ["edit", record_id, "-b", "run ` first", "-p", GOVERNED, "--quiet"])
+
+    assert result.exit_code == 0, result.output
+    assert "rewritten" not in result.stdout

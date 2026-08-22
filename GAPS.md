@@ -8027,6 +8027,77 @@ carrying `part_of` to one plan, every stage line asserted verbatim with its stat
 `"more incoming relations" not in stdout` rather than a bare `"more"` — a corpus notice can print
 `(+N more)`, so the bare form would pass or fail for a reason unrelated to the cap.
 
+### U46 — the shell rewrites a `--body` before bm ever starts, and nothing said so — **FOUND + FIXED 2026-08-22**
+
+**Found 2026-08-21**, by the user, on a record of their own. A body typed inline — a `--body`
+argument in double quotes, carrying a code span — passes through the shell first. Inside double
+quotes a backtick pair is command substitution, and so is `$(…)`: bash runs what is between them
+and leaves the command's *output* in the record. A code span becomes a hole, or somebody else's
+stdout, and the write exits 0 with no sign anything happened.
+
+**bm cannot fix this, because bm is downstream of it.** By the time `argv` reaches the process the
+rewrite is done and the original text is gone — there is nothing to recover and nothing to refuse.
+The tool has exactly two moves: teach the route that has no shell in it, and say something when
+what arrived still carries the marks.
+
+**The route already existed and nothing pointed at it.** `--body -` has read stdin since D11, the
+way `git commit -F -` does. Paired with a **quoted** heredoc it is exact:
+
+```bash
+bm new finding "title" --body - <<'EOF'
+body with `code` and $(literal)
+EOF
+```
+
+The quoting of the delimiter is the whole trick and is easy to get wrong: `<<'EOF'` passes the text
+through untouched, while `<<EOF` expands it exactly as double quotes would.
+
+**What changed — teaching, in one wording, repeated.** One sentence, not five paraphrases: *a body
+with backticks or `$(` must come from stdin — `--body -` with a quoted heredoc (`<<'EOF'`), or the
+shell rewrites it first.* It now appears in `bm brief`'s toolbox doctrine
+(`cli/commands/brief.py`), in the `--body` option help and the command docstring of both
+`bm new` (`cli/commands/new.py`) and `bm edit` (`cli/commands/record_write.py`), and in the README
+under its own heading with the runnable heredoc above. The per-prompt reminder hook on this machine
+carries the same line; it is not in this repo.
+
+**What changed — the notice.** `cli/record_notes.py` gained `body_looks_shell_mangled(body)` and
+`shell_mangled_notices(flag_value)`, and both write verbs emit the result. Two triggers, and only
+two:
+
+- **an odd number of backticks** — a span is written in pairs, so an odd count means one is gone;
+- **a bare `$(`** — it survived this time because the body was quoted, and the same text under
+  double quotes would not.
+
+It is a **notice, never a refusal** (contract rule 5: this is content, not an addressing failure).
+Neither trigger is proof — a body may legitimately hold one backtick — and the content still has to
+land. `--quiet` drops it with every other notice.
+
+**The check reads the raw flag value, not the resolved body.** That is what makes the exemption
+free: `--body -` and an absent `--body` are the two routes a shell never parsed — stdin and
+`$EDITOR` — so both return nothing to say, with no plumbing change and no new parameter threaded
+through `create_record`. `STDIN_BODY` moved to `cli/record_notes.py` at the same time; the two
+command modules each held their own copy of `"-"` and now import the one.
+
+**The mangled record was not found, and the search was controlled.** All 3,896 `.md` files under
+this machine's store were scanned read-only. Exactly one body in the store has an odd backtick
+count, and it is a hand typo in a migrated 2026-08-12 audit note (a stray backtick where a closing
+`**` belongs), not an expansion. A scan for the hole an eaten span leaves — a common word, then two
+or more spaces, then a word, over every prose line with fences excluded — returned **0** store-wide.
+The positive control flags `pass the  flag to turn it on` and `run  first, then read it back`, and
+clears `the checker rejects it`, so the zero is a real negative rather than a dead scanner. No body
+carries pasted command output, and no edit since 2026-08-19 reads as a repair. The most likely
+explanation is that the record lives in another machine's store — each machine keeps its own — and
+those were not reachable from the machine that ran the search.
+
+**Tests** (10 `def test_` added). `tests/cli/test_new_command.py` (43 → 49):
+`test_body_looks_shell_mangled_reads_the_two_triggers` parametrizes the pure function over six
+bodies, including a fenced block (six backticks, even, silent) and `$100 and (parentheses)` (a lone
+`$` and a lone `(` are not a substitution); then one test per trigger, a paired-span negative, a
+`--quiet` case, and `test_a_body_read_from_stdin_earns_no_notice`, which pipes a body carrying
+*both* triggers and asserts silence plus the verbatim `$(date)` on disk.
+`tests/cli/test_record_write_commands.py` (47 → 50) covers the same ground for `bm edit`.
+`tests/cli/test_brief.py` (31 → 32) pins the doctrine line, including the quoted `<<'EOF'`.
+
 ## Docs swept
 
 **2026-07-26.** A ten-reader sweep reconciled the following into this file. The gaps they contained
