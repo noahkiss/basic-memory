@@ -1,12 +1,18 @@
 """The per-project record vocabulary (GAPS W4).
 
-A project is *governed* when ``store/<external-id>/vocabulary.yml`` exists.
-Humans edit that file; agents may only select from what is in it. The file lives
-in the store so W3's history sees every edit to it — a commit carrying an
-``Actor: agent`` trailer is the only real check on agent field-extension.
+A project is *governed* when ``<project home>/vocabulary.yml`` exists. Humans
+edit that file; agents may only select from what is in it.
 
-Like ``store/history.py``, this module is deliberately dependency-free: no DB, no
-SQLAlchemy, no API, no MCP. It has to be importable on the fast CLI path.
+The home is ``store/<external-id>/`` for almost every project, and there W3's
+history sees every edit to the file — a commit carrying an ``Actor: agent``
+trailer is the only real check on agent field-extension. A project that declares
+``home = "external"`` keeps its vocabulary in its own directory instead, so
+governance travels with that directory; whatever versions the directory records
+the edits, and bm records none.
+
+Like ``store/history.py``, this module stays off the heavy stack: no SQLAlchemy,
+no API, no MCP. It has to be importable on the fast CLI path. Its one database
+read goes through ``project_registry``, which is stdlib sqlite3.
 """
 
 import re
@@ -22,8 +28,9 @@ from typing import Any, Literal, NoReturn
 import yaml
 from loguru import logger
 
+from basic_memory.project_registry import lookup_project_home, registry_database_path
 from basic_memory.store.history import HistoryError, commit_paths, store_path
-from basic_memory.store.write_hook import session_id
+from basic_memory.store.write_hook import session_id, store_relative_path
 
 VOCABULARY_FILENAME = "vocabulary.yml"
 
@@ -403,13 +410,50 @@ def default_review_by(vocabulary: Vocabulary, today: date) -> str:
     return date(year, month, min(today.day, monthrange(year, month)[1])).isoformat()
 
 
+# Per-process cache of the declared-home lookup, keyed by registry file and id.
+#
+# Trigger: `vocabulary_path` is on the write path and on `bm brief`, so without
+# this every `bm new` would pay a second SQLite open. A project's home cannot
+# change under a running command, so caching for the life of the process is
+# sound for a read.
+#
+# The registry path is part of the key rather than an assumption: a test process
+# outlives many temporary data dirs, and `BASIC_MEMORY_CONFIG_DIR` is what moves
+# between them.
+_home_cache: dict[tuple[str, str], Path | None] = {}
+
+
+def clear_home_cache() -> None:
+    """Forget every cached home lookup — for tests that repoint the registry."""
+    _home_cache.clear()
+
+
+def _project_home(external_id: str, *, refresh: bool) -> Path | None:
+    key = (str(registry_database_path()), external_id)
+    if refresh or key not in _home_cache:
+        _home_cache[key] = lookup_project_home(external_id)
+    return _home_cache[key]
+
+
+def _vocabulary_dir(external_id: str, *, refresh: bool = False) -> Path:
+    """The directory holding one project's vocabulary: its home, else the store.
+
+    ``refresh`` re-reads the registry instead of trusting the cache. The write
+    path passes it, because a stale "no declared home" answer would put the file
+    in the store and leave the project's real home ungoverned — a read that is
+    one command out of date costs nothing by comparison.
+    """
+    home = _project_home(external_id, refresh=refresh)
+    return store_path() / external_id if home is None else home
+
+
 def vocabulary_path(external_id: str) -> Path:
     """Return the vocabulary file's path for a project's ``external_id``.
 
     The id is the project's UUID4 (``Project.external_id``). Taken as a plain
-    ``str`` so this module never reaches the models or the DB.
+    ``str`` so this module never reaches the models or the ORM.
     """
-    return store_path() / external_id / VOCABULARY_FILENAME
+    return _vocabulary_dir(external_id) / VOCABULARY_FILENAME
 
 
 def load_vocabulary(external_id: str) -> Vocabulary | None:
@@ -498,18 +542,24 @@ def _write_and_commit(external_id: str, vocabulary: Vocabulary, message: str) ->
 
     The commit failure path mirrors ``write_default_vocabulary``'s: the file is
     already on disk, so the write is kept and the missing history entry costs a
-    warning — nothing is lost, which is W3-A's rule for a create.
+    warning — nothing is lost, which is W3-A's rule for a create. A project
+    whose home is outside the store skips the commit entirely; see below.
     """
-    path = vocabulary_path(external_id)
+    path = _vocabulary_dir(external_id, refresh=True) / VOCABULARY_FILENAME
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(serialize_vocabulary(vocabulary), encoding="utf-8")
+
+    # A file outside the store is not in the history repo's worktree, so there
+    # is nothing to stage — the same degradation `record_note_write` gives an
+    # off-store note write (`store/write_hook.py`, decision D3). The file is
+    # written either way; for a declared home, that directory's own versioning
+    # is what records it.
+    store_relative = store_relative_path(str(path.parent), path.name)
+    if store_relative is None:
+        return path
+
     try:
-        commit_paths(
-            [f"{external_id}/{path.name}"],
-            message,
-            actor="cli",
-            session_id=session_id(),
-        )
+        commit_paths([store_relative], message, actor="cli", session_id=session_id())
     except HistoryError as error:
         logger.warning(f"Could not record {path} in the note history: {error}")
     return path

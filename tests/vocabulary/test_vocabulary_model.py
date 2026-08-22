@@ -1,5 +1,6 @@
 """Tests for the per-project record vocabulary file (GAPS W4)."""
 
+import sqlite3
 from collections.abc import Mapping
 from datetime import date
 from pathlib import Path
@@ -7,6 +8,8 @@ from typing import Any, cast
 
 import pytest
 
+from basic_memory.project_registry import PROJECT_HOME_EXTERNAL, registry_database_path
+from basic_memory.store.history import store_path
 from basic_memory.vocabulary.model import (
     DEFAULT_VOCABULARY,
     PARKED_STATUSES,
@@ -14,14 +17,18 @@ from basic_memory.vocabulary.model import (
     DeclaredField,
     Vocabulary,
     VocabularyError,
+    clear_home_cache,
     default_review_by,
     inactive_statuses,
     load_vocabulary,
     parse_vocabulary,
     vocabulary_path,
+    write_default_vocabulary,
 )
 
 EXTERNAL_ID = "0d0b2f1e-6d3a-4a4e-9d2e-2f8a1b7c5e40"
+# What a skill-homed project records as its path: `<skill dir>/.bm`.
+EXTERNAL_HOME = Path("/skills/example/.bm")
 
 FULL_FILE = """\
 types:    [task, guide, finding, profile, state, inbox]
@@ -41,6 +48,45 @@ def data_dir(monkeypatch, tmp_path: Path) -> Path:
     data = tmp_path / "data"
     monkeypatch.setenv("BASIC_MEMORY_CONFIG_DIR", str(data))
     return data
+
+
+@pytest.fixture(autouse=True)
+def cold_home_cache():
+    """The declared-home lookup caches for the life of the process, not the test."""
+    clear_home_cache()
+    yield
+    clear_home_cache()
+
+
+def write_registry(
+    *, path: Path = EXTERNAL_HOME, home: str | None = None, with_home_column: bool = True
+) -> None:
+    """Create a project registry row for EXTERNAL_ID, as a migrated database holds it.
+
+    Only the columns `lookup_project_home` reads. ``with_home_column=False`` is
+    the pre-migration registry: the table is there and the column is not.
+    """
+    database = registry_database_path()
+    database.parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(database)
+    try:
+        if with_home_column:
+            connection.execute(
+                "CREATE TABLE project (external_id TEXT, path TEXT, is_active INT, home TEXT)"
+            )
+            connection.execute(
+                "INSERT INTO project (external_id, path, is_active, home) VALUES (?, ?, 1, ?)",
+                (EXTERNAL_ID, str(path), home),
+            )
+        else:
+            connection.execute("CREATE TABLE project (external_id TEXT, path TEXT, is_active INT)")
+            connection.execute(
+                "INSERT INTO project (external_id, path, is_active) VALUES (?, ?, 1)",
+                (EXTERNAL_ID, str(path)),
+            )
+        connection.commit()
+    finally:
+        connection.close()
 
 
 def write_vocabulary(text: str) -> Path:
@@ -494,3 +540,87 @@ def test_vocabulary_document_serializes_aliases():
     document = vocabulary_document(DEFAULT_VOCABULARY)
 
     assert document["aliases"] == {"decision": "finding", "todo": "task", "idea": "inbox"}
+
+
+# --- Declared home (skill-homed projects) ---
+
+
+def test_a_declared_external_home_holds_the_vocabulary(data_dir: Path):
+    """`home = "external"` moves the file out of the store, so governance travels."""
+    write_registry(home=PROJECT_HOME_EXTERNAL)
+
+    assert vocabulary_path(EXTERNAL_ID) == EXTERNAL_HOME / "vocabulary.yml"
+
+
+def test_an_absent_registry_row_falls_back_to_the_store(data_dir: Path):
+    """A project the registry does not know is store-homed, like every other."""
+    write_registry(home=PROJECT_HOME_EXTERNAL)
+    other_id = "11111111-2222-3333-4444-555555555555"
+
+    assert vocabulary_path(other_id) == store_path() / other_id / "vocabulary.yml"
+
+
+def test_a_null_home_falls_back_to_the_store(data_dir: Path):
+    """NULL is the default: store-homed, or a legacy off-store project."""
+    write_registry(home=None)
+
+    assert vocabulary_path(EXTERNAL_ID) == store_path() / EXTERNAL_ID / "vocabulary.yml"
+
+
+def test_a_registry_without_the_home_column_falls_back_to_the_store(data_dir: Path):
+    """A registry migrated before the column reads as "nothing declared", not a crash."""
+    write_registry(with_home_column=False)
+
+    assert vocabulary_path(EXTERNAL_ID) == store_path() / EXTERNAL_ID / "vocabulary.yml"
+
+
+def test_the_home_lookup_is_cached_until_cleared(data_dir: Path):
+    """One SQLite read per process: `vocabulary_path` is on the write path."""
+    assert vocabulary_path(EXTERNAL_ID) == store_path() / EXTERNAL_ID / "vocabulary.yml"
+
+    write_registry(home=PROJECT_HOME_EXTERNAL)
+    assert vocabulary_path(EXTERNAL_ID) == store_path() / EXTERNAL_ID / "vocabulary.yml"
+
+    clear_home_cache()
+    assert vocabulary_path(EXTERNAL_ID) == EXTERNAL_HOME / "vocabulary.yml"
+
+
+def test_writing_into_an_external_home_records_no_store_commit(data_dir: Path, tmp_path: Path):
+    """The file is outside the history repo's worktree, so there is nothing to stage.
+
+    The same degradation an off-store note write already gets (decision D3). The
+    write must still land, and must not raise.
+    """
+    home = tmp_path / "skill" / ".bm"
+    write_registry(path=home, home=PROJECT_HOME_EXTERNAL)
+
+    written = write_default_vocabulary(EXTERNAL_ID)
+
+    assert written is not None
+    assert written == home / "vocabulary.yml"
+    assert written.is_file()
+    assert not (store_path() / ".git").exists()
+
+
+def test_writing_into_the_store_does_record_a_commit(data_dir: Path):
+    """The positive control for the test above: a store-homed write does commit."""
+    written = write_default_vocabulary(EXTERNAL_ID)
+
+    assert written is not None
+    assert written == store_path() / EXTERNAL_ID / "vocabulary.yml"
+    assert written.is_file()
+    assert (store_path() / ".git").is_dir()
+
+
+def test_a_write_refreshes_a_stale_negative_home_cache(data_dir: Path, tmp_path: Path):
+    """A read cached before the project declared a home must not misdirect the write.
+
+    Landing the file in the store would leave the project's real home
+    ungoverned — the one stale answer the cache may not give.
+    """
+    assert vocabulary_path(EXTERNAL_ID) == store_path() / EXTERNAL_ID / "vocabulary.yml"
+
+    home = tmp_path / "skill" / ".bm"
+    write_registry(path=home, home=PROJECT_HOME_EXTERNAL)
+
+    assert write_default_vocabulary(EXTERNAL_ID) == home / "vocabulary.yml"

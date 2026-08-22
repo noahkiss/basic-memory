@@ -105,6 +105,26 @@ def lookup_project_external_id(identifier: str) -> tuple[str, str] | tuple[None,
     return None, None
 
 
+# --- Columns a registry may predate ------------------------------------------
+
+
+def _optional_column_query(sql: str, parameters: tuple = ()) -> list[tuple]:
+    """A `_query` that also treats a missing column as an empty result.
+
+    A registry migrated before a column was added has the table but not the
+    column. That is the same pre-bootstrap state the "no such table" guard
+    covers, and the session hook calls these lookups on every start — a crash
+    here would take `bm brief` down with it. Used by the `repo` lookups (U36)
+    and by `lookup_project_home` (`home`).
+    """
+    try:
+        return _query(sql, parameters)
+    except sqlite3.OperationalError as error:
+        if "no such column" not in str(error):
+            raise
+        return []
+
+
 # --- Repo identity (GAPS U36) -------------------------------------------------
 # The three functions below are the registry side of repo↔project matching.
 # The two lookups follow this module's read-only rule. `record_project_repo`
@@ -117,25 +137,9 @@ def lookup_project_external_id(identifier: str) -> tuple[str, str] | tuple[None,
 # from here.
 
 
-def _repo_query(sql: str, parameters: tuple = ()) -> list[tuple]:
-    """A `_query` that also treats a missing `repo` column as an empty result.
-
-    A registry migrated before U36 has the table but not the column. That is
-    the same pre-bootstrap state the "no such table" guard covers, and the
-    session hook calls these lookups on every start — a crash here would take
-    `bm brief` down with it.
-    """
-    try:
-        return _query(sql, parameters)
-    except sqlite3.OperationalError as error:
-        if "no such column" not in str(error):
-            raise
-        return []
-
-
 def lookup_project_repo(identifier: str) -> Optional[str]:
     """The repo URL recorded for a project, or None when none was captured."""
-    rows = _repo_query(
+    rows = _optional_column_query(
         "SELECT repo FROM project WHERE is_active = 1 AND (name = ? OR permalink = ?)",
         (identifier, generate_permalink(identifier)),
     )
@@ -148,7 +152,7 @@ def lookup_projects_by_repo(repo: str) -> list[tuple[str, str]]:
     Exact string equality by design — see `project_marker.repo_identity` for
     why ssh and https spellings of one repo deliberately do not match.
     """
-    rows = _repo_query(
+    rows = _optional_column_query(
         "SELECT name, external_id FROM project WHERE is_active = 1 AND repo = ? ORDER BY name",
         (repo,),
     )
@@ -185,3 +189,37 @@ def record_project_repo(identifier: str, repo: str) -> bool:
         return False
     finally:
         connection.close()
+
+
+# --- Declared home (skill-homed projects) -------------------------------------
+# The one value `project.home` may carry: this project's notes live outside the
+# store, in a directory something else already versions (a Claude Code skill
+# yadm transports, for instance). NULL means the default — store-homed, or a
+# legacy off-store project that declared nothing.
+#
+# The constant lives here rather than beside the column in `models/project.py`
+# because that module imports SQLAlchemy at import time, and this one exists to
+# keep that ~1.1 s import off the fast CLI path (see the module docstring). The
+# model imports the name from here.
+PROJECT_HOME_EXTERNAL = "external"
+
+
+def lookup_project_home(external_id: str) -> Optional[Path]:
+    """The directory a project declares as its own home, or None.
+
+    Keyed on `external_id`, not on a name, because the caller is
+    `vocabulary.model.vocabulary_path` and the id is what it holds.
+
+    None covers every case that is not an explicit declaration: no such
+    project, a NULL `home`, a legacy off-store project, and a registry migrated
+    before the column existed.
+
+    The recorded path is returned verbatim, never resolved. An external home is
+    often a yadm symlink (`.bm` → `.bm##class.home`), and a resolved path
+    recorded on one machine would not match the literal one on the next.
+    """
+    rows = _optional_column_query(
+        "SELECT path FROM project WHERE is_active = 1 AND external_id = ? AND home = ?",
+        (external_id, PROJECT_HOME_EXTERNAL),
+    )
+    return Path(rows[0][0]) if rows and rows[0][0] else None
