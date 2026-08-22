@@ -274,11 +274,6 @@ class BasicMemoryConfig(BaseSettings):
         description="Optional FastEmbed embed() parallelism override.",
         gt=0,
     )
-    import_upload_max_bytes: int = Field(
-        default=100 * 1024 * 1024,
-        description="Maximum uploaded JSON export size accepted by API import endpoints.",
-        gt=0,
-    )
     semantic_vector_k: int = Field(
         default=100,
         description="Vector candidate count for vector and hybrid retrieval.",

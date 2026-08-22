@@ -6,7 +6,6 @@ This package provides FastAPI dependencies organized by feature:
 - projects: Project resolution and config
 - repositories: Data access layer
 - services: Business logic layer
-- importers: Import functionality
 
 For backwards compatibility, all dependencies are re-exported from this module.
 New code should import from specific submodules to reduce coupling.
@@ -94,17 +93,6 @@ from basic_memory.deps.services import (
     DirectoryServiceV2ExternalDep,
 )
 
-from basic_memory.deps.importers import (
-    get_chatgpt_importer_v2_external,
-    ChatGPTImporterV2ExternalDep,
-    get_claude_conversations_importer_v2_external,
-    ClaudeConversationsImporterV2ExternalDep,
-    get_claude_projects_importer_v2_external,
-    ClaudeProjectsImporterV2ExternalDep,
-    get_memory_json_importer_v2_external,
-    MemoryJsonImporterV2ExternalDep,
-)
-
 __all__ = [
     # Config
     "get_app_config",
@@ -175,13 +163,4 @@ __all__ = [
     "ProjectServiceDep",
     "get_directory_service_v2_external",
     "DirectoryServiceV2ExternalDep",
-    # Importers
-    "get_chatgpt_importer_v2_external",
-    "ChatGPTImporterV2ExternalDep",
-    "get_claude_conversations_importer_v2_external",
-    "ClaudeConversationsImporterV2ExternalDep",
-    "get_claude_projects_importer_v2_external",
-    "ClaudeProjectsImporterV2ExternalDep",
-    "get_memory_json_importer_v2_external",
-    "MemoryJsonImporterV2ExternalDep",
 ]

@@ -116,8 +116,7 @@ src/basic_memory/deps/
 ├── db.py             # Database/session management
 ├── projects.py       # Project resolution
 ├── repositories.py   # Data access layer
-├── services.py       # Business logic layer
-└── importers.py      # Import functionality
+└── services.py       # Business logic layer
 ```
 
 ### Usage in Routers
@@ -443,8 +442,7 @@ src/basic_memory/
 │   ├── db.py                 # Database dependencies
 │   ├── projects.py           # Project dependencies
 │   ├── repositories.py       # Repository dependencies
-│   ├── services.py           # Service dependencies
-│   └── importers.py          # Importer dependencies
+│   └── services.py           # Service dependencies
 ├── index/                    # Local runtime adapters + WatchCoordinator
 ├── indexing/                 # Portable indexing runners and planners
 ├── runtime/                  # RuntimeMode + runtime Protocol contracts

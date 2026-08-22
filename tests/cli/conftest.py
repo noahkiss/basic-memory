@@ -69,7 +69,7 @@ def bootstrapped_registry(isolated_home) -> None:
     """Run the real first-run bootstrap against this test's data dir.
 
     The database owns the project registry (GAPS B2), and synchronous
-    CLI-boundary code — ``get_project_config()`` in the importers, `.bm.yml`
+    CLI-boundary code — ``get_project_config()`` in `bm format`, `.bm.yml`
     resolution — reads it straight off disk. Tests that exercise those paths
     need a genuinely migrated database with a project in it, so this calls the
     same ``ensure_project_registry`` the first real command would.

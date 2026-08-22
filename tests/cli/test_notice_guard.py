@@ -53,11 +53,6 @@ EXEMPT: dict[tuple[str, str], str] = {
         "project.py",
         "mark_project",
     ): "writes .bm.yml from a registry row; reads no project's records",
-    # Importers are one-shot writes into one project.
-    ("import_chatgpt.py", "import_chatgpt"): "a one-shot import, not a read",
-    ("import_claude_conversations.py", "import_claude"): "a one-shot import, not a read",
-    ("import_claude_projects.py", "import_projects"): "a one-shot import, not a read",
-    ("import_memory_json.py", "memory_json"): "a one-shot import, not a read",
     # Starts the MCP server. It has no payload to append a line to, and its
     # stdout is a protocol stream.
     ("mcp.py", "mcp"): "a long-running server; its stdout carries the MCP protocol",

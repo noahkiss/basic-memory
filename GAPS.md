@@ -8152,6 +8152,122 @@ reaches the tree and the empty first result is a real negative rather than a bro
 A filename sweep (`git ls-files | grep -i man`) returns only `*project_management*` files, which
 the T17 lesson demands be checked separately from the content grep.
 
+### U48 — the importers were a permanent maybe; they are deleted — **DECIDED 2026-08-22, DONE 2026-08-22**
+
+**User decision, 2026-08-22 (`finding-5b92t8z5`): delete the importers.** AGENTS.md had listed
+`import claude conversations` / `import chatgpt` / `import memory-json` as "strip candidates" since
+2026-07-27, and nothing revisited that line for four weeks — a candidacy nobody ever closed is a
+permanent maybe, which costs a subsystem's worth of surface for no decision. `bm mine` already
+covers the one case this fork actually has: reading Claude Code transcripts. The four import
+commands read *export archives* from Claude.ai, ChatGPT, and an MCP `memory.json`, none of which
+this fork ingests. Nothing in `src/` imported them except their own wiring.
+
+**`project_zip_import.py` went with the package.** The brief asked for a judgment on it, because a
+path argument to `bm project add` means an import *source* and could plausibly have called it. It
+does not: `git grep` for `build_project_zip_import_plan|ProjectZipImportPlan|ProjectZipEntry|
+ProjectZipImportError` outside `importers/` and `tests/importers/` returned nothing. Its own
+docstring names the caller it was written for — *"the hosted import worker receives a single
+archive from shared storage"* — which is cloud code this local-only fork never runs. Keeping it
+would have been keeping a subsystem for a caller that does not exist here. That also retires U8's
+**Seen and not fixed** note, which recorded that this module filtered with `DEFAULT_IGNORE_PATTERNS`
+directly instead of through `load_gitignore_patterns` and so bypassed the indexing choke point: the
+bypass is gone with the file.
+
+**Deleted:**
+
+- `src/basic_memory/importers/` — the whole package: `base.py`, `chatgpt_importer.py`,
+  `claude_conversations_importer.py`, `claude_projects_importer.py`, `memory_json_importer.py`,
+  `project_zip_import.py`, `utils.py`, `__init__.py`.
+- `src/basic_memory/schemas/importer.py` — `ImportResult` and its three subclasses. Read only by
+  the importers, the importer router, and their tests; `schemas/__init__.py` never exported it.
+- `src/basic_memory/cli/commands/import_chatgpt.py`, `import_claude_conversations.py`,
+  `import_claude_projects.py`, `import_memory_json.py` — the four verbs.
+- `src/basic_memory/deps/importers.py` — four FastAPI providers, one per importer.
+- `src/basic_memory/api/v2/routers/importer_router.py` — the four `POST` endpoints.
+- `tests/importers/` (4 files), `tests/cli/test_import_*.py` (4 files),
+  `tests/api/v2/test_importer_router.py`.
+
+**Edited:** `cli/commands/__init__.py` (imports and `__all__`); `cli/main.py` (the four
+registration imports); `cli/app.py` (the `import_app` and `claude_app` Typer groups — `bm import`
+was their only home, so the group goes with its commands); `deps/__init__.py` (the re-export block,
+its eight `__all__` entries, and the `- importers:` line in the module docstring);
+`api/v2/routers/__init__.py`, `api/v2/__init__.py`, `api/app.py` (the router import, its `__all__`
+entry, and the `include_router` call); `config_models.py` (`import_upload_max_bytes`, whose only
+reader was the deleted router — safe to drop because `BasicMemoryConfig` sets `extra="ignore"`, so
+the key left behind in a machine's `config.json` is tolerated on load);
+`tests/cli/test_notice_guard.py` (the four importer `EXEMPT` entries — leaving them would have
+failed `test_exempt_names_only_commands_that_exist`, the same stale-entry catch U47 hit);
+`project_registry.py` and `tests/cli/conftest.py` (both docstrings cited "the importers'
+`get_project_config()`" as the example synchronous CLI-boundary caller; `bm format` is the one that
+remains, so both now name it); `README.md` (the `# Imports` block and the
+`BASIC_MEMORY_IMPORT_UPLOAD_MAX_BYTES` row); `docs/ARCHITECTURE.md` (two `deps/` tree listings);
+`AGENTS.md` (`/importers` in the directory structure, `importers` in the `/deps` feature list, and
+the "Importers: … — all strip candidates" bullet).
+
+**No dependency dropped.** The importers pulled only stdlib (`json`, `zipfile`, `pathlib`, `re`,
+`datetime`) plus internal modules, so no `pyproject.toml` entry became unreferenced. Checked rather
+than assumed, per the T19 lesson.
+
+**`tests/cli/test_native_command_import_guard.py` needed no change** — `NATIVE_COMMANDS` never
+listed an `import` verb. The importers were client-routed, not native, so the guard never covered
+them.
+
+**Test arithmetic: −51 `def test_` lines, −54 collected.** Per file:
+`tests/api/v2/test_importer_router.py` 15, `tests/importers/test_project_zip_import.py` 8,
+`tests/cli/test_import_claude_conversations.py` 6, `tests/cli/test_import_memory_json.py` 6,
+`tests/importers/test_importer_base.py` 5, `tests/cli/test_import_claude_projects.py` 5,
+`tests/cli/test_import_chatgpt.py` 3, `tests/importers/test_importer_utils.py` 2,
+`tests/importers/test_conversation_indexing.py` 1. The collected figure is 3 lower than the line
+count because `test_project_zip_import_plan_rejects_unsafe_archive_paths` was parametrized over
+four paths. The notice-guard edit removes dict entries, not tests.
+
+**Control, run after the edits:**
+
+```
+$ git grep -n -i -E 'importer|import_claude|import_chatgpt|import_memory_json|memory-json|import claude|import chatgpt' -- . ':!GAPS.md'
+AGENTS.md:100:  them is a Claude workflow — W6 closed without an importer.
+src/basic_memory/alembic/env.py:26:    except (ImportError, ValueError) as exc:
+src/basic_memory/alembic/env.py:27:        # Trigger: nest_asyncio is absent (ImportError) or refuses to patch the
+src/basic_memory/file_utils.py:168:    except ImportError:  # pragma: no cover
+src/basic_memory/repository/fastembed_provider.py:83:        except ImportError as exc:  # pragma: no cover - exercised via tests with monkeypatch
+src/basic_memory/repository/openai_provider.py:54:            except ImportError as exc:  # pragma: no cover - covered via monkeypatch tests
+src/basic_memory/repository/project_repository.py:40:    except ImportError:
+src/basic_memory/repository/sqlite_search_repository.py:390:        except ImportError as exc:
+src/basic_memory/services/project_service.py:152:                and the project keeps living there until W6's importer moves it.
+test-int/semantic/conftest.py:66:    except ImportError:
+tests/cli/test_record_write_commands.py:1133:    record_id = create(GOVERNED, "task", "Rework The Importer", body="Line one.\n")
+tests/repository/test_fastembed_provider.py:95:            raise ImportError("fastembed not installed")
+tests/repository/test_openai_provider.py:127:            raise ImportError("openai not installed")
+tests/repository/test_sqlite_vector_search_repository.py:113:    except ImportError:
+tests/services/test_project_removal_bug.py:170:    except ImportError:
+```
+
+Eleven of the fifteen are the builtin `ImportError`, which the regex catches on the substring and
+which has nothing to do with this subsystem. The remaining four:
+
+- `AGENTS.md:100` and `services/project_service.py:152` are **W6's** importer — the project *mover*
+  that would relocate an arbitrary-path project into the store. W6 closed 2026-08-05 without one
+  shipping, so both lines describe a thing that never existed and are unrelated to the four
+  conversation importers. Left as written; `project_service.py:152` is arguably stale against
+  AGENTS.md's "W6 closed without an importer", but that is a separate claim and rewriting it here
+  would be unrelated prose churn.
+- `tests/cli/test_record_write_commands.py:1133` is a record *title string* — `"Rework The
+  Importer"` — seeded as fixture data for a title-editing test. It is prose inside a test payload,
+  not a reference.
+- `project_registry.py:9` and `tests/cli/conftest.py:72` no longer appear: both now name
+  `bm format` instead.
+
+Positive control, same regex over the whole tree with `GAPS.md` included:
+
+```
+$ git grep -c -i -E 'importer|import_claude|import_chatgpt|import_memory_json|memory-json|import claude|import chatgpt' -- . | grep GAPS
+GAPS.md:56
+```
+
+The pattern still finds a large block of lines, so the fifteen-hit result above is a real negative
+over a corpus that can produce positives, not a broken pattern. Those GAPS hits are W6's history,
+U8's retired note, and this entry's own text.
+
 ## Docs swept
 
 **2026-07-26.** A ten-reader sweep reconciled the following into this file. The gaps they contained

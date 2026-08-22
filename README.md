@@ -493,11 +493,6 @@ basic-memory web install         # install and start the systemd user unit
 basic-memory status
 basic-memory doctor              # check your notes; --self-test checks the install
 basic-memory tool edit-note ...  # CLI access to MCP tools
-
-# Imports
-basic-memory import claude conversations
-basic-memory import chatgpt
-basic-memory import memory-json
 ```
 
 `basic-memory --help` (or `--help` on any subcommand) is the full CLI
@@ -524,7 +519,6 @@ Log file: `<data dir>/basic-memory.log` (10MB rotation, 10 days retention).
 |---|---|---|
 | `BASIC_MEMORY_LOG_LEVEL` | `INFO` | DEBUG / INFO / WARNING / ERROR |
 | `BASIC_MEMORY_ENV` | `dev` | Set to `test` for test mode (stderr only) |
-| `BASIC_MEMORY_IMPORT_UPLOAD_MAX_BYTES` | `104857600` | Max uploaded import size |
 
 ```bash
 BASIC_MEMORY_LOG_LEVEL=DEBUG basic-memory reindex

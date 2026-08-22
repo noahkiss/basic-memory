@@ -142,12 +142,3 @@ def app_callback(
         from basic_memory.cli.commands.board import board
 
         board(project=None, quiet=False)
-
-
-## import
-# Register sub-command groups
-import_app = typer.Typer(help="Import data from various sources")
-app.add_typer(import_app, name="import")
-
-claude_app = typer.Typer(help="Import Conversations from Claude JSON export.")
-import_app.add_typer(claude_app, name="claude")

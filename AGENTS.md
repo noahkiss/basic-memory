@@ -378,8 +378,7 @@ layers implement.
 - `/alembic` - Alembic db migrations
 - `/api` - FastAPI REST endpoints + `container.py` composition root
 - `/cli` - Typer CLI + `container.py` composition root
-- `/deps` - Feature-scoped FastAPI dependencies (config, db, projects, repositories, services, importers)
-- `/importers` - Import functionality for Claude, ChatGPT, and other sources
+- `/deps` - Feature-scoped FastAPI dependencies (config, db, projects, repositories, services)
 - `/markdown` - Markdown parsing and processing
 - `/mcp` - MCP server + `container.py` composition root + `clients/` typed API clients
 - `/models` - SQLAlchemy ORM models
@@ -494,8 +493,6 @@ separate `get_client()` + `get_active_project()` pair inside an MCP tool.
 - MCP tools from the shell: `basic-memory tool <tool-name>` — e.g.
   `basic-memory tool search-notes "sqlite"`. Note this path imports the MCP tool
   layer and costs ~4 s; see the measured baseline above.
-- Importers: `import claude conversations` / `import chatgpt` / `import memory-json` — all strip
-  candidates.
 
 ### MCP Capabilities
 

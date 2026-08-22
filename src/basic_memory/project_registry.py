@@ -6,7 +6,7 @@ and which one is the default. Everything that mutates the registry goes through
 
 This module exists for the *other* direction: a handful of callers need to read
 the registry from synchronous code at the CLI boundary — `.bm.yml` marker
-resolution, `bm brief`, the importers' ``get_project_config()`` — before any
+resolution, `bm brief`, `bm format`'s ``get_project_config()`` — before any
 event loop exists and before any command has decided to pay for a database
 stack. Routing those through SQLAlchemy would either force ``async`` through
 every Typer command that calls them, or start a nested event loop inside code
