@@ -1,4 +1,4 @@
-"""Tests for the four hygiene queries `bm doctor` reports (GAPS W2, W5 item 5).
+"""Tests for the five hygiene queries `bm doctor` reports (GAPS W2, W5 item 5, U43).
 
 Each check gets a record that must match and a record that must not, because a
 query over `json_extract` fails silently in both directions: a wrong JSON path
@@ -135,6 +135,54 @@ async def test_find_stale_state_records_reports_only_old_state_records(
 
 
 @pytest.mark.asyncio
+async def test_find_stale_doing_records_reports_only_abandoned_doing_records(
+    session_maker, test_project: Project
+):
+    """A record left in `doing` past the threshold matches, with its id and its age.
+
+    Two positive controls, because this query can fail silently in both
+    directions. The clock gates it: a `doing` record touched today must not
+    match. The status gates it: an `open` record untouched for a month must not
+    match either — `open` is the status that is supposed to sit.
+    """
+    now = datetime.now().astimezone()
+    cutoff = now - timedelta(days=7)
+    await make_record(
+        session_maker,
+        test_project,
+        "abandoned.md",
+        {"type": "task", "status": "doing"},
+        updated_at=now - timedelta(days=8),
+    )
+    await make_record(
+        session_maker,
+        test_project,
+        "today.md",
+        {"type": "task", "status": "doing"},
+        updated_at=now,
+    )
+    await make_record(
+        session_maker,
+        test_project,
+        "waiting.md",
+        {"type": "task", "status": "open"},
+        updated_at=now - timedelta(days=30),
+    )
+
+    async with db.scoped_session(session_maker) as session:
+        records = await EntityRepository(project_id=test_project.id).find_stale_doing_records(
+            session, cutoff, now
+        )
+
+    assert [record.file_path for record in records] == ["abandoned.md"]
+    # The row has to be actionable without a second lookup: the id every move
+    # takes, the title that says which record it is, and the day count.
+    assert records[0].permalink == "abandoned"
+    assert records[0].title == "abandoned.md"
+    assert records[0].days_since_touch == 8
+
+
+@pytest.mark.asyncio
 async def test_find_inbox_records_reports_the_pile_and_its_proposals(
     session_maker, test_project: Project
 ):
@@ -172,11 +220,18 @@ async def test_hygiene_queries_stay_inside_their_project(
                 "is_default": None,
             },
         )
+    now = datetime.now().astimezone()
     await make_record(
         session_maker,
         other,
         "theirs.md",
-        {"type": "inbox", "review-by": "2020-01-01", "date-source": "inferred"},
+        {
+            "type": "inbox",
+            "status": "doing",
+            "review-by": "2020-01-01",
+            "date-source": "inferred",
+        },
+        updated_at=now - timedelta(days=90),
     )
 
     async with db.scoped_session(session_maker) as session:
@@ -184,7 +239,8 @@ async def test_hygiene_queries_stay_inside_their_project(
         assert await repository.find_inbox_records(session) == []
         assert await repository.find_review_due_records(session, date(2026, 8, 16)) == []
         assert await repository.find_inferred_date_records(session) == []
-        assert await repository.find_stale_state_records(session, datetime.now().astimezone()) == []
+        assert await repository.find_stale_state_records(session, now) == []
+        assert await repository.find_stale_doing_records(session, now, now) == []
 
         # Positive control: the other project's own report does see the record.
         theirs = await EntityRepository(project_id=other.id).find_inbox_records(session)

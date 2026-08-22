@@ -4,8 +4,8 @@ Two groups, because they need different readers:
 
 - **integrity** — dangling relations, permalink invariants, and every violation
   the checker called an error. These have right answers.
-- **hygiene** — expired reviews, guessed dates, stale state records, the inbox
-  pile, and every advisory. These need a person.
+- **hygiene** — expired reviews, guessed dates, stale state records, records
+  abandoned in `doing`, the inbox pile, and every advisory. These need a person.
 
 There is deliberately no second checking command: a `bm gc` or a `bm check`
 would immediately be the one nobody runs, so the gardener's jobs land here
@@ -32,7 +32,7 @@ import typer
 
 from basic_memory.cli.app import app
 from basic_memory.cli.runner import run_with_cleanup
-from basic_memory.cli.direct import STALE_STATE_DAYS, direct_doctor_report
+from basic_memory.cli.direct import STALE_DOING_DAYS, STALE_STATE_DAYS, direct_doctor_report
 from basic_memory.cli.notices import emit_notices
 from basic_memory.cli.scope import resolve_read_scope
 from basic_memory.project_marker import MarkerError
@@ -58,6 +58,18 @@ NO_ISSUES = "  No issues"
 # rows above it name what is broken; this names the single command that fixes
 # all of them, which is what nothing pointed at before.
 MISSING_FILE_REPAIR_PREFIX = "  repair: "
+
+# Closes the stale-doing rows (GAPS U43), in the same group-line shape as the
+# missing-file repair and for the same reason: the three ways out of `doing` are
+# identical for every row, and repeating them per row would bury the ids and
+# titles that differ. The threshold rides here too, so a reader who sees the
+# group out of context still knows what "stale" means (see STALE_DOING_DAYS).
+STALE_DOING_MOVES_PREFIX = "  moves: "
+STALE_DOING_MOVES = (
+    f"untouched for over {STALE_DOING_DAYS} days — bm done <id> · "
+    "bm mark <id> open|blocked|shelved · "
+    "or keep working it (bm edit <id> refreshes the clock)"
+)
 
 # W19 item 5: a fixed list of next verbs, no conditions and no memory. `--quiet`
 # is the only thing that suppresses it.
@@ -198,6 +210,19 @@ def render_hygiene(report: "ProjectDoctorReport") -> list[str]:
             f"unchanged for over {STALE_STATE_DAYS} days, last changed ",
         )
     )
+    # A record still claiming to be in flight after a planning cycle (GAPS U43).
+    # It names the id and the title, not just the file path, because every move
+    # the group line offers takes an id — a reader must not have to open the file
+    # to act on the row. Flag only: which of the three moves is right is exactly
+    # the judgment the gardener may never make (GAPS W2).
+    for stale in hygiene.stale_doing:
+        lines.append(
+            f"  {stale.file_path}  stale-doing  {stale.permalink or '-'}  "
+            f"'{stale.title}'  {stale.days_since_touch} days since touched"
+        )
+    if hygiene.stale_doing:
+        lines.append(f"{STALE_DOING_MOVES_PREFIX}{STALE_DOING_MOVES}")
+
     # Trigger: an inbox record that carries no `proposed-type`.
     # Why: "proposes no type" described the record correctly and asked for
     #     something no verb can produce. A proposal only ever arrives as a side

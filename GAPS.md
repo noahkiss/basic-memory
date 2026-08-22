@@ -7830,6 +7830,48 @@ that a plain `open` title *is* on the lane page), draws the status bar, ranks a 
 doing one, still renders a project with no live work; the record page opens with the chip strip
 and folds the frontmatter; `/static/fonts/JetBrainsMono.woff2` answers `200 font/woff2`.
 
+### U43 — nothing noticed an abandoned `doing` record — **FOUND + FIXED 2026-08-21**
+
+**Found** reading the hygiene group after U42. Doctor checked expired `review-by`, guessed dates,
+stale `state` records and the `inbox` pile — every decaying thing except the one status that
+claims a person is on it *right now*. A record left in `doing` is either work that finished and
+was never closed, or work that stalled and was never marked blocked. Either way the board lies
+about what is in flight, and nothing said so: `bm brief` and the U42 overview both render `doing`
+as live work, however old it is. Stale `state` had a 30-day check; `doing` had none.
+
+**The rule.** A record whose `status` is `doing` and whose `updated_at` is older than
+`STALE_DOING_DAYS = 7` is one hygiene row. Seven days because a week is one planning cycle: a
+record still claiming to be in flight after a whole cycle has passed is almost always abandoned,
+not active. The clock is `Entity.updated_at` — the same "last touched" stamp the stale-`state`
+check already reads, not a new source. **Hygiene, never integrity**: which way out of `doing` is
+right is a person's call, so the row exits 0 unless `--strict`. **Flag-only** (W2): the check
+writes nothing and resolves nothing.
+
+The row names the id, the title and the day count, because every move it offers takes an id and a
+file path alone does not say which in-flight record this is:
+
+```
+  tasks/i.md  stale-doing  tnd-i9k2  'Wire the export path'  8 days since touched
+  moves: untouched for over 7 days — bm done <id> · bm mark <id> open|blocked|shelved · or keep working it (bm edit <id> refreshes the clock)
+```
+
+The three moves are one group line, not a suffix on every row — the same shape the missing-file
+repair uses (U10) and for the same reason: they are identical for every row, and repeating them
+would bury the ids and titles that differ.
+
+**Trap, recorded because it is silent.** `select(Entity.updated_at)` returns the raw column, so the
+model's timezone coercion never runs — SQLite keeps the wall clock and drops the offset, so the
+value comes back naive while the reference clock is offset-aware. Subtracting them raises.
+`_days_since` compares wall clock to wall clock, which is what the stored value means.
+
+**Tests** (4 new `def test_`): `tests/repository/test_entity_repository_hygiene.py` — a `doing`
+record touched 8 days ago matches and reports its id and `days_since_touch == 8`, with two
+positive controls (a `doing` record touched today does not match, so the clock gates it; an `open`
+record untouched for 30 days does not match, so the status gates it), and the cross-project
+isolation test now covers the new query. `tests/cli/test_doctor_command.py` — the rendered row and
+its single group line, no moves line on a corpus with nothing stuck, and `--only integrity`
+neither running the query nor printing the row.
+
 ## Docs swept
 
 **2026-07-26.** A ten-reader sweep reconciled the following into this file. The gaps they contained

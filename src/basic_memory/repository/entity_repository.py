@@ -57,6 +57,23 @@ class IndexedFile:
 
 
 @dataclass(frozen=True, slots=True)
+class StaleDoingRecord:
+    """One record left in ``doing`` that nobody has touched lately (GAPS U43).
+
+    Carries more than ``HygieneRecord`` because the finding has to be actionable
+    without a second lookup: every move it offers is ``bm <verb> <id>``, and a
+    file path alone does not tell the reader which of their in-flight records
+    this is. ``days_since_touch`` is whole days, and never below the threshold
+    that selected the row.
+    """
+
+    file_path: str
+    permalink: str | None
+    title: str
+    days_since_touch: int
+
+
+@dataclass(frozen=True, slots=True)
 class HygieneRecord:
     """One record a hygiene check wants a person to look at (GAPS W2).
 
@@ -82,6 +99,19 @@ _AREA_PATH = "$.area"
 # The three type-owned date fields (schema.md §2). A record has at most one, so
 # coalesce names whichever it carries without the caller knowing its type.
 _DATE_PATHS = ("$.opened", '$."event-date"', "$.since")
+
+
+def _days_since(updated_at: datetime, now: datetime) -> int:
+    """Whole days between ``updated_at`` and ``now``, compared as wall clock.
+
+    Constraint: SQLite keeps the wall clock and drops the offset, so a timestamp
+    selected as a column comes back naive local time — the model's tz coercion
+    is instance-attribute access and never runs on a column result. ``now`` is
+    offset-aware, and subtracting the two directly raises. Dropping the offset
+    from both sides compares like with like, which is what the stored value
+    means.
+    """
+    return (now.replace(tzinfo=None) - updated_at.replace(tzinfo=None)).days
 
 
 class EntityRepository(Repository[Entity]):
@@ -171,7 +201,7 @@ class EntityRepository(Repository[Entity]):
 
     # --- Hygiene: the checks that need a person, not a right answer (GAPS W2) ---
     #
-    # All four read the frontmatter mirror in ``entity_metadata`` rather than a
+    # All five read the frontmatter mirror in ``entity_metadata`` rather than a
     # column, because these are schema fields and the schema is not the table.
     # The predicates are the shape ``find_permalink_integrity_issues`` already
     # uses, and migration ``d7e8f9a0b1c2`` indexes them.
@@ -254,6 +284,47 @@ class EntityRepository(Repository[Entity]):
                 detail=updated_at.date().isoformat(),
             )
             for file_path, permalink, updated_at in result.all()
+        ]
+
+    async def find_stale_doing_records(
+        self, session: AsyncSession, updated_before: datetime, now: datetime
+    ) -> List[StaleDoingRecord]:
+        """Find records still in ``doing`` that nobody has touched since ``updated_before``.
+
+        ``doing`` is the one status that claims a person is on it right now, so
+        it is the one status that decays: a record left there is either work that
+        finished and was never closed, or work that stalled and was never marked
+        blocked. Either way the board is lying about what is in flight, and
+        nothing else notices (GAPS U43).
+
+        Flag-only, like every hygiene check (GAPS W2): the three moves out of
+        ``doing`` are a person's call, and the report only names them.
+
+        ``now`` is the reference the day count is measured from, passed in rather
+        than read here so the caller's clock is the only clock — it already
+        derives ``updated_before`` from the same instant.
+
+        Oldest first: a record abandoned in March is a different problem from one
+        that slipped past the threshold yesterday.
+        """
+        query = (
+            select(Entity.file_path, Entity.permalink, Entity.title, Entity.updated_at)
+            .where(
+                Entity.project_id == self.project_id,
+                func.json_extract(Entity.entity_metadata, _STATUS_PATH) == "doing",
+                Entity.updated_at < updated_before,
+            )
+            .order_by(Entity.updated_at.asc(), Entity.file_path.asc())
+        )
+        result = await session.execute(query)
+        return [
+            StaleDoingRecord(
+                file_path=file_path,
+                permalink=permalink,
+                title=title,
+                days_since_touch=_days_since(updated_at, now),
+            )
+            for file_path, permalink, title, updated_at in result.all()
         ]
 
     async def find_inbox_records(self, session: AsyncSession) -> List[HygieneRecord]:

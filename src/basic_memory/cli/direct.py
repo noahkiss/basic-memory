@@ -28,6 +28,7 @@ if TYPE_CHECKING:
         HygieneRecord,
         IndexedFile,
         PermalinkIntegrityIssue,
+        StaleDoingRecord,
     )
     from basic_memory.repository.relation_repository import UnresolvedRelationReportRow
     from basic_memory.repository.violation_repository import ViolationRow
@@ -198,6 +199,14 @@ async def direct_revalidate_vocabulary(project_name: str | None = None) -> Reval
 # the report prints it, rather than being a threshold nobody can see.
 STALE_STATE_DAYS = 30
 
+# How long a record may sit in `doing` before doctor asks about it. Seven days
+# because a week is one planning cycle: a record still claiming to be in flight
+# after a whole cycle has passed is almost always abandoned rather than active —
+# finished and never closed, or stalled and never marked blocked. Same reason as
+# STALE_STATE_DAYS for living here: `vocabulary.yml` declares no staleness key,
+# so the number is fixed in code and the report prints it.
+STALE_DOING_DAYS = 7
+
 
 @dataclass(frozen=True, slots=True)
 class MissingFile:
@@ -233,6 +242,10 @@ class ProjectHygieneReport:
     review_due: "list[HygieneRecord]" = field(default_factory=list)
     inferred_dates: "list[HygieneRecord]" = field(default_factory=list)
     stale_states: "list[HygieneRecord]" = field(default_factory=list)
+    # Records left in `doing` past STALE_DOING_DAYS (GAPS U43). Its own list
+    # rather than another `HygieneRecord` one: the row names the id and the
+    # title, because every move it offers takes an id.
+    stale_doing: "list[StaleDoingRecord]" = field(default_factory=list)
     inbox: "list[HygieneRecord]" = field(default_factory=list)
     advisories: "list[ViolationRow]" = field(default_factory=list)
     # A hand-edited vocabulary missing names the current defaults declare
@@ -246,6 +259,7 @@ class ProjectHygieneReport:
             len(self.review_due)
             + len(self.inferred_dates)
             + len(self.stale_states)
+            + len(self.stale_doing)
             + len(self.inbox)
             + len(self.advisories)
             + (1 if self.vocabulary_outdated else 0)
@@ -320,7 +334,12 @@ async def direct_doctor_report(
     # Local-aware, because that is how the rows were stamped: SQLite keeps the
     # wall clock and drops the offset, so an aware UTC bound would compare
     # against local wall times and shift the window by the offset.
-    stale_before = datetime.now().astimezone() - timedelta(days=STALE_STATE_DAYS)
+    now = datetime.now().astimezone()
+    stale_before = now - timedelta(days=STALE_STATE_DAYS)
+    # One instant for both staleness windows and for the day count on the rows,
+    # so a report cannot say a record is 8 days old against a cutoff taken a
+    # moment earlier.
+    doing_stale_before = now - timedelta(days=STALE_DOING_DAYS)
 
     async with db.scoped_session(session_maker) as session:
         repository = ProjectRepository()
@@ -393,6 +412,9 @@ async def direct_doctor_report(
                     review_due=await entities.find_review_due_records(session, review_cutoff),
                     inferred_dates=await entities.find_inferred_date_records(session),
                     stale_states=await entities.find_stale_state_records(session, stale_before),
+                    stale_doing=await entities.find_stale_doing_records(
+                        session, doing_stale_before, now
+                    ),
                     inbox=await entities.find_inbox_records(session),
                     advisories=await violations.list_for_project(
                         session, project.id, severity="advisory"

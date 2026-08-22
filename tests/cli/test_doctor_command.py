@@ -23,7 +23,11 @@ from basic_memory.cli.direct import (
     ProjectHygieneReport,
     ProjectIntegrityReport,
 )
-from basic_memory.repository.entity_repository import HygieneRecord, PermalinkIntegrityIssue
+from basic_memory.repository.entity_repository import (
+    HygieneRecord,
+    PermalinkIntegrityIssue,
+    StaleDoingRecord,
+)
 from basic_memory.repository.relation_repository import UnresolvedRelationReportRow
 from basic_memory.repository.violation_repository import ViolationRow
 
@@ -79,6 +83,7 @@ FULL_REPORT = ProjectDoctorReport(
         review_due=[HygieneRecord("notes/d.md", "notes/d", "2026-01-31")],
         inferred_dates=[HygieneRecord("notes/e.md", "notes/e", "2026-03-01")],
         stale_states=[HygieneRecord("notes/f.md", "notes/f", "2026-01-05")],
+        stale_doing=[StaleDoingRecord("tasks/i.md", "tnd-i9k2", "Wire the export path", 8)],
         inbox=[
             HygieneRecord("notes/g.md", "notes/g", "runbook"),
             HygieneRecord("notes/h.md", "notes/h", ""),
@@ -156,7 +161,7 @@ def test_doctor_integrity_section_lists_every_check(stub_report):
 
 
 def test_doctor_hygiene_section_lists_every_check(stub_report):
-    """Expired reviews, guessed dates, stale state, the inbox pile, and advisories."""
+    """Expired reviews, guessed dates, stale state, abandoned `doing`, inbox, advisories."""
     stub_report([FULL_REPORT])
 
     result = runner.invoke(app, ["doctor", "--only", "hygiene", "--quiet"])
@@ -169,10 +174,15 @@ def test_doctor_hygiene_section_lists_every_check(stub_report):
     assert lines[3] == (
         "  notes/f.md  stale-state  unchanged for over 30 days, last changed 2026-01-05"
     )
-    assert lines[4] == "  notes/g.md  inbox  proposes 'runbook'"
-    assert lines[5] == "  notes/h.md  inbox  unfiled — file it with 'bm new <type>' or leave it"
-    assert lines[6] == "  notes/broken.md  unknown-key  owner  unknown-key on 'owner'"
-    assert lines[7] == "  6 issues"
+    assert lines[4] == (
+        "  tasks/i.md  stale-doing  tnd-i9k2  'Wire the export path'  8 days since touched"
+    )
+    # The moves close the stale-doing rows and are not counted as an issue.
+    assert lines[5].startswith("  moves: untouched for over 7 days — ")
+    assert lines[6] == "  notes/g.md  inbox  proposes 'runbook'"
+    assert lines[7] == "  notes/h.md  inbox  unfiled — file it with 'bm new <type>' or leave it"
+    assert lines[8] == "  notes/broken.md  unknown-key  owner  unknown-key on 'owner'"
+    assert lines[9] == "  7 issues"
     assert "integrity" not in result.stdout
 
 
@@ -195,6 +205,56 @@ def test_doctor_asks_a_plain_inbox_record_for_something_it_can_do(stub_report):
     assert "proposes no type" not in result.stdout
     assert "notes/h.md  inbox  unfiled — file it with 'bm new <type>' or leave it" in result.stdout
     assert "notes/g.md  inbox  proposes 'runbook'" in result.stdout
+
+
+def test_doctor_flags_a_record_abandoned_in_doing(stub_report):
+    """A `doing` record nobody has touched names its id, its title and its age (GAPS U43).
+
+    `doing` is the one status that claims a person is on it right now, so it is
+    the one that decays: nothing else noticed a record that finished and was
+    never closed, or stalled and was never marked blocked.
+
+    Flag-only (GAPS W2): the group line names the three moves and doctor takes
+    none of them. It is hygiene, so the run still exits 0.
+    """
+    stub_report([FULL_REPORT])
+
+    result = runner.invoke(app, ["doctor", "--only", "hygiene", "--quiet"])
+
+    assert result.exit_code == 0, result.output
+    assert (
+        "  tasks/i.md  stale-doing  tnd-i9k2  'Wire the export path'  8 days since touched"
+        in result.stdout
+    )
+    # One group line for the moves, not one per row — the same shape the
+    # missing-file repair uses, and for the same reason.
+    assert result.stdout.count("moves:") == 1
+    assert "moves: untouched for over 7 days — bm done <id> · " in result.stdout
+    assert "bm mark <id> open|blocked|shelved" in result.stdout
+    assert "bm edit <id> refreshes the clock" in result.stdout
+
+
+def test_doctor_names_no_moves_when_nothing_is_stuck_in_doing(stub_report):
+    """The moves line rides on the rows, so a corpus with none must not print it."""
+    stub_report([ProjectDoctorReport(project_name="alpha")])
+
+    result = runner.invoke(app, ["doctor", "--only", "hygiene", "--quiet"])
+
+    assert result.exit_code == 0, result.output
+    assert "stale-doing" not in result.stdout
+    assert "moves:" not in result.stdout
+
+
+def test_doctor_only_integrity_never_mentions_an_abandoned_doing_record(stub_report):
+    """stale-doing is hygiene, so --only integrity neither runs it nor prints it."""
+    calls = stub_report([FULL_REPORT])
+
+    result = runner.invoke(app, ["doctor", "--only", "integrity", "--quiet"])
+
+    assert result.exit_code == 1, result.output
+    assert calls == [{"project_names": None, "include_integrity": True, "include_hygiene": False}]
+    assert "stale-doing" not in result.stdout
+    assert "moves:" not in result.stdout
 
 
 def test_doctor_prints_both_groups_in_order(stub_report):
@@ -416,7 +476,7 @@ def test_doctor_exits_zero_on_hygiene_issues_alone(stub_report):
     assert result.exit_code == 0, result.output
     # Positive control: the rows really are there, so exit 0 is a judgment about
     # them rather than a report that found nothing.
-    assert "  6 issues" in result.stdout
+    assert "  7 issues" in result.stdout
 
 
 def test_doctor_strict_exits_one_on_hygiene_alone(stub_report):
