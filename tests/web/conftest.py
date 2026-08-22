@@ -7,7 +7,7 @@ than anywhere else — the assertions are about which card lands in which column
 and a random id cannot be written into an expectation.
 
 Projects live under `store/<external-id>/`, which is where every project's files
-actually live in this fork. The record page prints a store-relative path, and a
+actually live. The record page prints a store-relative path, and a
 project seeded somewhere else could not prove that.
 """
 

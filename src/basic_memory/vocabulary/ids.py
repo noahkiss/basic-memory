@@ -1,6 +1,6 @@
 """Record ids, title slugs, and the file path a record lands at.
 
-The rules this module holds are `.forked/schema.md` §2 and §8 plus `GAPS.md`
+The rules this module holds are `.design/schema.md` §2 and §8 plus `GAPS.md`
 U30, and they are decisions rather than conventions:
 
 - **An id is the record's canonical type word, a hyphen, then eight characters

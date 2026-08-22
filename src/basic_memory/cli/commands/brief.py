@@ -1,12 +1,12 @@
 """`bm brief` — session-start orientation, printed as markdown on stdout.
 
-Replaces upstream's `bm hook session-start` and the two harness plugin packages it was
+Replaces the retired `bm hook session-start` and the two harness plugin packages it was
 delivered through. The capability that survived the strip is narrow: read the graph for
 work that is still open, and print it where an agent will see it at the top of a session.
 
-Three constraints shape the whole file, and each one is a reversal of how upstream did it:
+Three constraints shape the whole file, and each one reverses how that older brief worked:
 
-1. **It must be fast.** Upstream's brief reached through `basic_memory.mcp.tools`, which
+1. **It must be fast.** The old brief reached through `basic_memory.mcp.tools`, which
    pulls fastmcp and the FastAPI ASGI app — measured at 4.2 s against a 1.0 s
    floor for a native CLI command. A blocking multi-second hook on every session start is
    the reason the previous home-grown auto-injection got retired. So this queries the
@@ -60,8 +60,8 @@ from basic_memory.cli.app import app
 from basic_memory.cli.notices import emit_notices
 from basic_memory.cli.scope import ReadScope, resolve_read_scope
 
-# Claude Code splices SessionStart stdout into the context window. Upstream used 10_000
-# chars and that ceiling has not caused trouble, so it carries over unchanged.
+# Claude Code splices SessionStart stdout into the context window. The 10_000-char
+# ceiling has never caused trouble, so it stands.
 MAX_BRIEF_CHARS = 10_000
 
 # Per section, and for the whole `--query` result. A brief is an orientation, not an

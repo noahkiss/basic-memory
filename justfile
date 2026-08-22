@@ -292,8 +292,8 @@ index-contract-test: file-index-runner-test file-index-batch-test file-index-sem
 runtime-core-pytest *args:
     BASIC_MEMORY_ENV=test uv run pytest -p pytest_mock -q --no-cov {{args}}
 
-# Focused PR #1002 Codex feedback regressions.
-pr-1002-feedback-test:
+# Focused regressions from a Codex review pass.
+codex-feedback-test:
     BASIC_MEMORY_ENV=test BASIC_MEMORY_SEMANTIC_SEARCH_ENABLED=true uv run pytest -p pytest_mock -q --no-cov \
         tests/runtime/test_deleted_note_response.py \
         tests/repository/test_accepted_note_search_repository.py \
@@ -439,7 +439,7 @@ migration message:
 # is published to an index: the installable artifact is the tagged source, and
 # uv-dynamic-versioning derives the package version from the tag at install
 # time. The Homebrew tap formula (noahkiss/tap/basic-memory) is the install
-# path and is bumped separately. See .forked/release-design.md.
+# path and is bumped separately. See .design/release-design.md.
 
 # The one gate. Run before pushing anything you would be sad to break.
 gate:
@@ -459,7 +459,7 @@ release version:
 
     # Trigger: dirty tree, wrong branch, or a tag that already exists.
     # Why: a tag must name a state reachable from the remote; a dirty tree
-    # would tag code nobody else can get. This fork has one line of history.
+    # would tag code nobody else can get. There is one line of history here.
     # Outcome: abort before anything is written.
     [[ -z "$(git status --porcelain)" ]] || { echo "Uncommitted changes."; exit 1; }
     [[ "$(git branch --show-current)" == "main" ]] || { echo "Not on main."; exit 1; }
@@ -472,7 +472,7 @@ release version:
     git push origin main "{{version}}"
 
     # Trigger: the tag is now on the remote.
-    # Why: a bare `gh` in this working tree resolves to the upstream repo, so
+    # Why: `gh` can resolve a bare invocation to a repo other than `origin`, so
     # --repo is mandatory or the release lands on someone else's project.
     # --verify-tag refuses to invent a tag if the push above only half worked.
     # Outcome: a GitHub Release with notes generated from the commits since the

@@ -202,7 +202,7 @@ class LocalProjectIndexMoveContentUpdater(ProjectIndexMoveContentUpdater):
             previous=previous_metadata,
         )
         if _changes_set_once_permalink(violations):
-            # Recorded, and then not done. The permalink is this fork's identity
+            # Recorded, and then not done. The permalink is a record's identity
             # and every edge binds to it (GAPS T9), so rewriting it on a governed
             # project orphans every relation pointing at the record. Skipping the
             # rewrite leaves the file exactly as the human moved it.

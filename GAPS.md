@@ -1,7 +1,7 @@
-# GAPS — what this fork needs to fix
+# GAPS — what this project needs to fix
 
-**This file is the running list of everything wrong with, or missing from, upstream Basic Memory
-that our work depends on. It is the fork's to-do list and its rationale.**
+**This file is the running list of everything wrong with, or missing from, this codebase that our
+work depends on. It is the project's to-do list and its rationale.**
 
 ## The rule
 
@@ -11,8 +11,8 @@ the return visit that never happens. A gap recorded only in a local design doc i
 anyone working in this repo, which is where it has to get fixed.
 
 A gap belongs here if it is a thing **we would change in this codebase**. Design decisions about
-the record schema live in `.forked/schema.md`, which is local and gitignored. This file is only
-about the code. (`.forked/plan.md` and `.forked/campaign.md` held the work plan until the 2026-08-07
+the record schema live in `.design/schema.md`, which is local and gitignored. This file is only
+about the code. (`.design/plan.md` and `.design/campaign.md` held the work plan until the 2026-08-07
 reconciliation deleted them — the build order now lives at the end of this file, the working rules
 in `AGENTS.md`, and the cursor in `STATUS.local.md`.)
 
@@ -39,7 +39,7 @@ update.
 
 | | |
 |---|---|
-| **SHIPPED** | Fixed in this fork, commit noted |
+| **SHIPPED** | Fixed here, commit noted |
 | **RESOLVED** | Investigated and closed without a code change — kept because the diagnosis is load-bearing |
 | **BLOCKER** | Must be fixed before the dependent work can be correct |
 | **TRAP** | Works, but fails silently or misleads — high cost, easy to hit |
@@ -51,7 +51,7 @@ update.
 ## SHIPPED
 
 ### S1 — FastEmbed model cache was per-config-dir
-**Commit `58d94d38`.** Upstream cached the 64 MB `qdrant/bge-small-en-v1.5-onnx-q` model inside
+**Commit `58d94d38`.** The 64 MB `qdrant/bge-small-en-v1.5-onnx-q` model used to cache inside
 `$BASIC_MEMORY_CONFIG_DIR/fastembed_cache/`, so every config dir paid its own download. The model is
 an immutable artifact keyed by model name and does not belong inside the isolation boundary
 `BASIC_MEMORY_CONFIG_DIR` exists to draw. Default moved to `$XDG_CACHE_HOME/fastembed`;
@@ -76,14 +76,14 @@ any fixture patches `HOME`) in both `tests/conftest.py` and `test-int/conftest.p
 themselves, so they still exercise every branch. After the fix the same test leaves a 16 KB basetemp
 and runs in 2.25 s.
 
-### S2 — `.claude/commands/` held two upstream-only prompts
+### S2 — `.claude/commands/` held two inherited prompts we never ran
 **Done 2026-07-29.** Deleted `.claude/commands/spec.md` and `.claude/commands/test-live.md`; the
 directory is now empty and gone. Judgment call taken under the campaign's decide-and-flag rule, not
 a user decision.
 
-- `spec.md` (51 lines) drove a spec-driven process whose entire state lives in an upstream Basic
-  Memory project named `specs`, keyed on notes `SPEC-1` and `SPEC-2`. This fork has no such project
-  and does not run that process — `GAPS.md` plus `.forked/campaign.md` are its planning surface. The
+- `spec.md` (51 lines) drove a spec-driven process whose entire state lives in a Basic
+  Memory project named `specs`, keyed on notes `SPEC-1` and `SPEC-2`. This project has no such project
+  and does not run that process — `GAPS.md` plus `.design/campaign.md` are its planning surface. The
   command could only ever have failed here, silently, by searching an absent project.
 - `test-live.md` (614 lines) was a manual QA ritual over the MCP tool surface, run by hand against a
   live install. Nothing executes it, nothing verifies it, and no test would notice it going stale —
@@ -170,10 +170,10 @@ scratch artifacts; everything load-bearing is reproduced above and in W1.
 ### R-T6 — "a second frontmatter block is prepended to unindexed notes" does not exist in this tree
 
 **Opened as T6 (inherited from the BM spike). Closed 2026-07-26. No defect at any point in this
-fork's history — upstream fixed it before our fork point.**
+tree's history — it was already fixed in the code we started from.**
 
 The claim was silent data loss: edit a note that is on disk but not yet indexed, and 8 frontmatter
-keys go in while `permalink:` alone comes out, exit 0. Retested against the fork build
+keys go in while `permalink:` alone comes out, exit 0. Retested against this build
 (`uv run --project . bm`, editable install verified) with a hand-written 8-key note, never indexed,
 no watcher — the state the defect requires:
 
@@ -230,7 +230,7 @@ indistinguishable from "no matches." **Fix:** either match element-wise, or reje
 **Why it matters:** any agent or script that reaches for the obvious flag gets a confident empty
 answer. We only caught it because a control query was run alongside.
 
-**Amended 2026-07-26:** the same family, documented by upstream itself — booleans normalise to the
+**Amended 2026-07-26:** the same family, documented in the code's own docs — booleans normalise to the
 string `"True"` in metadata, so `--meta draft=true` and `{"draft": true}` both silently miss records
 whose frontmatter carried a YAML boolean. Found in: sweep-prior-art.md:1.
 
@@ -276,7 +276,7 @@ Files written to a project directory by anything other than Basic Memory itself 
 **Why it matters:** directly load-bearing. Any `tend` verb that writes by touching the filesystem
 must reindex or its writes are invisible — and nothing in the tool tells you that.
 
-**Amended 2026-07-26 — what that mandatory reindex costs:** the fork-point baseline measures a full
+**Amended 2026-07-26 — what that mandatory reindex costs:** the starting-point baseline measures a full
 reindex + embed of 67 files at **81 s and 762 MB peak RSS**. The gardener and the migration both sit
 downstream of this, on a corpus already at 53 files and growing, so "just reindex after writing" is
 not a cheap workaround. Found in: sweep-status-agents.md:37, sweep-inv-plan.md:19.
@@ -293,22 +293,23 @@ file written to the project dir after init, before any reindex:
 │     'basic-memory reindex'                                                   │
 ```
 
-The amended reindex-cost note referenced the retired fork-point embed baseline; the structural
+The amended reindex-cost note referenced the retired starting-point embed baseline; the structural
 point (tend verbs that write via the filesystem must reindex) stands and is what the warning now
 surfaces.
 
-### T3 — `bm --version` reports upstream's version, not the installed build — **SHIPPED `9e4f3c8c`**
-**Found:** at fork setup; re-confirmed 2026-07-26.
+### T3 — `bm --version` reports a stale hardcoded number, not the installed build — **SHIPPED `9e4f3c8c`**
+**Found:** at project setup; re-confirmed 2026-07-26.
 
 ```
 $ bm --version
-Basic Memory version: 0.22.1          # wrong — this is upstream's number
+Basic Memory version: 0.22.1          # wrong — this is the hardcoded literal
 $ uv tool list | grep basic-memory
 basic-memory v0.22.2.dev118+232f2c2f  # the actual installed build (ours)
 ```
 
-**Why it matters:** this is the specific trap the BM spike fell into — a stock install and our fork
-both self-report `0.22.1`, so you cannot tell from `bm` alone whether you are testing our changes.
+**Why it matters:** this is the specific trap the BM spike fell into — a stock install and our own
+build both self-report `0.22.1`, so you cannot tell from `bm` alone whether you are testing our
+changes.
 Every measurement taken without checking `uv tool list` is unattributable. **Fix:** report the real
 distribution version.
 
@@ -319,7 +320,7 @@ not installed now says so explicitly rather than reporting a stale number.
 **FOLLOW-UP 2026-08-17, with the `v0.1.0` cut:** the release fallback literal `__version__ =
 "0.22.1"` is deleted. `_resolve_version()` takes no argument and returns `("0.0.0", False)` when no
 distribution is installed, so there is no stale number left in the tree to report and `just release`
-writes no files. The literal was the last thing keeping upstream's number in this repo.
+writes no files. The literal was the last stale number left in this repo.
 
 > **LABEL SWAP — `git log` will send you to the wrong commit, in both directions.** `9e4f3c8c`'s
 > message calls this work **T6**; it is T3. `7a09c015`'s message calls its frontmatter regression
@@ -343,7 +344,7 @@ indistinguishable from one whose target has not been written yet.
 **Fix:** a lint/report verb (`bm tend check`, or extend `bm doctor`) listing unresolved relations,
 ideally with age, so "not written yet" and "typo, will never resolve" can be told apart.
 
-**Amended 2026-07-26 — the source of the dangling edges cannot be turned off.** Upstream's own docs:
+**Amended 2026-07-26 — the source of the dangling edges cannot be turned off.** The code's own docs:
 "The `## Observations` and `## Relations` headings are conventional but not required — the parser
 detects observations and relations by their syntax patterns anywhere in the document." Ordinary prose
 (a `- [note] ...` bullet, an incidental `[[...]]`) becomes graph data with no opt-out, which is the
@@ -390,7 +391,7 @@ left behind was cleaned separately under O7.
 
 ### T6 — RESOLVED, no defect. See **R-T6** in the RESOLVED section.
 The number is retained as a tombstone so existing cross-references do not silently retarget. Retested
-against both the fork build and `2b19f1ff`: no corruption in either, and the write path is unchanged
+against both this build and `2b19f1ff`: no corruption in either, and the write path is unchanged
 across the whole fix cluster. Nothing was reverted because nothing was ever written for it.
 
 ### T7 — `search-notes` rejects an empty or `*` query; metadata-only queries need a `**` idiom — **RESOLVED 2026-07-31, guard SHIPPED**
@@ -436,7 +437,7 @@ semantic search enabled : 3.32 s
 semantic search disabled: 3.09 s     # the flag buys 0.23 s
 ```
 
-This matches upstream issue **#886**, which measured 5 s → 4.8 s and states the cost "is a
+A prior report of the same defect measured 5 s → 4.8 s and stated the cost "is a
 module-level import, not gated by the flag."
 
 **Why it matters:** distinct from B4, which names the import cost. This is a config knob that
@@ -448,9 +449,9 @@ Found in: sweep-spike.md:19.
 
 **Resolved 2026-07-31, no new code.** The lazy structure (TYPE_CHECKING-only `fastembed` import
 in `fastembed_provider.py`, provider imported inside the `provider_name == "fastembed"` branch of
-`embedding_provider_factory.py`) dates to upstream #550; what un-gated it at the fork point was
-eager imports elsewhere in the graph, since removed by this fork's dependency prune (W17) and
-the #886 leaf-deferral work shipped with T18. Measured 2026-07-31, scratch config,
+`embedding_provider_factory.py`) predates this tree; what un-gated it was eager imports
+elsewhere in the graph, since removed by our dependency prune (W17) and by the leaf-deferral
+work shipped with T18. Measured 2026-07-31, scratch config,
 `bm tool search-notes` under `-X importtime` and `/usr/bin/time -v`:
 
 ```
@@ -595,15 +596,15 @@ control.
 that the permalink they get back equals the id they asked for, and treat a mismatch as not-found.
 Strict resolution can still legitimately rewrite the URI — resolving a title or file path to a
 different permalink string is an exact match, not a guess — so the caller cannot infer identity from
-a non-empty result alone. Fork fix removes the lie; the verb-level check enforces identity.
+a non-empty result alone. Our fix removes the lie; the verb-level check enforces identity.
 
 **Phase 1's verifier is unblocked by this.** It was gated on T10 and is no longer.
 
-Upstream states a "fail-fast / no-silent-fallback" house style (see #1151) and would probably take
-this, but we do not track upstream — reporting it is a courtesy, not a dependency.
+A "fail-fast / no-silent-fallback" house style was already stated for this code before we
+inherited it; the fix here is ours to make regardless.
 
 ### T11 — no newer-schema guard: an older build over a newer DB dies in a raw stack trace — **SHIPPED 2026-08-10**
-**Found:** 2026-07-27, in `.forked/release-design.md` §2. Code sites re-verified before recording.
+**Found:** 2026-07-27, in `.design/release-design.md` §2. Code sites re-verified before recording.
 
 `run_migrations` (`src/basic_memory/db.py:401`) builds the Alembic config and calls
 `command.upgrade(config, "head")` at `db.py:428`. It never reads the database's `alembic_version`
@@ -624,7 +625,7 @@ no actionable message.
 2026-07-27 capture — 525/530/554/577 then, 401/406/428/443 now. The single-hit grep result is
 unchanged.)*
 
-**Why it matters:** in this fork "upgrade" means `git pull` + reinstall, so **rollback is a normal
+**Why it matters:** in this project "upgrade" means `git pull` + reinstall, so **rollback is a normal
 operation**, not an exotic one — `git checkout <older-commit> && uv tool install --reinstall .` is
 one command away. Of all the migration hazards in this tree this is the only one that actually
 bites this install.
@@ -682,7 +683,7 @@ stale-known), `tests/cli/test_runner.py` (exit 1 + message + cleanup still runs;
 `tests/cli/test_command_utils.py` until T30 moved the runner).
 
 ### T12 — `bm reset` claims your markdown is safe while unflushed writes live only in the DB — **SHIPPED 2026-07-31 (guard + O6 write-through root fix)**
-**Found:** 2026-07-27, in `.forked/release-design.md` §2. Both sites re-verified before recording.
+**Found:** 2026-07-27, in `.design/release-design.md` §2. Both sites re-verified before recording.
 
 `NoteContent` (`src/basic_memory/models/knowledge.py:159-224`) materializes `markdown_content` in
 the database alongside a `file_write_status` constrained to
@@ -705,7 +706,7 @@ unflushed content.
 
 **Why it matters:** this is a data-loss path dressed as a safe operation, and it is reachable by
 following the tool's own advice. It also undercuts the "files are source of truth, the index is
-disposable" premise the whole fork design leans on — including D9 (store under the config dir),
+disposable" premise the whole design leans on — including D9 (store under the config dir),
 which was cleared specifically on the grounds that `bm reset` only drops the index and says so.
 
 **Fix, in descending order of preference:** flush pending rows to disk before unlinking; or refuse
@@ -751,73 +752,65 @@ body nowhere on disk → `echo y | bm reset` → flush materializes `probes/unfl
 (content intact on disk) → reset proceeds. The accept→flush window itself (the root cause) stays
 open until the synchronous write-through decision recorded under **O6**.
 
-### T13 — a dependency reference naming `basic-memory` silently resolves to UPSTREAM — **SHIPPED `cece1087` + `e11cc1d7`**
+### T13 — a dependency reference naming `basic-memory` silently resolves to A DIFFERENT PROJECT — **SHIPPED `cece1087` + `e11cc1d7`**
 **Done 2026-07-27.** All six benchmark sites repointed at `noahkiss/basic-memory`, plus two the
-original report missed: `docker-compose.yml` pulled upstream's GHCR image (now builds from the
-checkout — this fork publishes no image), and the README documented `uv tool install basic-memory` /
-`uvx basic-memory mcp`, i.e. upstream's PyPI package, in the install line and all five client
-configs. `runner.py:47` was the worst of them — it stamped upstream's `main` SHA into every run
+original report missed: `docker-compose.yml` pulled a foreign GHCR image (now builds from the
+checkout — we publish no image), and the README documented `uv tool install basic-memory` /
+`uvx basic-memory mcp`, i.e. the same-named PyPI package, in the install line and all five client
+configs. `runner.py:47` was the worst of them — it stamped a foreign `main` SHA into every run
 manifest whenever `--bm-local-path` was unset, so the AGENTS.md baseline table is still suspect
-until re-measured. Same pass removed upstream branding (support@ addresses, docs.basicmemory.com
-links, README badges/star-history); upstream *issue* citations were kept as provenance and
-relabeled `basicmachines-co#NNN`.
+until re-measured. The same pass removed the branding that came with that code — support@
+addresses, doc-site links, README badges and star-history.
 
 **The standing rule below still applies to new code** — nothing enforces it as a lint yet.
 
 *Original report:*
-**Found:** 2026-07-27, from `.forked/release-design.md` §5 and `.forked/hook-design.md`.
+**Found:** 2026-07-27, from `.design/release-design.md` §5 and `.design/hook-design.md`.
 
-**This is a standing rule, not just a bug list.** This fork is not published on PyPI, and its GitHub
-path is `noahkiss/basic-memory`, not `basicmachines-co/basic-memory`. Therefore **any** dependency
-spec anywhere in this tree that names `basic-memory` — a PEP 723 `# dependencies = [...]` header, a
-`pip`/`uv` install line executed by tooling, a `git+https://github.com/basicmachines-co/...` URL, a
-`github:basicmachines-co/...` source string — resolves to **upstream's code**, not this tree, and
-does so silently and with exit 0. The failure mode is upstream's binary running against this fork's
-data.
+**This is a standing rule, not just a bug list.** This project is not published on PyPI, and its
+GitHub path is `noahkiss/basic-memory`. A same-named package sits on PyPI and a same-named repo
+sits under another GitHub org. Therefore **any** dependency spec anywhere in this tree that names
+`basic-memory` — a PEP 723 `# dependencies = [...]` header, a `pip`/`uv` install line executed by
+tooling, a `git+https://github.com/<other-org>/...` URL, a `github:<other-org>/...` source string —
+resolves to **that other code**, not this tree, and does so silently and with exit 0. The failure
+mode is a foreign binary running against our data.
 
 The PEP 723 instances are gone (both offending Claude hook scripts were deleted this session):
 
 ```
 $ grep -rIn -- "/// script" --exclude-dir=.git .
-.forked/release-design.md:538:**The PEP 723 bug from §5 is fully gone by deletion** — no `# /// script` header remains anywhere
+.design/release-design.md:538:**The PEP 723 bug from §5 is fully gone by deletion** — no `# /// script` header remains anywhere
 ```
 
-The only hit is prose about the fix. Still live, all under `benchmarks/`:
-
-```
-$ grep -rn "basicmachines-co/basic-memory" benchmarks/
-benchmarks/justfile:242:      "basic-memory @ git+https://github.com/basicmachines-co/basic-memory@{{ref}}"
-benchmarks/src/basic_memory_benchmarks/cli.py:223:        "github:basicmachines-co/basic-memory@main",
-benchmarks/src/basic_memory_benchmarks/cli.py:385:    bm_source: str = typer.Option("github:basicmachines-co/basic-memory@main", "--bm-source"),
-benchmarks/src/basic_memory_benchmarks/models.py:214:    bm_source: str = "github:basicmachines-co/basic-memory@main"
-benchmarks/src/basic_memory_benchmarks/runner.py:47:    return resolve_remote_main_sha("https://github.com/basicmachines-co/basic-memory")
-benchmarks/docs/write-load-benchmark.md:31:   (`uv pip install 'basic-memory @ git+https://github.com/basicmachines-co/basic-memory@<ref>'`).
-```
+The only hit is prose about the fix. Six sites were still live, all under `benchmarks/`: a
+`git+https://` install spec in `benchmarks/justfile:242`, three `github:...@main` source defaults in
+`cli.py:223`, `cli.py:385`, and `models.py:214`, a `resolve_remote_main_sha()` call in
+`runner.py:47`, and the same default documented to a human in `docs/write-load-benchmark.md:31`.
+Every one of them named a foreign repo. (The verbatim grep block that carried this evidence was
+condensed in the U50 detach pass, which removed the org name it printed.)
 
 **Six live sites, not the three that were handed over** — `justfile:242` and `runner.py:47` are
 executable code that were missed, and `docs/write-load-benchmark.md:31` documents the same default
-to a human. (`benchmarks/docs/benchmarks.md:45` names `basicmachines-co/basic-memory-benchmarks`,
-a *different* repo, and is out of scope.)
+to a human. (`benchmarks/docs/benchmarks.md:45` named a *different* repo again and was out of
+scope.)
 
 **Why it matters beyond the benchmarks:** these are the defaults, so `bm-source` unset means
-"benchmark upstream." That casts direct doubt on `AGENTS.md`'s "Measured baseline at the fork
-point" table — if any of those numbers came from this harness with the default source, they
-describe upstream's `main`, not this tree. Worth re-measuring before anything else is designed
-around them.
+"benchmark the other project." That casts direct doubt on `AGENTS.md`'s baseline table — if any of
+those numbers came from this harness with the default source, they describe a tree that is not
+this one. Worth re-measuring before anything else is designed around them.
 
 **RESOLVED 2026-07-28 by deletion, in pass 4.** All six live sites were inside `benchmarks/`, which
-is gone. `git grep basicmachines-co/basic-memory` now returns only prose in `GAPS.md` and
-`AGENTS.md` (the fork-point provenance SHA), no executable default. The lint proposed below was
+is gone. No executable default now resolves a dependency by name. The lint proposed below was
 never written and is no longer needed for this instance — but the *rule* stands for any future code
-that resolves a dependency by name: a bare `basic-memory` reference resolves to upstream.
+that resolves a dependency by name: a bare `basic-memory` reference resolves to somebody else.
 
 **Doubt cast on the baseline table: also settled, and worse than suspected.** This entry warned the
-`AGENTS.md` table might describe upstream's tree. It turns out `benchmarks/` is a retrieval-quality
+`AGENTS.md` table might describe a different tree. It turns out `benchmarks/` is a retrieval-quality
 suite (Recall@5, MRR, LLM-as-judge, mem0/zep providers) and **never produced those numbers at all**,
-so the table's provenance was simply unknown rather than upstream's. Re-measuring found one row
-wrong by an order of magnitude regardless — see T18. Table restated and partly retired in pass 4.
+so the table's provenance was simply unknown. Re-measuring found one row wrong by an order of
+magnitude regardless — see T18. Table restated and partly retired in pass 4.
 
-*Original fix proposal:* repoint every executable default at this fork (or at the local working
+*Original fix proposal:* repoint every executable default at this repo (or at the local working
 tree), and treat the rule above as a lint.
 
 ### T14 — `skills-latest` is a stale moving tag that outranks every version tag — **RESOLVED 2026-07-29**
@@ -836,7 +829,7 @@ $ git ls-remote --tags origin | grep -i skills
 232f2c2fc4e91564d88bcc312ed3d8bd1e8e051b	refs/tags/skills-latest
 ```
 
-It exists **both locally and on `origin`**, and it points at the fork point.
+It exists **both locally and on `origin`**, and it points at the tree's first commit.
 
 **Why it matters:** it does not affect the package version — uv-dynamic-versioning goes through
 dunamai, which pattern-matches version tags rather than shelling out to a bare `describe`, which is
@@ -861,24 +854,24 @@ v0.22.1-165-g117308fb
 A bare `git describe` now reports a version tag. `just release-preview`'s `--match 'v[0-9]*'`
 workaround is left in place: it is correct independent of this tag and costs nothing.
 
-### T15 — auto-update can silently replace this fork with upstream from PyPI — **SHIPPED `0b755f50`**
+### T15 — auto-update can silently replace this build with a PyPI package of the same name — **SHIPPED `0b755f50`**
 **Done 2026-07-27.** Deleted `cli/auto_update.py`, `cli/commands/update.py`, both test files, the
 `cli/app.py` call site, the `cli/commands/mcp.py` daemon thread (and its orphaned `threading`
 import), the `auto_update` / `update_check_interval` / `auto_update_last_checked_at` config fields
 (their `BASIC_MEMORY_*` env vars are derived from the model, so they vanish with the fields), and
-the `update` entry in `cli/main.py`. Same commit repointed `pyproject.toml [project.urls]` off
-`basicmachines-co` and dropped the upstream PyPI badge. Verified: `just fast-check` exit 0, unit
+the `update` entry in `cli/main.py`. Same commit repointed `pyproject.toml [project.urls]` at
+this repo and dropped the PyPI badge. Verified: `just fast-check` exit 0, unit
 suite **3444 passed / 33 skipped / 0 failed** — 3471 minus the 27 `def test_` lines the diff
 removes, so the delta is fully explained.
 
 *Original report:*
 **Found:** 2026-07-27, while auditing runtime dependencies. **Severity: this is the worst trap in
-the file** — it is the only one whose failure mode is the fork uninstalling itself.
+the file** — it is the only one whose failure mode is `bm` uninstalling itself.
 
 `src/basic_memory/cli/auto_update.py` fetches `https://pypi.org/pypi/basic-memory/json` and, when
 the published version compares newer than the installed one, runs `uv tool upgrade basic-memory`
-(or the Homebrew/pip equivalent). `basic-memory` on PyPI is **upstream's** package. There is no
-check that the installed build and the PyPI project are the same project.
+(or the Homebrew/pip equivalent). `basic-memory` on PyPI is **somebody else's** package. There is
+no check that the installed build and the PyPI project are the same project.
 
 It is not opt-in. Three separate call sites reach it, and none require the user to ask:
 
@@ -894,14 +887,14 @@ other interactive `bm <subcommand>` is a candidate once per `update_check_interv
 The MCP path runs it on a background daemon thread at server start, where the user sees nothing.
 
 **Why it has not fired yet is luck, not design.** `uv-dynamic-versioning` with `bump = true` gives
-this tree a dev version that currently sorts above upstream's latest release. That ordering is an
-accident of where the fork point sits; one upstream minor release inverts it.
+this tree a dev version that currently sorts above that package's latest release. That ordering is
+an accident of where our version numbers happen to sit; one minor release over there inverts it.
 
-This is T13's failure mode ("a dependency reference naming `basic-memory` resolves to upstream")
-promoted from documentation to an executable code path. `pyproject.toml` `[project.urls]` still
-pointing at `basicmachines-co` is the same root cause, one layer out.
+This is T13's failure mode ("a dependency reference naming `basic-memory` resolves to a different
+project") promoted from documentation to an executable code path. `pyproject.toml`
+`[project.urls]` still pointing off this repo is the same root cause, one layer out.
 
-**Fix:** delete the surface. A fork that publishes to no index has no upgrade source, so there is
+**Fix:** delete the surface. A build that publishes to no index has no upgrade source, so there is
 nothing here to repair — `auto_update.py`, `bm update`, both automatic call sites, and the
 `auto_update` / `update_check_interval` / `auto_update_last_checked_at` config fields all go.
 Decided with the user 2026-07-27; bundled with the W12/W13/W14 deletion passes.
@@ -934,7 +927,7 @@ passes touch the justfile for benchmark recipes (pass 4) and that is the natural
 
 ### T17 — 10 integration tests fail on `main`; `test-int/` was never run against the W13 tree — **SHIPPED `879681d4`: all ten fixed, `test-int` baseline green**
 **Found:** 2026-07-27. **DIAGNOSED 2026-07-28 by bisect. W13 is exonerated.** All ten are strip
-residue — tests left behind asserting on surface this fork deliberately deleted. None is a
+residue — tests left behind asserting on surface this project deliberately deleted. None is a
 regression in shipping code.
 
 **The bisect, four runs of the same ten tests (they reproduce in ~10 s, so the 426 s full suite was
@@ -962,7 +955,7 @@ cloud indexing job's response shape. The tests exercising both were left in plac
   `{'total_files': 0, 'enqueued_files': 0, 'enqueued_batches': 0, 'deleted_files': 0}` — no `state`,
   and none is derivable.
 
-**Cause 2 — one of ten: `829e5af5`, this fork's own T10 fix.**
+**Cause 2 — one of ten: `829e5af5`, this project's own T10 fix.**
 `test_build_context_underscore_normalization`'s "Test 4" asserted the relaxed-FTS fuzzy fallback
 that T10 removed on purpose, and its comment said so in as many words: *"Previously this returned
 empty (no exact permalink match). Now LinkResolver resolves to the child entity, so we get its
@@ -975,7 +968,7 @@ for and pass throughout.
 actually ships: `--local` removed from all 13 call sites, the two conflict-message tests deleted or
 narrowed (the validation they assert on cannot exist without the flags), the `state` assertion
 dropped, and Test 4 rewritten to assert that a `memory://` miss stays a miss. **`test-int` baseline
-is now green: 337 passed / 4 skipped / 0 failed** — the first green `test-int` in this fork's
+is now green: 337 passed / 4 skipped / 0 failed** — the first green `test-int` in this project's
 history, which was the actual defect this entry recorded.
 
 **What this cost, and the protocol it forces.** W12 was verified on `fast-check` + the unit suite
@@ -1051,7 +1044,7 @@ against.
 (6 cores, `loadavg` 5.8-6.5, an unrelated process pinning >100% CPU), so **wall-clock times are not
 usable** — the same `project list` invocation measured 4.9 s and 10.3 s depending on contention.
 The figures below are therefore **user CPU time** and **peak RSS**, both of which are essentially
-contention-independent. The fork-point table records wall time, so these are not directly
+contention-independent. The starting-point table records wall time, so these are not directly
 comparable to it; the comparison holds only because CPU time is a *lower bound* on wall time, and
 the lower bound alone already exceeds the claim by an order of magnitude.
 
@@ -1086,8 +1079,8 @@ matters for W1-W11: the fast `bm` verbs are specified against a boundary the exi
 commands have already crossed, so "do what `project list` does" is now precisely the wrong
 instruction.
 
-**Not diagnosed:** whether this is a regression from a strip pass or has been true since the fork
-point. The fork-point numbers themselves are suspect — see the note in pass 4's handoff about
+**Not diagnosed:** whether this is a regression from a strip pass or has been true from the
+start. Those baseline numbers themselves are suspect — see the note in pass 4's handoff about
 `benchmarks/runner.py` — and no harness in this repo measures CLI startup, so nothing would have
 caught a drift either way. `benchmarks/` is a *retrieval-quality* suite (Recall@5, MRR,
 LLM-as-judge, mem0/zep providers) and never produced these numbers, so deleting it neither caused
@@ -1166,7 +1159,7 @@ shape.
 ### T20 — no coverage ratchet: nothing enforces the 96% floor `AGENTS.md` now states — **CLOSED 2026-08-10: `fail_under = 93.8` lands, measured with the CLI counted**
 
 **The ratchet exists now.** 2026-08-07 added `fail_under` to `[tool.coverage.report]` and removed
-the `*/cli/**` omit (this fork's verbs land in `cli/`; omitting it would hide them from coverage on
+the `*/cli/**` omit (this project's verbs land in `cli/`; omitting it would hide them from coverage on
 the day they ship). The first run with the CLI counted, 2026-08-10:
 
 ```
@@ -1255,7 +1248,7 @@ ratchet, not an aspiration. Deferred deliberately: it is a mechanical change wit
 it is worth setting once, after **T18**'s fast-path work settles which modules survive.
 
 **A `db.py` coverage exclusion was reported and does not exist — but checking it found a real one.**
-The reconciliation pass (2026-08-07) rescued a claim from `.forked/w13-postgres-inventory.md` that
+The reconciliation pass (2026-08-07) rescued a claim from `.design/w13-postgres-inventory.md` that
 `pyproject.toml` omits `*/db.py` from coverage, justified by backend-dependent code that W13 then
 deleted. **Verified false:**
 
@@ -1274,12 +1267,12 @@ briefly carried the unchecked claim.
 **The real finding, from the same check.** The omit list is `*/watch_service.py`,
 `*/services/initialization.py`, and **`*/cli/**`** — the last justified as *"CLI is an interactive
 wrapper; core logic is covered via API/MCP/service tests."* That premise is being reversed by this
-fork's own roadmap: every verb in `AGENTS.md`'s flat list lands in `cli/`, `cli/direct.py` is now the
+project's own roadmap: every verb in `AGENTS.md`'s flat list lands in `cli/`, `cli/direct.py` is now the
 supported route to the service layer, and W5's notice machinery is CLI-side. **The verbs will be
 invisible to coverage the day they ship**, and the 96% floor will not notice. Revisit the `cli/**`
 omit before, not after, the verb work starts.
 
-**Also rescued, from `.forked/audit-2026-08-03-test-suite.md`** — the suite-speed ceiling, so it is
+**Also rescued, from `.design/audit-2026-08-03-test-suite.md`** — the suite-speed ceiling, so it is
 not re-derived:
 
 - **Do xdist first, re-measure, and do not delete tests for speed.** xdist shipped
@@ -1314,7 +1307,7 @@ not re-derived:
 - **A dotted key is frontmatter, not a column.** `schema.updated_at` parses normally; only a
   bare single-segment key can collide, and the match is case-insensitive.
 - **`note_type` keeps its alias and never reaches the refusal from the tool.** `search_notes`
-  aliases `note_type` → `type` (#642) and *then* validates, so the alias still works. The alias
+  aliases `note_type` → `type` and *then* validates, so the alias still works. The alias
   table moved to module scope and the validation sits beside it, which also fixes the
   all-projects fan-out: both used to run after project routing. `note_type` is still in the
   refusal list for callers that reach the API or repository directly, where no alias applies.
@@ -1430,7 +1423,7 @@ to an undeclared value breaks both rules at once. It now reports both.
 **Opened 2026-08-10**, found by running the shipped W4 build against a real project rather than a
 fixture. W4 ships a funnel whose central promise is *"the caller declares the mode — **reject**
 (verbs, MCP, API) or **record-violation** (the sync path)"*. **Reject never fires.** Every note
-write in this fork reaches the database through a path that does not touch `EntityService` at all.
+write in this project reaches the database through a path that does not touch `EntityService` at all.
 
 **Reproduction**, isolated config dir, project governed by a `vocabulary.yml` with the six types:
 
@@ -1459,8 +1452,8 @@ design, because it is the sync path. The one exception is `move_directory`
 (`knowledge_router.py:835`), the only API endpoint that takes an `EntityService` for a mutation.
 
 So `create_entity_with_content`, `update_entity_with_content`, `edit_entity_with_content`, and
-`move_entity` — every reject-mode call site — have **no external callers in this fork**. The funnel
-is correct; it is wired to a layer this fork stopped writing through.
+`move_entity` — every reject-mode call site — have **no external callers in this project**. The funnel
+is correct; it is wired to a layer this project stopped writing through.
 
 **Why the W4 build did not catch it.** The entry says `entity_service.py:368
 create_entity_with_content` *"is the agent write path"*. That was true when the sentence was
@@ -1518,7 +1511,7 @@ harmless on a reject path, where the write stops either way.
   shape W4 got bitten by.
 
 **Judgment call — record *and* skip, not record only.** The brief left this open. The design docs
-settle it: the permalink is this fork's identity, `id == permalink` is set-once (**T9**), edges bind
+settle it: the permalink is this project's identity, `id == permalink` is set-once (**T9**), edges bind
 to it, and rewriting it orphans every relation pointing at the record. **T22** already refuses this
 exact rewrite on the accepted path, so recording it here while still performing it would leave the
 watcher as the one door through which identity silently changes. A `set-once-changed` violation on
@@ -1633,7 +1626,7 @@ neither.
 
 **Not deleted in the T22 pass on purpose:** 21 test references, so removing it is a change of a
 different size, and T22's diff was already the funnel move plus a router rewrite. It is dead
-production code and this fork deletes those (`AGENTS.md`: *"Don't spend tokens on code we will
+production code and this project deletes those (`AGENTS.md`: *"Don't spend tokens on code we will
 never run"*). The work is: delete the method, delete or repoint the tests that exercise it, and
 drop `move_entity` from `PATH_ONLY_WRITE` in `tests/services/test_vocabulary_funnel_guard.py`.
 
@@ -2125,7 +2118,7 @@ module's only helper and keeps every remaining import.
 - **No tests removed:** 0 `def test_` added, 0 removed. The reproduction grep already showed the
   definition was the single hit across `src tests test-int`, so nothing exercised it.
 - **Judgment call — deleted rather than wired to `bm reindex`.** `bm reindex` does not exist, and
-  this fork does not keep code for a caller that has not been written (`AGENTS.md`: *"Don't spend
+  this project does not keep code for a caller that has not been written (`AGENTS.md`: *"Don't spend
   tokens on code we will never run"*). When `bm reindex` lands it will be a native verb, which
   cannot import `command_utils` at all — that module pulls the MCP client graph (T30). So the
   helper was not a head start on it; it was the wrong shape for it.
@@ -2149,7 +2142,7 @@ Error: Project marker <repo>/.bm.yml names 'basic-memory', which is not a regist
 Every `bm tool …` test invokes the CLI in-process with the developer's cwd, and marker resolution
 walks up from `Path.cwd()`. The test config never registers that project, so the marker refuses.
 The suite was hermetic about `HOME`, `BASIC_MEMORY_HOME` and the DB and not about cwd — the one
-input the fork's own verbs added.
+input the project's own verbs added.
 
 **Fix:** `tests/cli/conftest.py::isolated_home` and `test-int/conftest.py::config_home` now
 `monkeypatch.chdir(tmp_path)`. Tests that need a marker write one under `tmp_path` and chdir there
@@ -2258,7 +2251,7 @@ Two judgment calls worth recording:
 **Found:** 2026-07-26. Claimed to exit 1 and emit nothing parseable as JSON. No output was ever
 captured, and it stayed in BLOCKERS only because W7 is built on it.
 
-**Re-run 2026-07-31** in an isolated scratch config, 165 commits past the fork point:
+**Re-run 2026-07-31** in an isolated scratch config, 165 commits into the project:
 
 ```
 $ bm tool list-projects --json
@@ -2304,7 +2297,7 @@ either way there is nothing to build. W7 can rely on this surface.
   property of each verb's build, not an open item here.
 
 *Entry as it stood before closing:*
-**Found:** fork-point baseline. **Retitled 2026-08-03** — the old heading, "no fast path: anything
+**Found:** starting-point baseline. **Retitled 2026-08-03** — the old heading, "no fast path: anything
 touching `mcp.tools` / `api.app` costs ~4 s", has been false since `7d3459da` shipped
 `basic_memory.cli.direct` (T18). The entry's own 2026-07-31 amendment said so and the heading did
 not; it is promoted here.
@@ -2464,7 +2457,7 @@ smaller than feared because `bm brief` had already prototyped the chain in-tree:
 ## WANT — capabilities to build in
 
 These are the `tend` features, built as `bm` subcommands rather than a wrapper (see `AGENTS.md`,
-"What this fork is for"). Listed here so the gap list is the single place to look.
+"What this project is for"). Listed here so the gap list is the single place to look.
 
 ### W1 — `bm mine`: decision mining over Claude Code transcripts — **SHIPPED 2026-08-16**
 Recovers decisions made in conversation and never written down. **Measured 2026-07-26: no index is
@@ -2672,7 +2665,7 @@ supersession. `build-context` on a predecessor returns incoming edges natively, 
 derived at read time by the store itself.
 
 **DECIDED 2026-08-05 (user) — `bm gc` does not ship as a command.** Its five jobs
-(`.forked/schema.md` §6) become checks inside `bm doctor`, alongside W5's schema rules.
+(`.design/schema.md` §6) become checks inside `bm doctor`, alongside W5's schema rules.
 
 The grounds are the repo's own no-`bm check` rule, applied one step further than it was written.
 Flag-only was already the constraint, so the gardener and the doctor do the identical thing: run a
@@ -2769,7 +2762,7 @@ Three things follow for the build:
    floor.
 2. **The `git clean` hazard is gone by construction**, not by discipline — nothing of value sits
    inside another repo's worktree. The `info/exclude` requirement stands anyway, for speed.
-3. **W3 lands before W6.** The importer is the largest destructive operation this fork will run,
+3. **W3 lands before W6.** The importer is the largest destructive operation this project will run,
    and it should run *into* a repo that already commits every write, so the first entry in the
    history is the import itself, fully revertable.
 
@@ -2835,7 +2828,7 @@ bm history commit <path>...   # commit specific paths
 **C — the watcher is not the mechanism, on three counts.** `WatchService` /
 `WatchCoordinator` exist (`src/basic_memory/index/`) but start **only with the MCP or API server**
 (`src/basic_memory/mcp/server.py:101`); there is no `bm watch` and no daemon, so nothing watches
-during CLI or fast-verb use. It is tied to the subsystem this fork is moving away from. And it
+during CLI or fast-verb use. It is tied to the subsystem this project is moving away from. And it
 commits per file-change event, so a few minutes of editing yields a commit per editor autosave —
 a record of typing, not of changes.
 
@@ -2843,7 +2836,7 @@ a record of typing, not of changes.
 Staging an explicit path list is a different operation. The difference should be noise, but per the
 evidence rules the number must be re-taken rather than inherited.
 
-**Rescued 2026-08-07 from `.forked/local-history.md` before its deletion** — four measured facts
+**Rescued 2026-08-07 from `.design/local-history.md` before its deletion** — four measured facts
 that had no home here.
 
 **D — history does not grow without bound, and the only rule is not to disable `gc.auto`.**
@@ -2865,8 +2858,8 @@ either machine can read the other's tree (`git show origin/machine2:<path>`). Th
 this *more* attractive — one remote and one branch pair, not one per project.
 
 > **STANDING RULE — the store repo must never have a public remote.** Recorded 2026-08-07 from
-> `.forked/decisions.md` D2/D3, which is gitignored and was therefore the only home for a
-> constraint that governs every note this fork will ever write. Sync targets a **private** remote
+> `.design/decisions.md` D2/D3, which is gitignored and was therefore the only home for a
+> constraint that governs every note this project will ever write. Sync targets a **private** remote
 > only, from personal machines only; work and client machines never push. The unsanitized original
 > names a specific host and stays out of this file.
 
@@ -2985,7 +2978,7 @@ Verification: unit 3091 → 3220 (+129: 106 checker/loader, 12 funnel, 3 funnel 
 
 **Two things this entry did not settle, both found on contact with the code and decided by the user
 the same day** — the governance gate and the store id. Both are recorded above as DECIDED blocks
-and in `.forked/schema.md` §3 (commit `ef6f5dbc`). Neither was visible from the design docs; each
+and in `.design/schema.md` §3 (commit `ef6f5dbc`). Neither was visible from the design docs; each
 appeared the moment the checker met a real write path.
 
 **The funnel found a live side door beyond the one this entry names.** The decision block above
@@ -3012,7 +3005,7 @@ the tree is stable before starting a suite, not just that the files are present.
 the revalidation trigger when `vocabulary.yml` changes, and `bm doctor` reporting. The checker's
 `Violation` is already shaped as a row keyed by entity so W5 persists it without rework.
 The write verbs `bm new` and `bm edit` remain in W5's phase as recorded.
-Humans extend the vocabulary; agents may only select from it. Upstream's frontmatter vocabulary is
+Humans extend the vocabulary; agents may only select from it. Frontmatter on its own is
 fully open, so enforcement is ours and cannot live in a wrapper.
 
 **DECIDED 2026-08-10 (user) — `bm edit` ships, scoped to the kept-current types.** The schema's
@@ -3031,7 +3024,7 @@ validation — there is no write path for edits without a verb. The shape:
 - Hand edits remain possible and are not an error; W3's history keeps them visible and `bm doctor`
   flags what they break. The verb makes the sanctioned path the easy one, not the only one.
 
-Builds in W5's phase, where the write-path validation lands. Closes `.forked/schema.md` §11 Q6;
+Builds in W5's phase, where the write-path validation lands. Closes `.design/schema.md` §11 Q6;
 `bm edit` joins the flat verb list in `AGENTS.md` (this resolves the W19-example-vs-verb-list
 discrepancy in favour of the example).
 
@@ -3049,7 +3042,7 @@ commit of this build (see O-picoschema for grounds). The vocabulary source is th
 validated by a bespoke checker that W5 wires into `bm doctor`.
 
 **DECIDED 2026-08-04 (user) — the type set is six, closed, and named in plain English.**
-`.forked/schema.md` §1 had three genre types plus `unsorted`. Testing it against four real cases
+`.design/schema.md` §1 had three genre types plus `unsorted`. Testing it against four real cases
 (relationship notes, coding notes, a forked repo's coding notes, a long-running enterprise
 migration) found two of them had no home, and the schema's own axes explain why: types are keyed on
 **temporal shape** (lifecycle / date / mutability / supersession), and two shapes were never
@@ -3113,7 +3106,7 @@ only real check is that the change is a commit carrying an `Actor: agent` traile
 **Enforcement lives in the service layer, not the CLI or the MCP tool.** `entity_service.py:368`
 `create_entity_with_content` is the agent write path; `entity_service.py:674`
 `upsert_entity_from_markdown` is the sync/watcher path a human's text editor reaches. Checking only
-the CLI rebuilds beans' failure exactly (`.forked/decisions.md` R5: the CLI rejected
+the CLI rebuilds beans' failure exactly (`.design/decisions.md` R5: the CLI rejected
 `maintenance-record` while GraphQL wrote it to disk, and the `types:` config block was silently
 ignored).
 
@@ -3135,7 +3128,7 @@ every note's frontmatter to `type: note`, and nothing generates a `tnd-` id yet,
 vocabulary applied everywhere would reject every existing write on the spot. The rule instead:
 
 - **No `vocabulary.yml` → the checker never runs.** An absent file means "this project is not
-  governed", not "use the defaults". The default block in `.forked/schema.md` §3 is what `bm new`
+  governed", not "use the defaults". The default block in `.design/schema.md` §3 is what `bm new`
   *writes* into a new file, never what an absent file *means*.
 - **A `vocabulary.yml` present → strict, with no passthrough.** `type: note` is an off-vocabulary
   type like any other and is rejected on the agent write path. There is no ungoverned seventh type;
@@ -3174,7 +3167,7 @@ says when to use each, (b) a primer that explains the set, and (c) write-path er
 allowed values in the same plain vocabulary. See **W19**. A closed vocabulary an agent cannot
 understand at the moment of filing relocates the misfiling rather than preventing it.
 
-~~**Owed before the build:** `.forked/schema.md` §1–§4 predate all of this and must be rewritten~~
+~~**Owed before the build:** `.design/schema.md` §1–§4 predate all of this and must be rewritten~~
 — **discharged 2026-08-10**: schema.md's header now reads "§1–§4, §6–§7 rewritten 2026-08-10"; the
 type table, per-type sections, the vocabulary example, and §4's mutability count ("four") are
 current.
@@ -3242,7 +3235,7 @@ Four more, taken while building:
   count a verb prints is scoped to the project it wrote to rather than to the whole store.
 
 One decision was taken and then narrowed by the code: **`bm edit` did not edit a `profile`'s
-declared fields**, which `.forked/schema.md` §11 Q6 said it would — title and body only. Filed as
+declared fields**, which `.design/schema.md` §11 Q6 said it would — title and body only. Filed as
 V-J1 below and closed there 2026-08-17: `--set name=value` writes them, so the narrowing is gone.
 
 **Item A — the local write stack. Landed 2026-08-17.**
@@ -3432,7 +3425,7 @@ Two mechanics had to be discovered rather than assumed, and a later author will 
 - **`EntitySchema.file_path` is computed from `directory` + `safe_title`** (`schemas/base.py`), so
   nothing in the tree could put a note at `<type-dir>/<id>--<slug>.md`. `RecordNote` in
   `cli/record_notes.py` is a Pydantic subclass that redeclares the computed field and states the
-  path. That is what makes `.forked/schema.md` §8 reachable, and it is also what lets `bm edit`
+  path. That is what makes `.design/schema.md` §8 reachable, and it is also what lets `bm edit`
   keep a record's path when its title changes.
 - **A declared `permalink` survives byte-for-byte only when it arrives in the note's own
   frontmatter text.** `_apply_schema_frontmatter_overrides` reads it there and `resolve_permalink`
@@ -3651,7 +3644,7 @@ The last item. It owns no verb of its own; it closes the ones the phase left hal
   was being edited concurrently.
 - **Docs:** `README.md` gains a verb table; `AGENTS.md`'s four numbered capabilities are marked
   shipped and its flat verb list matches what exists; `docs/OUTPUT_CONTRACT.md` cross-references
-  the path-verb exception from rule 4 and states `bm show`'s shape; `.forked/schema.md` §11 Q6 is
+  the path-verb exception from rule 4 and states `bm show`'s shape; `.design/schema.md` §11 Q6 is
   marked built, with the one narrowing (V-J1 — since closed, so the narrowing no longer applies).
 
 **Not done, deliberately:** item A's note says `direct_note_writer()` should move from
@@ -3719,7 +3712,7 @@ case) and 2 at the verb, in `tests/cli/test_brief.py`.
 
 **Item V-J1 — `bm edit` does not edit a `profile`'s declared fields. Found 2026-08-17; CLOSED
 2026-08-17 on the recommended answer.**
-`.forked/schema.md` §11 Q6 promised `bm edit` would replace *"title/body (plus declared fields on a
+`.design/schema.md` §11 Q6 promised `bm edit` would replace *"title/body (plus declared fields on a
 `profile`)"*. What shipped moved the title and the body only, so a declared field on a profile — a
 project's own `vocabulary.yml` extension — could be set at creation and never changed except by
 hand, which is exactly what D12 exists to keep off the routine path.
@@ -3733,7 +3726,7 @@ $ bm edit tnd-q8w3e1r5 --set owner=platform --set tier=gold -p ops
 Four refusals, each naming what to do instead:
 
 - **not a `profile`** — a profile is the one type whose declared fields are mutable
-  (`.forked/schema.md` §1 table, §4 item 4); on every other type the frontmatter is what `bm new`
+  (`.design/schema.md` §1 table, §4 item 4); on every other type the frontmatter is what `bm new`
   wrote.
 - **an ungoverned project** — an absent `vocabulary.yml` declares no fields (W4), so there is no
   declared field to set, and inventing one would write a key nothing in the project validates.
@@ -3890,7 +3883,7 @@ check two implementations that can drift.
 
 Cost, stated honestly: one table, one Alembic migration, and a revalidation trigger when the
 vocabulary file changes (counts are stale until then). Vocabulary edits are *"a deliberate human
-act"* per `.forked/schema.md` §3, so that trigger has an obvious home.
+act"* per `.design/schema.md` §3, so that trigger has an obvious home.
 
 **No background `doctor`.** The user's premise was right — agents do not run `doctor` on their own
 initiative — but the fix is the nag, not a daemon. Sync already knows the violation at write time;
@@ -3953,7 +3946,7 @@ as `finding`.
 Two of the five rules above now hold. W5 stays open: rules 2, 3 and 5 were already done, but
 nothing persists a violation and `bm doctor` still reports none of this.
 
-- **Rule 1, `supersedes` only on a `finding`.** It is not a frontmatter rule — `.forked/schema.md`
+- **Rule 1, `supersedes` only on a `finding`.** It is not a frontmatter rule — `.design/schema.md`
   §5/§12 moved `supersedes` into a `## Relations` line — so `check_frontmatter` gained
   `relation_types`, threaded through `enforce_vocabulary`/`apply_vocabulary` to every caller that
   parsed the record: the accepted runner's create, PUT and edit sites, and EntityService's three
@@ -4231,7 +4224,7 @@ Found in: sweep-status-agents.md:61, sweep-handoffs.md:37, sweep-inv-plan.md:49,
 sweep-decisions.md:25, sweep-prior-art.md:31.
 
 **CLOSED 2026-08-05 (user) — nothing ships for this.** The migration is a Claude workflow: scan
-repos first for candidate files (`STATUS.local.md`, `.forked/`, `GAPS`/`backlog`/`todo` and
+repos first for candidate files (`STATUS.local.md`, `.design/`, `GAPS`/`backlog`/`todo` and
 similar), then one agent per repo, with validator agents checking the output. *"We don't need any
 defined code-based importer."*
 
@@ -4246,7 +4239,7 @@ The three original requirements resolve without code:
   legitimately share a source, so it would be a warning naming the existing record, never a
   refusal).
 
-**The verbatim `_import/` copy from `.forked/schema.md` §7 is also dropped.** It existed to guarantee
+**The verbatim `_import/` copy from `.design/schema.md` §7 is also dropped.** It existed to guarantee
 file-level losslessness when extraction quality was uncertain. It is no longer needed: the store now
 lives outside every source worktree, the source repos keep their own git history, and `source:`
 points back at the original. **This holds only while the source files stay in place** — if imported
@@ -4270,7 +4263,7 @@ So three things change:
 3. **Phase 1's "never edit a source file" rule is replaced**, not merely relaxed. The new rule:
    *snapshot first, extract, then trim the source*. An agent may not trim a file it did not snapshot.
 
-**This closes the open conflict** raised in `.forked/migration-workflow.md` on 2026-08-07 — the old
+**This closes the open conflict** raised in `.design/migration-workflow.md` on 2026-08-07 — the old
 `migration.md` wanted absorbed content deleted from the source with a pointer left behind, and the
 workflow forbade touching sources. The user resolved it in favour of trimming, with the snapshot as
 the safety net that makes trimming reversible.
@@ -4283,7 +4276,7 @@ file anyway, so the two decisions should be taken together when W9's dotfiles tr
 wants to land before the migration runs, so the import is a revertable commit — but nothing in the
 tree depends on it.
 
-**The workflow shape is sketched in `.forked/migration-workflow.md`** (2026-08-05): phase 0 scan
+**The workflow shape is sketched in `.design/migration-workflow.md`** (2026-08-05): phase 0 scan
 with a human-reviewed candidate list, phase 1 one extraction agent per repo, phase 2 validators,
 phase 3 report gated on `bm doctor`. It records the agent-brief rules (write only through `bm new`,
 never touch a source file, never invent a date, no summarizing) and the carried-over traps.
@@ -4309,7 +4302,7 @@ Found in: sweep-prior-art.md:49, sweep-beans.md:19.
   gained the same error branch the other tool commands already had.
 - **Counts: `total: int | null`, null/absent = unknown, never a sentinel; `total_is_exact` is
   deleted** (it existed solely to flag the sentinel — with an honest null it is redundant, and
-  there is no compat tax in this fork). Shipped in the W7 envelope commit: schema, v2 router,
+  there is no compat tax in this project). Shipped in the W7 envelope commit: schema, v2 router,
   client compat shim (removed), multi-project merge (any failed/unknown project → null), CLI
   renderer, and the legacy-sentinel fallback tests that guarded the old semantics.
 - **Coverage rule is go-forward**: every new command intended for scripted use ships with
@@ -4365,7 +4358,7 @@ than a generalization of them. Two consequences worth stating before the build:
   agent makes rarely must not be billed to it.
 
 **DECIDED 2026-08-06 (user) — how the primer reaches an agent. This closes the question
-`.forked/decisions.md:597` deferred to W8.**
+`.design/decisions.md:597` deferred to W8.**
 
 **S4 is refined, not upheld.** S4 concluded "inject a pointer, not content" from the observation
 that injected STATUS was skimmed. The diagnosis was right and the conclusion one step too wide. The
@@ -4444,7 +4437,7 @@ listing every guide is a table of contents, which is content, which W8 exists to
 consulted on demand via search. Reverse this only with evidence that an agent failed to find a guide
 it needed.
 
-**Rescued 2026-08-07 from `.forked/hook-design.md` before its deletion — an empty brief and a broken
+**Rescued 2026-08-07 from `.design/hook-design.md` before its deletion — an empty brief and a broken
 brief are the same output.** This entry records *"empty brief prints nothing and exits 0"* as a
 virtue and never states the cost: a bad project name, an un-migrated DB, and a config error **all
 degrade to silence too**, so a genuinely broken brief is indistinguishable from a healthy quiet one.
@@ -4535,7 +4528,7 @@ sweep-prior-art.md:13.
 
 **DECIDED 2026-08-06 (user) — *"bm will replace status probably fully."*** So no emitter ships. The
 title above is corrected: this was never really "write the file correctly", it was "decide whether
-the file survives." `.forked/decisions.md` R3 had already reached the same place from the other
+the file survives." `.design/decisions.md` R3 had already reached the same place from the other
 direction — *"if [the tracker] holds in-progress state, **STATUS has no durable job left**."*
 
 Rejected alternatives, both argued for by the assistant and overruled: emitting the file from `bm`
@@ -4630,8 +4623,8 @@ Tests: `tests/services/test_headline.py` (12), plus two in
 leaves behind is the three lines a consumer parses, the other that the note's commit contains it.
 
 ### W10 — an exclusion mechanism on the indexing path — **SHIPPED**
-**Done 2026-08-03.** The entry's premise ("no ignore file") was stale: upstream shipped an ignore
-mechanism before the fork point (`ignore_utils.py`, from `e0d8aeb1`) — a global
+**Done 2026-08-03.** The entry's premise ("no ignore file") was stale: an ignore mechanism
+already shipped before this tree started (`ignore_utils.py`, from `e0d8aeb1`) — a global
 `<data dir>/.bmignore` plus the project's `.gitignore`, honored by the full scan
 (`scan_local_project_index_files`), the watcher, the single-file index endpoint, and zip import.
 Reproduction confirmed `.gitignore` exclusion works end-to-end on the scan path (positive control).
@@ -4698,7 +4691,7 @@ local installs (see the T1/B1 divergence), which is a design question with no an
 It also keeps `skip_local_initialization` / `BASIC_MEMORY_CLOUD_MODE` alive as a second
 configuration reality that every registry change has to be reasoned about twice.
 
-See AGENTS.md → "We do not track upstream" → "Strip policy" for the rule this falls under.
+See AGENTS.md → "We reshape the tree" for the rule this falls under.
 
 ### W13 — delete the Postgres backend — **SHIPPED `79e0dad9`**
 **SHIPPED `79e0dad9`.** 97 files, −6790/+694. Verified `3406 passed / 10 skipped / 0 failed`
@@ -4708,7 +4701,7 @@ No alembic revision file was deleted — whole-body-Postgres revisions are no-op
 (applied outside any backend gate); `litellm` + the remaining dependency prune shipped later in
 `6f8767a3` (W17).
 
-> **Trap, rescued 2026-08-07 from `.forked/w13-postgres-inventory.md` before its deletion.**
+> **Trap, rescued 2026-08-07 from `.design/w13-postgres-inventory.md` before its deletion.**
 > `nest-asyncio` (`pyproject.toml:35`) is applied **unconditionally in `alembic/env.py`**, not behind
 > any backend gate — so it is live on the **SQLite** migration path. Removing it is a behaviour
 > change, not a leftover prune. The inventory predicted exactly this and it is the reason the
@@ -4753,14 +4746,14 @@ skipped / 0 failed**, exactly the 3483 baseline minus the 12 deleted `ci` tests.
 notes. It survived the 2026-07-27 strip only because it writes into `tmp_path` in tests and so kept
 passing after `.github/` was deleted — it was never judged on merit.
 
-This fork runs no CI, opens no PRs, and has no `.github/` of its own. Nothing here is a dependency of
+This project runs no CI, opens no PRs, and has no `.github/` of its own. Nothing here is a dependency of
 anything else. Same class as W12/W13: pure deletion, no replacement.
 
 Not urgent — it costs nothing at runtime (`ci` is one more entry in the `cli/commands` import list).
 Bundle it with W12 rather than making a pass of its own.
 
 ### W15 — delete the logfire/OpenTelemetry surface — **SHIPPED `bec90372`**
-**Done 2026-07-28** (strip pass 3). 58 files, −6109/+2404. This fork ships no telemetry backend and
+**Done 2026-07-28** (strip pass 3). 58 files, −6109/+2404. This project ships no telemetry backend and
 never will, so every span, metric, and config knob feeding one was overhead on paths that run on
 every note write.
 
@@ -4773,7 +4766,7 @@ config fields (`logfire_enabled`, `logfire_send_to_logfire`, `logfire_service_na
 no replacement); the `telemetry-smoke` justfile recipe; the `logfire` dep from both dependency
 groups.
 
-**Kept: loguru.** It is this fork's real logging and is unrelated to logfire despite the name.
+**Kept: loguru.** It is this project's real logging and is unrelated to logfire despite the name.
 `initialize_file_logging()` and the `SetupLogging` protocol are untouched. Anyone repeating this
 kind of pass should confirm which of the two a call site uses before deleting it.
 
@@ -4806,8 +4799,8 @@ than only against mocks.
 ### W16 — trim `README.md` and correct stale command references — **SHIPPED `e8212855`**
 **Done 2026-07-28** (strip pass 6). Docs-only.
 
-Deleted from `README.md`: the four "What people are saying" testimonials (upstream's marketing for
-upstream's product — this fork ships to one user) and the "What's New" section (release notes with
+Deleted from `README.md`: the four "What people are saying" testimonials (inherited marketing
+for a hosted product — this project ships to one user) and the "What's New" section (release notes with
 no release process behind them, since releases here are a git tag and nothing else, so it could
 only rot).
 
@@ -4885,7 +4878,7 @@ worth its own look someday. Tests replay O3's fixture inverted: the frontmatter-
 an absent-token negative control. `--meta`/`--filter` unchanged as the exact-match path.
 
 ### W19 — the user-facing vocabulary is jargon, starting with the record type names — **CLOSED 2026-08-17: item 5 ships on every verb; items 1–4 shipped earlier**
-**Opened 2026-08-04 (user).** Reviewing the `.forked/schema.md` type set, the user could not state
+**Opened 2026-08-04 (user).** Reviewing the `.design/schema.md` type set, the user could not state
 the difference between two proposed types from their names alone: *"I honestly don't know the
 difference between procedure and finding."* That is the correct reading — the names describe the
 schema's internal axes (mutability, supersession) rather than what a person does with the record.
@@ -5046,7 +5039,7 @@ the rendering changes, the contract changes with it and stays single.
 **`--json` is removed outright, not kept as a secondary mode.** The assistant proposed keeping it
 for "anything that actually parses rather than reads"; the user rejected that as a softening of an
 already-taken decision. Nothing consumes it — every consumer is in-repo, in-process, and an agent.
-There is no compat tax in this fork.
+There is no compat tax in this project.
 
 **Why the contract stops naming a format.** `bm` output is not one shape:
 
@@ -5122,7 +5115,7 @@ the mode-precedence/JSON-envelope tests whose subject no longer exists); int 329
 `project list`, `search-notes`, `config list`, `orphans`, `status`, `project info` all render v2
 (columns, id first, trailing counts), streams clean.
 
-### W21 — the permalink normalization contract is undocumented, and permalinks are this fork's identity — **CLOSED 2026-08-16: recovered from the code into `docs/IDENTITY.md`; the query surface got `docs/METADATA-QUERIES.md`**
+### W21 — the permalink normalization contract is undocumented, and permalinks are this project's identity — **CLOSED 2026-08-16: recovered from the code into `docs/IDENTITY.md`; the query surface got `docs/METADATA-QUERIES.md`**
 
 **Close block, 2026-08-16.** Docs only, no code changed.
 
@@ -5187,7 +5180,7 @@ frontmatter stamp is gated on the default flags. T21's fix has landed in the tre
 diff surviving verification** — if T21 is reverted, §5.1 and the `metadata_filters.py` line numbers
 revert with it.
 
-**Opened 2026-08-07**, by the `.forked/` reconciliation pass, from `.forked/pass4-5-inventory.md`
+**Opened 2026-08-07**, by the `.design/` reconciliation pass, from `.design/pass4-5-inventory.md`
 before its deletion. That file flagged five doc deletions as *"product decisions, not strips"*. Three
 are moot; two are live and were recorded nowhere:
 
@@ -5195,7 +5188,7 @@ are moot; two are live and were recorded nowhere:
   unicode→ASCII normalization and collision handling.
 - **`docs/metadata-search.md`** (280 lines) was the only doc for the frontmatter query surface.
 
-**Why the first one matters here specifically.** T9 makes the permalink this fork's identity — edges
+**Why the first one matters here specifically.** T9 makes the permalink this project's identity — edges
 bind to it, and W4 makes it set-once and the strictest member of that list, because rewriting one
 silently orphans every relation pointing at the record. Normalization decides what a permalink *is*.
 An undocumented normalization contract is therefore an undocumented identity contract, and the
@@ -5227,7 +5220,7 @@ freely; the deletion was deliberate and only the *record* of what it removed was
 
 ## VERBS PHASE — the record verbs, item by item
 
-The build plan is `.forked/`-adjacent and lives in the campaign scratchpad, not here; this section
+The build plan is `.design/`-adjacent and lives in the campaign scratchpad, not here; this section
 is the ledger entry for each item as it lands. The phase ships `bm new`, `bm edit`, `bm done`,
 `bm mark`, `bm ls`, `bm show`, `bm path`, and `bm undo` (AGENTS.md's verb list), plus the
 mechanisms they are the first callers of.
@@ -5414,11 +5407,11 @@ graph.
 
 ## OPEN — observed, not diagnosed
 
-### O-picoschema — `picoschema/` is un-stripped upstream surface, now with no design doc — **STRIPPED 2026-08-10 (first commit of the W4 build, as scheduled)**
+### O-picoschema — `picoschema/` is un-stripped inherited surface, now with no design doc — **STRIPPED 2026-08-10 (first commit of the W4 build, as scheduled)**
 **Found 2026-07-28** in pass 5, while checking the handoff's precondition for deleting
-`docs/specs/SPEC-SCHEMA*.md`. That precondition was "check `.forked/schema.md` supersedes them" —
-**it does not.** `.forked/schema.md` is this fork's *record-vocabulary* proposal (the closed
-vocabulary of W3); `SPEC-SCHEMA` is upstream's *Picoschema* frontmatter-validation design, a
+`docs/specs/SPEC-SCHEMA*.md`. That precondition was "check `.design/schema.md` supersedes them" —
+**it does not.** `.design/schema.md` is this project's *record-vocabulary* proposal (the closed
+vocabulary of W3); `SPEC-SCHEMA` is the inherited *Picoschema* frontmatter-validation design, a
 different subject entirely. The two were conflated by name.
 
 `src/basic_memory/picoschema/` is live: `parser.py`, `resolver.py`, `validator.py`, `inference.py`,
@@ -5426,7 +5419,7 @@ different subject entirely. The two were conflated by name.
 subsystem now has code and tests but no design documentation.
 
 **The real question this raises is not the doc, it is the code.** Picoschema validates notes against
-Picoschema-syntax frontmatter. This fork is building a *closed record vocabulary* (W3) enforced in
+Picoschema-syntax frontmatter. This project is building a *closed record vocabulary* (W3) enforced in
 the write path. Those are competing designs for the same concern, and nothing has decided whether
 picoschema stays. It is a plausible strip candidate on the same grounds as W12/W13 — but that is a
 **product decision, not a strip**, so it is recorded here rather than acted on.
@@ -5465,8 +5458,8 @@ it". That was already false when written: W7's output-contract work landed chang
 in `92d1b6c9` (`schema infer`'s no-pattern answer became a result, not an error) and `e9db95a3`
 (`schema validate`/`diff` conformed to `docs/OUTPUT_CONTRACT.md`) — both in
 `cli/commands/schema.py` and `mcp/tools/schema.py`, the CLI/tool skin over `picoschema/`. The
-package itself is untouched since the fork (`git log -- src/basic_memory/picoschema/` ends at
-`6e9f2fcf`, an upstream rename).
+package itself is untouched since the first commit (`git log -- src/basic_memory/picoschema/` ends at
+`6e9f2fcf`, an inherited rename).
 
 **Current rule:** the subsystem is still strip-scheduled with W4, and no behavioural or feature work
 lands in it. Output-contract conformance was the one exception admitted, on the grounds that a
@@ -5567,7 +5560,7 @@ Positive control passed; the frontmatter-only value is unreachable by FTS. Front
 exact-match filterable via `--meta`/`--filter`, but it never enters the FTS index.
 
 **Decision reversed 2026-07-31 (user call): this is a defect to fix, not a constraint to design
-around.** This fork owns the indexer; there is no upstream shape to preserve. Frontmatter that can
+around.** This project owns the indexer; there is no inherited shape to preserve. Frontmatter that can
 only be queried by someone who already knows the key is a trap — a plain search for an id finding
 nothing is what misled the original spike. Fix: include frontmatter key/value text when the
 indexer builds the entity's `search_index` row, so FTS reaches it. Tracked as **W18**; schedule
@@ -5697,7 +5690,7 @@ Found in: sweep-beans.md:7, sweep-transcript.md:55.
 
 **Proposed root fix (2026-07-31, not yet scoped): synchronous write-through.** The DB-first
 deferred-write architecture exists so a hosted runtime can accept writes without a filesystem —
-and this fork stripped the hosted runtime (W12). On a local-only tree it buys nothing and is the
+and this project stripped the hosted runtime (W12). On a local-only tree it buys nothing and is the
 root cause of both this entry's move behaviour and T12: make move = `rename(2)` + index update in
 one operation, and write = file first, index second, and the `pending` window disappears entirely.
 Touches the mutation service and the materialization runner; scope it in phase 2/3 before the
@@ -6116,14 +6109,14 @@ Migrating a decision the source dates 2026-08-05:
 
 ```
 $ bm new finding "Store history: git add -A per mutation was reversed; commit only touched paths" \
-    --source ".forked/decisions.md#L189-L312" -b "Recorded 2026-08-05 in GAPS W3. ..."
+    --source ".design/decisions.md#L189-L312" -b "Recorded 2026-08-05 in GAPS W3. ..."
 $ bm show tnd-gqntyk6p | sed -n '1,10p'
 ---
 title: 'Store history: git add -A per mutation was reversed; commit only touched paths'
 type: finding
 permalink: tnd-gqntyk6p
 id: tnd-gqntyk6p
-source: .forked/decisions.md#L189-L312
+source: .design/decisions.md#L189-L312
 event-date: '2026-08-17'
 date-source: inline
 date-confidence: day
@@ -6280,7 +6273,7 @@ equality (the sweep's own positive control was
   literal.
 - `tests/services/test_entity_service_prepare.py` —
   `..._metadata_only_edit_preserves_body_exactly` and `..._metadata_only_edit_skips_append_newline`.
-  **These two encoded the opposite invariant on purpose** (PR #1090 review: "a missing final newline
+  **These two encoded the opposite invariant on purpose** (a prior review: "a missing final newline
   … must round-trip byte-exact") and are a real conflict rather than a stale literal. U2 wins:
   adding the file's terminator is not a reflow — nothing inside the body moves — and the promise
   those tests exist to keep is that a frontmatter-only edit does not touch the body's *own* shape.
@@ -6406,7 +6399,7 @@ Tests added to `tests/cli/test_brief.py` (4): `test_a_capped_section_carries_the
 ### U5 — `bm doctor` flags a deliberate `inbox` record with a demand no verb can satisfy — **FIXED 2026-08-17**
 
 ```
-$ bm new inbox "Not migrated item by item — the six archived design documents" --source ".forked/archive/"
+$ bm new inbox "Not migrated item by item — the six archived design documents" --source ".design/archive/"
 $ bm doctor
 integrity  project 'basic-memory'
   No issues
@@ -6894,7 +6887,7 @@ available to write and could not be:
 - Twenty-three tasks and sixty-nine findings from the same source file are connected only by the
   `source:` string, which is free text.
 
-The graph is the substrate this fork chose over an issue tracker — a wikilink in the body resolves,
+The graph is the substrate this project chose over an issue tracker — a wikilink in the body resolves,
 so the capability exists at the file level and is simply unreachable from the write verbs. The
 result is a flat corpus that keeps its provenance in prose.
 
@@ -6971,11 +6964,11 @@ declares source/target rules to enforce.
 
 **Found 2026-08-17** by the re-migration agent, probing with `BASIC_MEMORY_CONFIG_DIR` pointed at
 an empty temp dir and cwd outside any marker. `bm new` did not refuse — it created a default
-project rooted at `~/basic-memory` (upstream's bootstrap default), wrote the record there, and
+project rooted at `~/basic-memory` (the legacy bootstrap default), wrote the record there, and
 committed nothing, because that path is outside the store. The directory did not exist before the
 probe; the agent removed it.
 
-That is upstream's "first run makes you a project" behaviour surviving under a verb whose contract
+That is the "first run makes you a project" behaviour surviving under a verb whose contract
 is store-homed projects (D3). Two things are wrong at once: a *write* verb silently created a
 project, and it homed it outside the store, so the D3 notice about "no history for this project"
 was the only sign. Reproduction:
@@ -7050,7 +7043,7 @@ asked for.
 
 The wound is smaller than U15's, because nothing is *written* to that project: it is a stray
 registry row and a stray empty directory, not a record filed somewhere invisible. But it is the same
-upstream "first run makes you a project" behaviour, surviving under a command whose contract is
+legacy "first run makes you a project" behaviour, surviving under a command whose contract is
 store-homed projects (D3), and it means a clean install cannot reach a state of exactly one project.
 
 **Fix:** decide what the ASGI seam should do when the registry is empty and the caller is
@@ -7259,7 +7252,7 @@ fails on any bare or backticked `[[…]]` that is not a `tnd-` id.
 The procedure the 2026-08-17 pass followed. Every entry above came out of it.
 
 1. **Read the vocabulary first** — `bm types`. Everything below picks from it; nothing invents.
-2. **Inventory:** `STATUS*.local.md`, `HANDOFF*`, `PLAN*`, `.forked/**`, `TODO*`, `DECISIONS*`. Read
+2. **Inventory:** `STATUS*.local.md`, `HANDOFF*`, `PLAN*`, `.design/**`, `TODO*`, `DECISIONS*`. Read
    each in full first — a record written from a skim needs its source re-read to be trusted.
 3. **Map by temporal shape, not topic.** Dated decision or lesson → `finding`, with `--event-date`
    and `--date-source`. Open next-step → `task`, with `--opened`. Kept-current document → `guide`.
@@ -8146,7 +8139,7 @@ again. `bm --help` cannot drift, because it is generated from the code it docume
 
 **`bm man` goes with the page.** The group has one command, `bm man install`, and its only job is
 copying the two `.1` files into `~/.local/share/man`. With no page to install, the verb has no
-subject. That also retires the `manpath(1)` probe and its `MANPATH` hint — a shell-out this fork
+subject. That also retires the `manpath(1)` probe and its `MANPATH` hint — a shell-out this project
 now never makes.
 
 **Deleted:**
@@ -8156,8 +8149,8 @@ now never makes.
   whole, and there is no `MANIFEST.in`.
 - `src/basic_memory/cli/commands/man.py` — the `man` Typer group and `install`.
 - `tests/cli/test_man_command.py` — 5 `def test_` lines, all of them about `install`.
-- `docs/manual-pages.md` — upstream's design for a manual written *as notes*, in Unix section
-  layout, under a `Manpage` schema. It documents three things this fork no longer has: the
+- `docs/manual-pages.md` — the inherited design for a manual written *as notes*, in Unix section
+  layout, under a `Manpage` schema. It documents three things this project no longer has: the
   picoschema linter (stripped, O-picoschema), the `manpage.md` seed schema in the Claude Code
   plugin package (stripped with the rest of the harness surface), and `bm man`. Its remaining
   roadmap item was the `bm man <topic>` reader that this decision cancels. Nothing links to it
@@ -8193,16 +8186,16 @@ the T17 lesson demands be checked separately from the content grep.
 `import claude conversations` / `import chatgpt` / `import memory-json` as "strip candidates" since
 2026-07-27, and nothing revisited that line for four weeks — a candidacy nobody ever closed is a
 permanent maybe, which costs a subsystem's worth of surface for no decision. `bm mine` already
-covers the one case this fork actually has: reading Claude Code transcripts. The four import
+covers the one case this project actually has: reading Claude Code transcripts. The four import
 commands read *export archives* from Claude.ai, ChatGPT, and an MCP `memory.json`, none of which
-this fork ingests. Nothing in `src/` imported them except their own wiring.
+this project ingests. Nothing in `src/` imported them except their own wiring.
 
 **`project_zip_import.py` went with the package.** The brief asked for a judgment on it, because a
 path argument to `bm project add` means an import *source* and could plausibly have called it. It
 does not: `git grep` for `build_project_zip_import_plan|ProjectZipImportPlan|ProjectZipEntry|
 ProjectZipImportError` outside `importers/` and `tests/importers/` returned nothing. Its own
 docstring names the caller it was written for — *"the hosted import worker receives a single
-archive from shared storage"* — which is cloud code this local-only fork never runs. Keeping it
+archive from shared storage"* — which is cloud code this local-only tree never runs. Keeping it
 would have been keeping a subsystem for a caller that does not exist here. That also retires U8's
 **Seen and not fixed** note, which recorded that this module filtered with `DEFAULT_IGNORE_PATTERNS`
 directly instead of through `load_gitignore_patterns` and so bypassed the indexing choke point: the
@@ -8422,12 +8415,52 @@ The `add_project` callers in `tests/api/v2/test_project_router.py`,
 `test-int/mcp/test_project_management_integration.py` now create governed projects, and none of
 them writes a note afterwards.
 
+### U50 — the tree still announced its provenance in 46 files — **DECIDED 2026-08-22, DONE 2026-08-22**
+
+**User decision, 2026-08-22 (`finding-hpvfuxjg`): the project keeps the name `basic-memory` under
+`noahkiss/basic-memory` and detaches completely.** Nothing in the tree may say it was ever derived
+from another project — no fork notice, no provenance SHA, no links to the other org, no upstream
+names in docs, `pyproject.toml`, README badges, or code comments. The `upstream` git remote was
+removed in the same pass.
+
+**Why it was a gap, not just tidying.** The provenance was load-bearing in the *instructions*: the
+first two sections of `AGENTS.md` told every agent to weigh its work against another codebase, and
+`GAPS.md`'s own opening sentence defined the file as a list of complaints about that codebase. An
+agent reading either one inherited a comparison it can no longer make.
+
+**Swept:** 46 files, 116 mentions. `AGENTS.md` lost its FORK NOTICE, its provenance SHA paragraph,
+and its "We do not track upstream" heading — the four rules under that heading survive verbatim in
+substance under *We reshape the tree*, because each one is still true with the comparison removed.
+`README.md` keeps the PyPI warning as a fact about a same-named package, not a fact about a
+parent. `docs/IDENTITY.md` was kept, not deleted: it is a live permalink contract with four inbound
+links and only three provenance sentences. Nineteen source files cited the gitignored design-doc
+directory by its old name, which itself named the relationship; it is now `.design/`.
+
+**Three deliberate survivors.** Two are in this file: one `forked` under **W4**'s type-set
+decision describes *a user's* forked repo as an example workload, not this repo, and one `fork`
+in the *Verbs phase — build log* means a **process** fork (`git status`). The third is in `src/basic_memory/web/queries.py`,
+where `upstream` means *earlier in the pipeline*. Every other mention in this file was a word
+swap that stays true — "the inherited code", "the legacy default", "the starting-point baseline"
+— so no closed entry lost its finding.
+
+**The AGPL constraint, unresolved and left to the user.** `LICENSE` is the stock AGPL-3.0 text and
+carries **no** third-party copyright notice — the only `Copyright (C)` lines in it are the Free
+Software Foundation's own notice on the license document and the `<year> <name of author>` template
+in the "How to Apply" appendix. So this pass had nothing to preserve and deleted nothing. That is
+**not** the same as the AGPL's §5(a)-(b) notice requirement being satisfied: a derived work must
+carry appropriate legal notices, and this tree currently states no author copyright at all. Adding
+one is the user's call, not an agent's.
+
+**T13's verbatim grep block was condensed**, because it printed the other org's path six times. The
+finding, the six sites, and the file:line of each are stated in prose instead.
+
+
 ## Docs swept
 
 **2026-07-26.** A ten-reader sweep reconciled the following into this file. The gaps they contained
 are now recorded here, and **the next sweep does not need to redo them:**
 
-- The ten design docs now under `.forked/` (they lived at `~/develop/.design/status-system-*.md`
+- The ten design docs now under `.design/` (they lived at a workspace-level `.design/` directory
   when the sweep ran) — `prior-art`, `beans-deepdive`, `bm-spike`, `decisions`, `local-history`,
   `handoff`, `migration-handoff`, `inventory`, `plan`, `schema-draft`, and `transcript`.
 - The old top-level session log.
@@ -8441,7 +8474,7 @@ the record schema or the work plan were deliberately left where they are — tho
 ## Where this connects
 
 **Build order (agreed 2026-08-10, from the reconciliation pass; replaces the deleted
-`.forked/campaign.md`):** T11 → W20 → W3 → W4 + picoschema strip + W19 → W5 → W8 → W9 → W1.
+`.design/campaign.md`):** T11 → W20 → W3 → W4 + picoschema strip + W19 → W5 → W8 → W9 → W1.
 W19 items 2–4 are a binding acceptance condition on W4, not a follow-up — W4 is not done
 without them.
 
@@ -8460,8 +8493,8 @@ Every BLOCKER is closed. There is no agreed order for what remains; the next pha
 | | |
 |---|---|
 | Phase ordering | the build order above |
-| Record schema (types, fields, supersession) | `.forked/schema.md` (local, gitignored) |
-| Settled/reversed decisions with turn cites | `.forked/decisions.md` (local, gitignored) |
+| Record schema (types, fields, supersession) | `.design/schema.md` (local, gitignored) |
+| Settled/reversed decisions with turn cites | `.design/decisions.md` (local, gitignored) |
 | Session-to-session state | `STATUS.local.md` (local, gitignored) |
-| Fork point, remotes, license, measured baseline | `AGENTS.md` in this repo |
+| Remotes, license, measured baseline | `AGENTS.md` in this repo |
 | Defects found by using the verbs, not by building them | the `USAGE` section above (`U*`) |

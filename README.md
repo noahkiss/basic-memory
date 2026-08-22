@@ -47,8 +47,8 @@ it to track `main`:
 uv tool install git+https://github.com/noahkiss/basic-memory@v0.1.0
 ```
 
-This fork is not published to any package index. `uv tool install basic-memory`
-installs the *upstream* project of the same name, not this one.
+This project is not published to any package index. `uv tool install basic-memory`
+installs a *different* project of the same name from PyPI, not this one.
 
 [**Configure your client ↓**](#connect-your-ai-client)
 
@@ -193,7 +193,7 @@ count is the corpus's rather than the cap's: forty matches head the list
 `Matches for "x" (40, showing 5)` and close it with `40 results, showing 5`. A
 search that matches nothing says `0 results`.
 
-Wire it into your agent by hand; this fork ships no plugin package. For Claude
+Wire it into your agent by hand; this project ships no plugin package. For Claude
 Code, add it as a `SessionStart` hook in `~/.claude/settings.json`.
 
 Every command that reads a project ends by naming what needs attention — records
@@ -557,6 +557,4 @@ declared in [pyproject.toml](pyproject.toml). `just test-benchmark`,
 
 [AGPL-3.0](LICENSE).
 
-A hard fork of [Basic Machines' basic-memory](https://github.com/basicmachines-co/basic-memory),
-maintained at [noahkiss/basic-memory](https://github.com/noahkiss/basic-memory). It does not
-track upstream.
+Maintained at [noahkiss/basic-memory](https://github.com/noahkiss/basic-memory).

@@ -1,6 +1,6 @@
 # Note Identity: the Permalink Contract
 
-A note's **permalink** is its identity in this fork. Edges bind to it, `memory://` addresses it,
+A note's **permalink** is its identity. Edges bind to it, `memory://` addresses it,
 and `bm doctor` checks it. Normalization decides what a permalink *is*, so the normalization rules
 below are the identity contract, not a formatting detail.
 
@@ -193,8 +193,8 @@ checksum, so a rewritten file never presents as modified and no later index pass
 ### 5.4 Ungoverned move: the permalink follows the path
 
 With no `vocabulary.yml`, the checker returns no violations, so the planner rewrites the permalink
-to match the new path — subject to the config flags below. This is upstream's behavior and it is
-what makes a permalink drift silently, which is the whole reason §5 exists.
+to match the new path — subject to the config flags below. That rewrite is what makes a permalink
+drift silently, which is the whole reason §5 exists.
 
 ### 5.5 The config flags that gate all of it
 
@@ -269,8 +269,9 @@ Both are checkable without re-reading the files. Neither is repaired automatical
 - **Write ids hyphenated, lowercase, ASCII.** They then survive §2 and §6.2 unchanged, whether they
   are explicit or derived.
 - **Do not hand-edit `permalink:` after a note is indexed.** That is exactly the `drift` case.
-- **Do not expect a permalink to track a rename.** It does not, by design here (§5.3), and it does
-  not upstream either in practice (§2.5).
+- **Do not expect a permalink to track a rename.** Under a vocabulary it does not, by design
+  (§5.3), and without one it is still no plain mirror of the path — it carries the project
+  prefix (§2.5).
 - **Do not treat a permalink as ASCII, or as free of periods, or as a single flat token.** It may
   contain CJK characters, `.`, and `/`.
 

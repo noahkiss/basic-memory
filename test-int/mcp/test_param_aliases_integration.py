@@ -5,8 +5,6 @@ Verifies that MCP tools accept training-data-friendly parameter aliases
 (via Pydantic AliasChoices) alongside the canonical names, so models
 that reach for `offset`/`limit`/`find`/`old_text` etc. don't hit
 validation errors on first use.
-
-See: https://github.com/basicmachines-co/basic-memory/issues/690
 """
 
 import pytest

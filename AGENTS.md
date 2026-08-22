@@ -1,12 +1,9 @@
-# FORK NOTICE — read this first
+# Read this first
 
-This repo is a **hard fork** of [`basicmachines-co/basic-memory`](https://github.com/basicmachines-co/basic-memory),
-maintained at [`noahkiss/basic-memory`](https://github.com/noahkiss/basic-memory). It is not a GitHub
-fork and it is not upstream-track. Nothing here goes back upstream, so upstream's contribution
-standards — DCO sign-off, semantic PR scopes, the CLA — do not apply. **The repo is public**, so
-don't commit local paths or personal material; design docs live in `.forked/` (gitignored).
+This repo is [`noahkiss/basic-memory`](https://github.com/noahkiss/basic-memory). **It is public**,
+so don't commit local paths or personal material; design docs live in `.design/` (gitignored).
 
-## → `GAPS.md` is this fork's to-do list. Write to it as you work.
+## → `GAPS.md` is this project's to-do list. Write to it as you work.
 
 **[`GAPS.md`](./GAPS.md)** holds every known defect, trap, and missing capability we intend to fix
 here, with reproductions. Read it before planning work in this repo.
@@ -18,30 +15,23 @@ return visits do not happen.
 The working order is **fix the gaps that block the next thing, then build** — not build now and
 clean up after.
 
-## We do not track upstream
+## We reshape the tree
 
-The point of this fork is to **strip and reshape** the tree into exactly what `bm` needs. We do
-not merge, rebase, or cherry-pick from upstream, and we do not keep this tree mergeable with it.
-There is no compat tax to pay.
+The point of this project is to **strip and reshape** the tree into exactly what `bm` needs. There
+is no external version of this code to stay mergeable with, and no compat tax to pay.
 
-- **Fix our own bugs in whatever shape suits this fork.** Never weigh a fix by how hard it would be
-  to reconcile with upstream later — there is no later.
-- **Upstream behavior is not a design constraint — do what is right, not what matches.** This is a
-  divergent tool, not a patched copy. When a subsystem behaves in a way that is wrong for `bm`
-  (frontmatter invisible to search, no staleness query, deferred writes on a local-only tree),
-  the default answer is *change the subsystem*, not *design the feature around it*. "Adapt around
-  upstream's shape" is only ever correct when the workaround is better on its own merits — and
-  then the record should say so. (Rule earned 2026-07-31: O3 was first closed as "adapt", and the
-  user reversed it into W18.)
-- **Divergence is the goal, not a cost.** A test that only guards an upstream-shaped decision we
-  have deliberately reversed can be rewritten.
+- **Fix our own bugs in whatever shape suits this codebase.** Never weigh a fix by how hard it
+  would be to reconcile with any other version of it later — there is no later.
+- **Inherited behaviour is not a design constraint — do what is right, not what matches.** When a
+  subsystem behaves in a way that is wrong for `bm` (frontmatter invisible to search, no staleness
+  query, deferred writes on a local-only tree), the default answer is *change the subsystem*, not
+  *design the feature around it*. "Adapt around the shape it already has" is only ever correct when
+  the workaround is better on its own merits — and then the record should say so. (Rule earned
+  2026-07-31: O3 was first closed as "adapt", and the user reversed it into W18.)
+- **Reversing an inherited decision is the goal, not a cost.** A test that only guards a decision
+  we have deliberately reversed can be rewritten.
 - **Don't spend tokens on code we will never run.** Reading, testing, or "keeping consistent" a
-  subsystem this fork doesn't use is wasted work. Deleting it is usually the better answer.
-
-Forked from upstream `main` @ `232f2c2fc4e91564d88bcc312ed3d8bd1e8e051b` (2026-07-26). That SHA
-records provenance only — it is not a merge base and nothing needs to update it. The `upstream`
-remote is fetch-only (push URL `DISABLED`) for as-needed lookups: `git log 232f2c2..upstream/main`
-to see if they already diagnosed something, `git show <sha> -- src/basic_memory` to lift one fix.
+  subsystem this project doesn't use is wasted work. Deleting it is usually the better answer.
 
 **`basic-memory --version` reports the installed build** — purely from `importlib.metadata`, since
 there is no `__version__` literal to fall out of date (GAPS T3). A tagged install prints the plain
@@ -49,7 +39,7 @@ tag (`0.1.0`); a build between tags prints `0.1.0.dev165+117308fb`, and that `+<
 last `uv sync`/install, not the working tree's HEAD, so re-sync after pulling before trusting it. A
 source tree with nothing installed prints `0.0.0 (source tree; not installed)`.
 
-## What this fork is for
+## What this project is for
 
 Building a local work-tracking system directly into this codebase as first-class `bm`
 subcommands, **not** as a separate wrapper tool.
@@ -68,8 +58,8 @@ entry that records how, and the constraints below still bind anything that chang
    **Shipped:** `store/history.py` and `store/write_hook.py`, with `bm history` and `bm undo` over
    them (GAPS W3, verbs items C and H).
 3. **A closed record vocabulary.** Humans extend the vocabulary; agents may only select from it.
-   Upstream's frontmatter vocabulary is fully open and does not enforce this, so enforcement is ours
-   and has to live in the write path. **Shipped:** `vocabulary/`, enforced on the accepted write
+   Frontmatter on its own is fully open and enforces nothing, so enforcement is ours and has to
+   live in the write path. **Shipped:** `vocabulary/`, enforced on the accepted write
    path and reported by `bm doctor` and the per-command notice (GAPS W4, W5).
 4. **A decision-mining subcommand** over Claude Code transcripts, to recover decisions that were made
    in conversation and never written down. **Shipped:** `bm mine`, which parses and never judges —
@@ -112,7 +102,7 @@ second checking command would immediately be the one nobody runs.
 ## Measured baseline
 
 Linux/x86-64, Python 3.13. Measured 2026-07-31 on this tree, after the T18 fast path landed —
-the original fork-point table's numbers were unreproducible and one of them was wrong by an order
+the table that stood before it carried numbers that were unreproducible, one wrong by an order
 of magnitude (see `GAPS.md` T18). Re-measure if the tree moves substantially. The direct-path row
 was re-measured 2026-08-10 after B4's head-stamp skip took alembic off the warm read path.
 
@@ -129,7 +119,7 @@ SQLAlchemy + pydantic, the real cost of a DB-backed command — alembic left the
 Figures are **user CPU time**, not wall clock — CPU time and RSS hold steady under host load while
 wall clock varies 2x. Treat them as a lower bound on wall time.
 
-The rows the fork-point table carried for the MCP server, `bm tool search-notes`, and a full
+The rows that older table carried for the MCP server, `bm tool search-notes`, and a full
 reindex have been **retired rather than restated**. They were tied to a specific 67-file / 888 KB
 corpus that no longer exists, so nothing here could reproduce them, and leaving unreproducible
 numbers standing is what produced T18.
@@ -162,8 +152,8 @@ imports inside function bodies — `cli/main.py` imports every command module on
 (GAPS U41).
 
 Embedding model `qdrant/bge-small-en-v1.5-onnx-q` (64 MB) caches to the shared
-`$XDG_CACHE_HOME/fastembed` in this fork, not inside `BASIC_MEMORY_CONFIG_DIR` as upstream had it —
-it's an immutable artifact keyed by model name and doesn't belong inside that isolation boundary.
+`$XDG_CACHE_HOME/fastembed`, not inside `BASIC_MEMORY_CONFIG_DIR` — it's an immutable artifact
+keyed by model name and doesn't belong inside that isolation boundary.
 See `default_fastembed_cache_dir()` in `src/basic_memory/config_models.py`.
 
 ## How we work here
@@ -186,7 +176,7 @@ repo rather than in a local scratch file that gets pruned.
 status is `tail`'s — so it reports 0 on a red suite. Use `tee`.
 
 **Never ship on top of a known-red suite.** An inherited red suite blinds every pass after it. That
-cost this fork four passes and one wrong diagnosis (see `GAPS.md` T17).
+cost us four passes and one wrong diagnosis (see `GAPS.md` T17).
 
 **One commit per closed item**, not one at the end. The message states what changed, why, and any
 judgment call taken. No Claude co-author line, no generated-with footer.
@@ -233,8 +223,7 @@ judgment call taken. No Claude co-author line, no generated-with footer.
 
 ### Publishing
 
-The repo is public. No local paths, no personal material, nothing from `.forked/` committed. A bare
-`gh repo view` in this directory reports **upstream** — always name the fork explicitly.
+The repo is public. No local paths, no personal material, nothing from `.design/` committed.
 
 ### The stop-list — the only things that still require asking
 
@@ -245,11 +234,11 @@ Everything else in this file is a rule to follow. These four are decisions to br
 - Anything touching the user's machine outside this repo and the bm data dir.
 - A change in what the product *is* — new verbs, dropped verbs, a different store design.
 
-Moved here 2026-08-07 from `.forked/campaign.md`, which was deleted; it was the only home for this.
+Moved here 2026-08-07 from `.design/campaign.md`, which was deleted; it was the only home for this.
 
 ---
 
-*Everything below is upstream's project guide, trimmed to what this fork actually runs. Where it
+*Everything below is the project guide, trimmed to what the tree actually runs. Where it
 describes the codebase it is accurate.*
 
 # AGENTS.md - Basic Memory Project Guide
@@ -292,8 +281,8 @@ index. `just gate` is the pre-push check (lint + typecheck + unit tests); `just 
 tags, pushes, and runs `gh release create` against `noahkiss/basic-memory` explicitly; `just
 release-preview vX.Y.Z` shows what it would do. Install is the Homebrew tap
 (`brew install noahkiss/tap/basic-memory`), with `uv tool install git+…@vX.Y.Z` as the fallback on a
-machine without the tap. Fork versioning starts at `v0.1.0` (2026-08-17); upstream's `v0.x` tags
-were deleted here. See `.forked/release-design.md` for why there is still no PyPI, npm, or CI.
+machine without the tap. Versioning starts at `v0.1.0` (2026-08-17). See
+`.design/release-design.md` for why there is still no PyPI, npm, or CI.
 
 ### Test Structure
 
@@ -431,11 +420,11 @@ Flow: MCP Tool → Typed Client → HTTP API → Router → Service → Reposito
   takes ~35 minutes, so this catches a regression at the next run, not at the commit that caused
   it. Treat it as a backstop, not a gate: write tests for new code and leave the number no worse
   than you found it. Raise the floor as tested code lands; never lower it to make a run pass.
-  Upstream's rule here read "must stay at 100%", which was false in this tree for an unknown length
+  The rule here once read "must stay at 100%", which was false in this tree for an unknown length
   of time and enforced by nothing. Use `# pragma: no cover` only where a test would demand
   excessive mocking (TYPE_CHECKING blocks, error handlers needing failure injection,
-  runtime-mode-dependent paths). **`*/cli/**` is no longer omitted** (removed 2026-08-07): this
-  fork's verbs land in `cli/`, and omitting it would make them invisible to coverage on the day
+  runtime-mode-dependent paths). **`*/cli/**` is no longer omitted** (removed 2026-08-07): our
+  verbs land in `cli/`, and omitting it would make them invisible to coverage on the day
   they ship. See `GAPS.md` T20.
 
 ### Async Client Pattern

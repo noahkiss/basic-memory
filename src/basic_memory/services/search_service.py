@@ -340,7 +340,6 @@ class SearchService:
 
         # Trigrams disabled: They create massive search index bloat, increasing DB size significantly
         # and slowing down indexing performance. FTS5 search works well without them.
-        # See: https://github.com/basicmachines-co/basic-memory/issues/351
         # variants.update(text[i : i + 3].lower() for i in range(len(text) - 2))
 
         return variants

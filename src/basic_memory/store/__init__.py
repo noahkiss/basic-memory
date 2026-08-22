@@ -1,4 +1,4 @@
-"""The note store: a local git repository holding every note this fork writes."""
+"""The note store: a local git repository holding every note bm writes."""
 
 from basic_memory.store.history import (
     CommitResult,

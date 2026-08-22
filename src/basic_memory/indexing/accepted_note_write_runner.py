@@ -364,7 +364,7 @@ async def stamp_record_identity(
     file all carry the value the checker then judges.
 
     A value the writer stated survives untouched, an id included: these fields are
-    set-once (`.forked/schema.md` §4), and a write that names its own id is
+    set-once (`.design/schema.md` §4), and a write that names its own id is
     addressing a record rather than asking for one. Identity is one value under
     two keys (§2), so a stated permalink with no id becomes that id, and a stated
     id with no permalink becomes that permalink.

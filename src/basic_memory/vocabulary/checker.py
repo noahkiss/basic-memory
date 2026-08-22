@@ -6,7 +6,7 @@ the sync path records the violation and indexes anyway, because a file that is
 refused an index is invisible to search and to ``bm doctor`` alike.
 
 Field names, requiredness, and the set-once list are fixed by
-``.forked/schema.md`` §2 and §4. Only the type, status, area, and declared-field
+``.design/schema.md`` §2 and §4. Only the type, status, area, and declared-field
 *values* come from the project's vocabulary.
 """
 

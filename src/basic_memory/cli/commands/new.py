@@ -3,7 +3,7 @@
 The verb that creates everything else in the system, so three of its decisions
 are load-bearing and none of them may be relaxed later:
 
-- **`permalink` equals `id`, byte-for-byte** (`.forked/schema.md` §2). Edges bind
+- **`permalink` equals `id`, byte-for-byte** (`.design/schema.md` §2). Edges bind
   to the permalink, so an id that is not also the permalink makes `[[tnd-…]]`
   land as a dangling relation and the record unreachable by its own name.
 - **`review-by` is not invented here.** Absent `--review-by`,
@@ -60,7 +60,7 @@ from basic_memory.vocabulary.glossary import (
 NEW_AFFORDANCE = "bm show <id> read it back · bm ls list what is here · bm done <id> close a task"
 
 # The status every task opens at. `bm mark` is what moves it; nothing else does
-# (`.forked/schema.md` §4 — status is one of the four mutable things).
+# (`.design/schema.md` §4 — status is one of the four mutable things).
 INITIAL_TASK_STATUS = "open"
 
 # Where a date bm invented came from, when the writer stated none. `inferred` is
@@ -80,7 +80,7 @@ DEFAULT_DATE_SOURCE = "inferred"
 # is, not how it was learned, and a calendar date is precise to the day.
 DEFAULT_DATE_CONFIDENCE = "day"
 
-# The one date field each type carries, keyed by type (`.forked/schema.md` §2).
+# The one date field each type carries, keyed by type (`.design/schema.md` §2).
 # `profile.since` is deliberately absent: it is optional, and a `since` this verb
 # invented would claim a start date the writer never gave. `guide`, `state` and
 # `inbox` have no date field at all — there is physically nowhere to put one.
@@ -247,7 +247,7 @@ def date_fields(note_type: str, options: DateOptions, *, today: date) -> dict[st
         if options.date_ref is not None:
             fields["date-ref"] = options.date_ref
 
-    # After the triple, which is the order `.forked/schema.md` §3 writes it in.
+    # After the triple, which is the order `.design/schema.md` §3 writes it in.
     # Absent, the write path stamps it from the project's `review_months`
     # (GAPS W5 item 1); stated here, that stamp stands down.
     if options.review_by is not None:

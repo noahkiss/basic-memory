@@ -1360,7 +1360,7 @@ permalink: notes/disk-frontmatter
 status: draft
 review-by: 2026-08-01
 record-kind: decision
-owner: flight
+owner: someone
 tags:
 - tend
 - fork
@@ -1380,7 +1380,7 @@ DISK_FRONTMATTER_KEYS = {
     # type keeps the test honest about what a `review-by:` key actually survives as.
     "review-by": date(2026, 8, 1),
     "record-kind": "decision",
-    "owner": "flight",
+    "owner": "someone",
     "tags": ["tend", "fork"],
 }
 

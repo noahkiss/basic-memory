@@ -435,12 +435,12 @@ async def direct_doctor_report(
 
 # --- Records: what `bm ls`, `bm show` and `bm path` read ---
 #
-# Identity is verified, never inferred (GAPS T9/T10, `.forked/schema.md` §8):
+# Identity is verified, never inferred (GAPS T9/T10, `.design/schema.md` §8):
 # BM's resolver legitimately matches on title and file path, so a row that came
 # back is not by itself the row that was asked for.
 
 # The relation that carries supersession. One direction only: the successor owns
-# the edge and the predecessor is never touched (`.forked/schema.md` §5).
+# the edge and the predecessor is never touched (`.design/schema.md` §5).
 SUPERSEDES = SUPERSEDES_RELATION
 
 # What a record with no value in a column prints. A blank would make the columns
@@ -796,7 +796,7 @@ def _supersessions(entity: "Entity") -> tuple[Supersession, ...]:
     Derived from the incoming edge, never stored on this record: a
     `superseded-by:` field would be a second copy of an edge the successor
     already owns, and the two drift the moment one is written without the other
-    (`.forked/schema.md` §5).
+    (`.design/schema.md` §5).
     """
     successors = [
         Supersession(

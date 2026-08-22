@@ -13,7 +13,7 @@ Three decisions are load-bearing:
 - **Scope follows GAPS W5-C** (`--project` > nearest `.bm.yml` > every project).
   An unscoped `bm ls` is a roll-up and says which project each row came from,
   because a list that mixes projects without naming them is not actionable.
-- **Identity is verified, never inferred** (GAPS T9/T10, `.forked/schema.md` §8).
+- **Identity is verified, never inferred** (GAPS T9/T10, `.design/schema.md` §8).
   After resolving an id, the permalink that came back must equal the id asked
   for. A title that happens to match is not-found. Enforced in `direct_record`.
 - **`bm path` prints the path and nothing else** (VERBS_PLAN D9). It exists for

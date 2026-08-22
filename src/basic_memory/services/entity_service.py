@@ -168,7 +168,7 @@ class EntityService(BaseService[EntityModel]):
         """Return the project's vocabulary, or ``None`` when it is not governed.
 
         Cached for the life of the service instance. Editing a vocabulary is
-        "a deliberate human act" (.forked/schema.md §3), and GAPS W5 already owes
+        "a deliberate human act" (.design/schema.md §3), and GAPS W5 already owes
         a revalidation trigger for when the file changes — so re-reading the file
         on every write would buy nothing that trigger will not buy properly.
 

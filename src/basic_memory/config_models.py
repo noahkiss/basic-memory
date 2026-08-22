@@ -495,7 +495,7 @@ class BasicMemoryConfig(BaseSettings):
     @model_validator(mode="before")
     @classmethod
     def drop_retired_keys(cls, data: Any) -> Any:
-        """Drop keys older releases wrote for surfaces this fork has retired.
+        """Drop keys older releases wrote for surfaces this project has retired.
 
         Nothing reads them now and leaving them in would resurrect a concept
         that no longer exists. The registry keys (``projects``,

@@ -172,7 +172,7 @@ omit = [
     "*/watch_service.py",           # File system watching - complex integration testing
     "*/services/initialization.py", # Startup orchestration + background tasks (watchers); exercised indirectly in entrypoints
     # `*/cli/**` was omitted here until 2026-08-07, on the premise that "the CLI is an interactive
-    # wrapper; core logic is covered via API/MCP/service tests". This fork reverses that premise:
+    # wrapper; core logic is covered via API/MCP/service tests". We reverse that premise:
     # every verb in AGENTS.md's flat list lands in cli/, cli/direct.py is the supported route to the
     # service layer, and W5's notice machinery is CLI-side. Omitting it would make the verbs
     # invisible to coverage on the day they ship. See GAPS T20.

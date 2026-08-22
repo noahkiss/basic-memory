@@ -183,10 +183,10 @@ After optimizations:
 
 ## Background
 
-The sync/indexing path these benchmarks measure was shaped by upstream
-[basicmachines-co#351: Performance: Optimize sync/indexing for cloud deployments](https://github.com/basicmachines-co/basic-memory/issues/351),
-which records the reasoning behind that optimization. Cited for history only —
-this fork does not track upstream's issue tracker.
+The sync/indexing path these benchmarks measure was shaped by an earlier round of
+work optimizing sync and indexing for cloud deployments. Trigram variants stayed
+disabled from that round: they bloat the search index and slow indexing, and FTS5
+searches well without them.
 
 ## Test File Generation
 

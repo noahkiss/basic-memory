@@ -1,12 +1,12 @@
 ---
 name: code-review
-description: Use when reviewing Basic Machines code for house style, architecture risk, pre-merge hardening, or whether a change fits basic-memory/basic-memory-cloud conventions.
+description: Use when reviewing this repo's code for house style, architecture risk, pre-merge hardening, or whether a change fits basic-memory conventions.
 license: MIT
 ---
 
-# Basic Machines Review
+# Basic Memory Review
 
-Use this skill for repo-local review passes where ordinary code review needs Basic Machines
+Use this skill for repo-local review passes where ordinary code review needs this repo's
 house style and architecture judgment. Report findings only; do not edit code unless the user
 asks you to fix specific findings.
 
@@ -18,9 +18,8 @@ Review the current diff or named files against:
 - `docs/ENGINEERING_STYLE.md`
 - The touched code paths and tests
 
-Apply only the guidance for the active repo. In `basic-memory`, prioritize local-first
-file/database/MCP boundaries. In `basic-memory-cloud`, prioritize tenant/workspace isolation,
-cloud worker behavior, and web-v2 state/runtime boundaries.
+Prioritize the local-first file/database/MCP boundaries: this tree runs on one machine and
+has no hosted tier.
 
 ## Review Rubric
 
@@ -55,7 +54,7 @@ Lead with findings ordered by severity. Each finding should include:
 
 | Severity | Use for |
 | -------- | ------- |
-| `high` | A likely correctness, security, data-loss, or tenant/workspace isolation failure |
+| `high` | A likely correctness, security, or data-loss failure |
 | `medium` | A concrete maintainability or boundary risk that can cause future defects |
 | `low` | A minor consistency issue, ambiguous guidance, or review-only cleanup |
 

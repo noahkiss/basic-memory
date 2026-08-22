@@ -1,4 +1,4 @@
-"""Condensed accepted-note persistence flow based on Basic Memory issue #1097."""
+"""Condensed accepted-note persistence flow, reduced from a real report."""
 
 from dataclasses import dataclass
 from typing import Protocol

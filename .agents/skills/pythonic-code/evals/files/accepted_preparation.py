@@ -1,4 +1,4 @@
-"""Condensed accepted-note preparation composition based on Basic Memory issue #1098."""
+"""Condensed accepted-note preparation composition, reduced from a real report."""
 
 from dataclasses import dataclass
 from typing import Protocol

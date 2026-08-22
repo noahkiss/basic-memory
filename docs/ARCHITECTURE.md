@@ -122,7 +122,7 @@ src/basic_memory/deps/
 ### Usage in Routers
 
 Projects are addressed by external UUID in the URL path; there is one provider
-per service (the name-based v1 and integer-id `_v2` tiers were removed, #1109):
+per service (the name-based v1 and integer-id `_v2` tiers were removed):
 
 ```python
 from basic_memory.deps import EntityServiceV2ExternalDep, ProjectConfigV2ExternalDep
@@ -409,7 +409,7 @@ async def my_tool():
 When refactoring, a re-export shim may bridge a move for downstream callers — but
 shims are traps for readers once callers migrate, so they must be deleted promptly
 (the 2026-07 post-seam cleanup removed `deps.py`, `basic_memory.cloud`, and
-`create_client()`, #1107). A shim ships with its removal plan:
+`create_client()`). A shim ships with its removal plan:
 
 ```python
 """

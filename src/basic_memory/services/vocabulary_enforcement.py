@@ -4,7 +4,7 @@ Every note write passes through this module and nothing else validates
 frontmatter. A write path that skips the funnel is a bug, not a policy choice:
 hooking only the paths someone remembered is how the predecessor tool ended up
 rejecting a type in its CLI while its API wrote the same type to disk
-(``.forked/decisions.md`` R5).
+(``.design/decisions.md`` R5).
 
 **Where the funnel lives, and why it moved.** W4 put it on ``EntityService``,
 which was the agent write path when the sentence was written. It is not now:

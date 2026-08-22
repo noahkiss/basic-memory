@@ -40,7 +40,7 @@ def type_choice(name: str) -> str:
 
 # The relation that carries supersession, and the only direction it is stored in:
 # the successor owns the edge and the predecessor is never touched
-# (`.forked/schema.md` §5/§12). Here for the same reason the ladders below are —
+# (`.design/schema.md` §5/§12). Here for the same reason the ladders below are —
 # it is schema vocabulary, not a project's, and four modules were spelling it out
 # separately before GAPS U3 needed a fifth.
 SUPERSEDES_RELATION = "supersedes"
@@ -78,7 +78,7 @@ def status_meaning(name: str) -> str | None:
     return STATUS_MEANINGS.get(name)
 
 
-# --- The date-provenance ladders (`.forked/schema.md` §2) ---
+# --- The date-provenance ladders (`.design/schema.md` §2) ---
 #
 # Fixed by the schema, not by a project's `vocabulary.yml`: a project declares
 # which *types*, statuses, areas and extra fields it allows, and these two are
@@ -156,7 +156,7 @@ def _fields(required: str, optional: str = "") -> TypeFields:
     return TypeFields(required=tuple(required.split()), optional=tuple(optional.split()))
 
 
-# From `.forked/schema.md` §2 (the common fields) and §3 (the per-type ones).
+# From `.design/schema.md` §2 (the common fields) and §3 (the per-type ones).
 #
 # `type` itself is deliberately absent from every row: `bm types` prints these
 # under a heading that is the type name, so listing it again teaches nothing.

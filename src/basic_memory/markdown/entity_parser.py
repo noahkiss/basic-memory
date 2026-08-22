@@ -287,7 +287,6 @@ class EntityParser:
         # We use frontmatter.parse() instead of frontmatter.loads() because
         # loads() does Post(content, handler, **metadata), which crashes when
         # the YAML contains reserved keys like 'content' or 'handler'.
-        # See basic-memory-cloud#375.
         try:
             fm_metadata, fm_content = frontmatter.parse(content)
             post = frontmatter.Post(fm_content)
@@ -307,7 +306,7 @@ class EntityParser:
         # Ensure required string fields are always strings.
         # YAML can parse these as lists when authors use block sequence syntax
         # (e.g. "title:\n  - My Title"), causing 'list' has no attribute 'strip'
-        # downstream.  See basic-memory-cloud#376.
+        # downstream.
         title = metadata.get("title")
         if title is not None:
             title = _coerce_to_string(title)

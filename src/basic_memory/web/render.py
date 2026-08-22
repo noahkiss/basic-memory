@@ -137,7 +137,7 @@ def _as_link(match: re.Match[str]) -> str:
 def render_body(markdown_text: str) -> str:
     """Render a record's markdown body to HTML, wikilinks resolved.
 
-    CommonMark rather than the GFM preset: the fork's own bodies are plain
+    CommonMark rather than the GFM preset: our own record bodies are plain
     markdown, and every extension is more surface for a note to surprise a
     reader with. `html: False` is the security decision above.
     """

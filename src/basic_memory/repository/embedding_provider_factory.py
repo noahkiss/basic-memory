@@ -197,7 +197,7 @@ def create_embedding_provider(app_config: BasicMemoryConfig) -> EmbeddingProvide
         if model_name == "bge-small-en-v1.5":
             model_name = "text-embedding-3-small"
         # Trigger: semantic_embedding_api_base is set.
-        # Why: the OpenAI SDK's base_url is this fork's plug-and-play path for any
+        # Why: the OpenAI SDK's base_url is our plug-and-play path for any
         # OpenAI-compatible embedding server (Ollama, LM Studio, vLLM, OpenRouter).
         # Outcome: pointing at a local server needs no code, only these two keys -
         # and api_key still falls back to OPENAI_API_KEY when left unset.

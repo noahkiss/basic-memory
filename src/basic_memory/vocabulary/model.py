@@ -433,7 +433,7 @@ def parse_vocabulary(raw: Mapping[str, Any], *, source: Path | str) -> Vocabular
     Every key is optional and falls back to ``DEFAULT_VOCABULARY``, but a key that
     is present must be well-formed. An unknown top-level key is an error: the file
     is small and hand-edited, and a typo'd key that silently does nothing is the
-    failure mode ``.forked/decisions.md`` R5 records for beans.
+    failure mode ``.design/decisions.md`` R5 records for beans.
     """
     if not isinstance(raw, Mapping):
         _fail(source, f"expected a mapping at the top level, got {type(raw).__name__}")
@@ -464,7 +464,7 @@ def parse_vocabulary(raw: Mapping[str, Any], *, source: Path | str) -> Vocabular
 
 
 def vocabulary_document(vocabulary: Vocabulary) -> dict[str, object]:
-    """The YAML mapping one vocabulary serializes to (`.forked/schema.md` §3).
+    """The YAML mapping one vocabulary serializes to (`.design/schema.md` §3).
 
     Only ``enum`` fields carry ``values``; the parser rejects the key on the
     other two kinds, so emitting an empty list would produce a file this tree
@@ -566,7 +566,7 @@ def write_default_vocabulary(external_id: str) -> Path | None:
     projects get one at creation: all of them, unless `--ungoverned` says no.
 
     Returns None when the file is already there. A vocabulary is hand-edited
-    (`.forked/schema.md` §3), so overwriting an existing one would discard a
+    (`.design/schema.md` §3), so overwriting an existing one would discard a
     human's declarations — and re-adding a project by name must not cost them.
     """
     path = vocabulary_path(external_id)

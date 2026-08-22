@@ -1,6 +1,6 @@
 """Tests for the frontmatter checker (GAPS W4).
 
-The six per-type records below are copied from ``.forked/schema.md`` §3 and are
+The six per-type records below are copied from ``.design/schema.md`` §3 and are
 the positive control: they prove the checker can return zero violations, so a
 "no violations" result elsewhere means something.
 """

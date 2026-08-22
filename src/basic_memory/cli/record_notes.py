@@ -6,7 +6,7 @@ none of them exist anywhere else in the tree:
 - **A note whose file path is chosen, not derived.** `EntitySchema.file_path` is
   computed from `directory` + `safe_title` (`schemas/base.py`), which cannot
   produce `<type-dir>/<id>--<slug>.md`. `RecordNote` states the path instead, so
-  a record lands where `.forked/schema.md` §8 says it lands and keeps that path
+  a record lands where `.design/schema.md` §8 says it lands and keeps that path
   when its title later changes.
 - **Frontmatter written as text, not as a metadata dict.** The `permalink` a
   record declares is honoured byte-for-byte only when it arrives inside the
@@ -53,7 +53,7 @@ if TYPE_CHECKING:  # pragma: no cover
 
     from basic_memory.models import Project
 
-# The heading a record's relations live under (`.forked/schema.md` §5/§12).
+# The heading a record's relations live under (`.design/schema.md` §5/§12).
 RELATIONS_HEADING = "## Relations"
 
 # One outgoing edge: the relation type, and the id of the record it points at.
@@ -87,7 +87,7 @@ class RecordNote(EntitySchema):
 
     Two rules need this and neither can be met by the base schema:
 
-    - a new record lands at `<type-dir>/<id>--<slug>.md` (`.forked/schema.md` §8),
+    - a new record lands at `<type-dir>/<id>--<slug>.md` (`.design/schema.md` §8),
       which no title-derived path can produce;
     - an edited record keeps the path it was created at, because the file name
       carries an id that other files link by, while the title is mutable on

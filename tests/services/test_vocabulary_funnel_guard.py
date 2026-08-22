@@ -4,7 +4,7 @@ The W4 decision is that *every* note write passes through one checker call, and
 that a new write path which skips it is a bug rather than a policy choice.
 Hooking only the paths someone remembered is how the predecessor tool ended up
 rejecting a type in its CLI while its API wrote the same type to disk
-(``.forked/decisions.md`` R5).
+(``.design/decisions.md`` R5).
 
 **Why this file moved off ``EntityService``.** The W4 guard proved every mutator
 on that class reached the funnel, and every one of them did — but no caller

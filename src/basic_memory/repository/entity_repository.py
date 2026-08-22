@@ -1048,7 +1048,7 @@ async def list_records(
 # by construction, and an unscoped notice rolls up every project the caller can
 # see. Widening the constructor to ``project_id: int | None`` would leave every
 # other query on the class silently unscoped, which is the failure mode this
-# fork's style rules call out. Each one is a single indexed COUNT — the notice
+# project's style rules call out. Each one is a single indexed COUNT — the notice
 # runs on every project-touching command and cannot afford to fetch rows.
 
 

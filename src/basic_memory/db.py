@@ -367,7 +367,7 @@ async def _stamped_at_single_head(session_maker: async_sessionmaker[AsyncSession
 async def _assert_no_newer_stamp(session_maker: async_sessionmaker[AsyncSession]) -> None:
     """Raise NewerSchemaError if the DB is stamped with a revision this tree has never seen.
 
-    In this fork "upgrade" is `git pull` + reinstall, so rollback is a normal
+    Here "upgrade" is `git pull` + reinstall, so rollback is a normal
     operation (GAPS.md T11) — an older build over a newer DB must die with an
     actionable message, not alembic's stack trace. Every doubtful case
     (unparseable files, no stamp table) returns silently: the real migration

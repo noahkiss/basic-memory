@@ -195,7 +195,7 @@ def indexed_relations(project: SeededProject, record_id: str) -> list[tuple[str,
     The target is read off the resolved entity's permalink rather than the
     relation's `to_name` column, which resolution rewrites to the target's
     **title** (`indexing/relation_resolution.py`). `permalink == id` byte-for-byte
-    (`.forked/schema.md` §2), so the permalink is the id.
+    (`.design/schema.md` §2), so the permalink is the id.
 
     Duplicated from `test_new_command.py` for the reason the `$EDITOR` fixtures
     above are: it belongs to the two modules that assert about edges, not to

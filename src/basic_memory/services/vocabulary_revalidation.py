@@ -2,7 +2,7 @@
 
 Violations are persisted state, written when a record is indexed or moved. That
 makes them stale in exactly one situation: the rules changed and the records did
-not. Editing ``vocabulary.yml`` is "a deliberate human act" (`.forked/schema.md`
+not. Editing ``vocabulary.yml`` is "a deliberate human act" (`.design/schema.md`
 §3) — adding a type legalises every record that used it, and removing one makes
 every record that used it wrong — and no record's own mtime moves, so nothing on
 the index path would ever look again.

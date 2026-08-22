@@ -24,7 +24,7 @@ def migrate_legacy_sync_fields(
     return data
 
 
-# Keys that older releases wrote into config.json for surfaces this fork has
+# Keys that older releases wrote into config.json for surfaces this project has
 # retired: cloud/routing, and the multi-backend database settings left over from
 # when Postgres was selectable. They are dropped rather than translated: nothing
 # reads them now, and leaving them in would fail validation or resurrect a

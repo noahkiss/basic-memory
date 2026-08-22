@@ -130,9 +130,9 @@ async def ensure_project_registry(app_config: BasicMemoryConfig, *, bootstrap: b
 
     Trigger: ``bootstrap=False``, which every native ``bm`` verb passes (GAPS U15).
     Why: the fresh-install branch homes a project at ``~/basic-memory``, outside
-        the store, and this fork's projects are store-derived (AGENTS.md, D3). A
-        read verb silently creating a project there is upstream's "first run makes
-        you a project" behaviour surviving under a contract that forbids it.
+        the store, and our projects are store-derived (AGENTS.md, D3). A read verb
+        silently creating a project there is "first run makes you a project"
+        behaviour surviving under a contract that forbids it.
     Outcome: the legacy import still runs — importing projects a user already
         declared is not invention — and the fresh-install branch is skipped, so
         the registry stays empty. Reads then report an empty corpus and writes

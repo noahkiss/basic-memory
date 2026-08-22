@@ -1,10 +1,10 @@
-"""Regression tests for https://github.com/basicmachines-co/basic-memory/issues/909.
+"""Regression tests for colliding observation permalinks.
 
 Observation content is truncated to 200 chars when building the synthetic
 permalink, so distinct observations sharing a category and a 200-char
 content prefix used to collide and the second one was
-silently dropped from the search index, making it unfindable. #931 fixed this
-by appending a content digest to the truncated permalink.
+silently dropped from the search index, making it unfindable. The fix appends
+a content digest to the truncated permalink.
 
 These tests pin the end-to-end behavior independent of the disambiguation
 mechanism: every observation stays searchable, and deleting the note removes

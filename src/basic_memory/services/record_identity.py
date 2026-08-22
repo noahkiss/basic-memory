@@ -21,7 +21,7 @@ from basic_memory.vocabulary.ids import MAX_ID_ATTEMPTS, IdAllocationError, new_
 # True when this project already holds a note under that permalink. Async
 # because every caller answers it with a query. The permalink column is what is
 # asked: `permalink == id` byte-for-byte is the record schema's identity rule
-# (`.forked/schema.md` §2), so a taken permalink is a taken id.
+# (`.design/schema.md` §2), so a taken permalink is a taken id.
 type PermalinkTakenCheck = Callable[[str], Awaitable[bool]]
 
 

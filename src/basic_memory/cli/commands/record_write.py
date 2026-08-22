@@ -5,7 +5,7 @@ scope, the identity-verified lookup, the local write stack, and the shape of
 what they print. What differs is one rule each, and each rule is a decision:
 
 - **`bm edit` changes *content* on every record type but `finding`** — `task`,
-  `plan`, `guide`, `profile`, `state`, `inbox` (`.forked/schema.md` §4,
+  `plan`, `guide`, `profile`, `state`, `inbox` (`.design/schema.md` §4,
   VERBS_PLAN D12, widened by GAPS U44). A task takes an edit in every status,
   `open` through `done`: an uneditable task goes stale and then gets quoted as
   fact, and the old repair — `bm done` plus a fresh `bm new` — split one item's
@@ -19,7 +19,7 @@ what they print. What differs is one rule each, and each rule is a decision:
   not a claim the record makes, and the pair worth linking is usually spotted
   after both records are written.
 - **`--set name=value` writes a declared field, and only on a `profile`**
-  (`.forked/schema.md` §4 item 4, GAPS V-J1). A profile is the one type that
+  (`.design/schema.md` §4 item 4, GAPS V-J1). A profile is the one type that
   accretes facts, and its project's declared fields are where they land. Every
   set-once field is refused by name, so the flag cannot become a way back into
   the fields `bm new` owns.
@@ -92,7 +92,7 @@ EDITABLE_TYPES: tuple[str, ...] = ("task", *KEPT_CURRENT_TYPES)
 # supersession cannot express — the finding itself is wrong, not superseded.
 EVIDENCE_TYPE = "finding"
 
-# The one type whose declared fields are mutable (`.forked/schema.md` §1 table and
+# The one type whose declared fields are mutable (`.design/schema.md` §1 table and
 # §4 item 4). A profile accretes facts about a subject; on every other type the
 # frontmatter is what `bm new` wrote and nothing else (GAPS V-J1).
 FIELD_BEARING_TYPE = "profile"
@@ -461,7 +461,7 @@ async def edit_record(
         # The file keeps the path it was created at, even when the title moves.
         # The name carries the id that other records link by; the slug beside it
         # is a human label, and renaming the file to chase a title would be a
-        # move, with a permalink rewrite behind it (`.forked/schema.md` §8).
+        # move, with a permalink rewrite behind it (`.design/schema.md` §8).
         data=RecordNote(
             title=title if title is not None else record.title,
             note_type=record.note_type,

@@ -1,7 +1,7 @@
 """No `bm` command may invent a project at ``~/basic-memory`` (GAPS U15, U16).
 
-Upstream's first-run bootstrap creates a project rooted at ``$HOME/basic-memory``
-whenever the registry is empty. In this fork a project's path is store-derived
+The legacy first-run bootstrap creates a project rooted at ``$HOME/basic-memory``
+whenever the registry is empty. A project's path is store-derived
 (AGENTS.md, D3), so that path is outside the history repo: a record written there
 is committed nowhere and the only sign is one notice. A *read* verb creating it
 is worse — nothing was asked for and a directory appeared. U15 covered the native

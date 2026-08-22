@@ -4,7 +4,7 @@ description: >-
   Write, refactor, and review Python for clarity, explicit behavior, local reasoning, strong
   types, and minimal abstraction. Use when creating or changing nontrivial Python, simplifying
   object-heavy or helper-heavy code, evaluating whether code is Pythonic, or reviewing Python
-  maintainability in Basic Memory repositories.
+  maintainability in this repo.
 ---
 
 # Pythonic Code

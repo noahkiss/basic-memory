@@ -1597,7 +1597,7 @@ async def test_local_project_index_move_records_permalink_violation_on_governed_
 ) -> None:
     """A hand-move records the set-once permalink violation and keeps the permalink.
 
-    Recording alone would be a half fix: the permalink is this fork's identity
+    Recording alone would be a half fix: the permalink is a record's identity
     and every edge binds to it (GAPS T9), so the rewrite is skipped too.
     """
     govern_project(test_project)
