@@ -16,7 +16,7 @@ from basic_memory.cli.scope import ReadScope
 # constant rather than reaching the registry, and `cli/commands/mcp.py` already
 # puts this module on every invocation's import path (GAPS.md T30).
 from basic_memory.project_registry import PROJECT_HOME_EXTERNAL
-from basic_memory.schemas.project_info import ProjectItem, ProjectList
+from basic_memory.schemas.project_info import ProjectAdoptResponse, ProjectItem, ProjectList
 from basic_memory.utils import generate_permalink
 
 # Create a project subcommand
@@ -538,6 +538,126 @@ def add_project(
     if result.default and not set_default and not quiet:
         typer.echo(f"'{name}' is now the default project.")
         typer.echo("Change it with: bm project default <name>")
+
+
+@project_app.command("adopt")
+def adopt_project(
+    name: Optional[str] = typer.Argument(
+        None, help="Project to adopt. Defaults to the name the existing .bm.yml carries."
+    ),
+    quiet: bool = typer.Option(False, "--quiet", help="Hide the notices."),
+) -> None:
+    """Register notes another VCS delivered here (new verb approved: finding-trs78vh2).
+
+    Arrival on a new machine: yadm has carried a skill's `.bm/` here, records and
+    vocabulary together, but this machine's registry knows nothing about it. Adopt
+    registers it by name — names are the cross-machine key, ids are per machine —
+    writes the marker, and indexes what arrived. Running it again changes nothing,
+    and it refuses when `.bm/` is not here.
+    """
+    from basic_memory.project_marker import (
+        MARKER_FILENAME,
+        MarkerError,
+        marker_conflict,
+        read_marker_project,
+        write_marker,
+    )
+
+    # Decision point: the directory is checked before the name.
+    # Why: it answers whether this machine is the place at all, and creating an
+    #     empty `.bm` would collide with the `yadm checkout` that has not run yet.
+    # Outcome: one refusal covering both "absent" and "not a directory".
+    #
+    # Never resolved: under yadm's link mode `.bm` is a symlink to a class
+    # alternate, and the registry records the literal name (see `--home-here`).
+    notes = Path.cwd() / ".bm"
+    if not notes.is_dir():
+        raise fail(
+            f"Error: {notes} is not a directory — nothing has delivered this project's "
+            "notes here (wrong machine class, or not checked out yet)"
+        )
+
+    if name is None:
+        # Only this directory's own marker, never one walked up to — the same
+        # reasoning `mark` gives: a parent's marker would adopt its project into
+        # a subdirectory nobody named.
+        marker_here = Path.cwd() / MARKER_FILENAME
+        try:
+            name = read_marker_project(marker_here) if marker_here.is_file() else None
+        except MarkerError as error:
+            raise fail(f"Error: {error}")
+        if name is None:
+            raise fail("Error: no .bm.yml here to name the project — bm project adopt <name>")
+    project_name = name
+
+    # Checked before the adopt, as `add --here` checks it before the create: a
+    # foreign marker must fail with the registry untouched.
+    try:
+        conflict = marker_conflict(Path.cwd(), project_name)
+    except MarkerError as error:
+        raise fail(str(error))
+    if conflict:
+        raise fail(
+            f"Error: this directory's .bm.yml already names project '{conflict}'; "
+            f"remove it first to adopt it as '{project_name}'"
+        )
+
+    # Deferred: the MCP client graph costs ~0.04 s of import beyond what the CLI
+    # already pays, and only the client-routed project subcommands need it.
+    # `cli/main.py` imports this module for every invocation, so a module-level
+    # import would put that cost on `project list` and every native verb
+    # (GAPS.md T30).
+    from basic_memory.mcp.async_client import get_client
+    from basic_memory.mcp.clients import ProjectClient
+    from basic_memory.schemas.project_index import ProjectIndexRunResponse
+
+    async def _adopt() -> tuple[ProjectAdoptResponse, ProjectIndexRunResponse]:
+        async with get_client() as client:
+            project_client = ProjectClient(client)
+            adopted = await project_client.adopt_project(
+                {"name": project_name, "path": notes.as_posix()}
+            )
+            # Foreground, unlike the API's default: the records yadm delivered
+            # have to be searchable by the time this command returns, and the
+            # count is half of what it reports.
+            run = await project_client.index(adopted.external_id, run_in_background=False)
+            return adopted, ProjectIndexRunResponse.model_validate(run)
+
+    # Both calls share one loop, and a failure in either leaves the command
+    # incomplete rather than half-undone: adopt is idempotent, so running it
+    # again registers nothing twice and finishes whatever step did not.
+    try:
+        adoption, indexed = run_with_cleanup(_adopt())
+    except typer.Exit:
+        raise
+    except Exception as e:
+        raise fail(f"Error adopting project: {e}")
+
+    # The marker is written from the response, after the adopt: `external_id` is
+    # this machine's, so it is only knowable once the registry has a row. Scope
+    # stays unqualified — the tree, so a `bm` run from `references/` still means
+    # the skill — and never widens one a human narrowed (GAPS U40).
+    try:
+        write_marker(Path.cwd(), adoption.name, adoption.external_id)
+    except MarkerError as error:
+        raise fail(f"Error: {error}")
+    except OSError as error:
+        raise fail(f"Error: could not write the marker: {error}")
+
+    outcome = {
+        "registered": f"registered '{adoption.name}' at {adoption.path}",
+        "adopted": f"adopted '{adoption.name}' in place at {adoption.path}",
+        "repointed": f"repointed '{adoption.name}' to {adoption.path}",
+        "unchanged": f"'{adoption.name}' was already adopted at {adoption.path}",
+    }[adoption.action]
+    typer.echo(f"{outcome}; indexed {indexed.enqueued_files} of {indexed.total_files} files")
+
+    # Arrival is when the delivered records were first read on this machine, so
+    # this is the moment an agent learns what the other machine left outstanding
+    # (GAPS W5-B). The name is pinned by the adopt itself.
+    emit_notices(
+        ReadScope(project=adoption.name, origin="flag"), quiet=quiet, command="project adopt"
+    )
 
 
 @project_app.command("remove")

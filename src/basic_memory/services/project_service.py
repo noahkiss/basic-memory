@@ -26,6 +26,7 @@ from basic_memory.schemas import (
     ProjectStatistics,
     SystemStatus,
 )
+from basic_memory.schemas.project_info import ProjectAdoptResponse
 from basic_memory.config import (
     WATCH_STATUS_JSON,
     ConfigManager,
@@ -33,6 +34,7 @@ from basic_memory.config import (
     ProjectConfig,
 )
 from basic_memory.store.history import store_path
+from basic_memory.store.write_hook import project_store_prefix
 from basic_memory.utils import generate_permalink
 from basic_memory.vocabulary.model import write_default_vocabulary
 
@@ -188,6 +190,19 @@ class ProjectService:
 
         # If project_root is set, constrain all projects to that directory
         project_root = self.config_manager.config.project_root
+
+        # Trigger: a declared external home under BASIC_MEMORY_PROJECT_ROOT.
+        # Why: project_root ignores the caller's path entirely and derives the
+        #     directory from the project name (below), so the row would point at
+        #     `<root>/<name>` while the notes stayed in the directory the caller
+        #     declared — registered, indexed nowhere, silently wrong.
+        # Outcome: refuse. The two settings answer the same question differently.
+        if home == PROJECT_HOME_EXTERNAL and project_root:
+            raise ValueError(
+                f"BASIC_MEMORY_PROJECT_ROOT is set to {project_root}, which puts every "
+                f"project under it. A project homed '{PROJECT_HOME_EXTERNAL}' lives in the "
+                "directory it names instead, so the two cannot both hold."
+            )
         sanitized_name = None
         # Set only for a store-derived project: the store path embeds the id, so
         # the row cannot be allowed to generate its own default afterwards.
@@ -360,6 +375,108 @@ class ProjectService:
             write_default_vocabulary(new_external_id)
 
         logger.info(f"Project '{name}' added at {resolved_path}")
+
+    async def adopt_project(self, name: str, path: str) -> ProjectAdoptResponse:
+        """Point this machine's registry at notes another VCS already delivered.
+
+        Arrival: yadm has carried a skill's ``.bm/`` to a new machine, records and
+        ``vocabulary.yml`` together, and nothing here knows about it. Resolution is
+        **by name**, because names are the cross-machine key and ``external_id`` is
+        minted per machine (design, "Registry shape").
+
+        Idempotent, and never destructive: adopt writes the registry only. It moves
+        no file, so any outcome that would strand notes is refused instead.
+
+        Args:
+            name: The project's registered name.
+            path: The directory the notes were delivered to, absolute and
+                **unresolved** — under yadm's link mode it is a per-machine symlink.
+
+        Returns:
+            What happened, as one of four actions.
+
+        Raises:
+            ValueError: If the named project is homed in the store, or is a legacy
+                off-store project whose directory is not this one.
+        """
+        # `os.path.abspath` normalizes without following symlinks, which is the
+        # same normalization `add_project` applies before it stores a path — so
+        # the comparisons below are against the spelling the registry holds.
+        notes_path = Path(os.path.abspath(os.path.expanduser(path))).as_posix()
+
+        existing = await self.get_project(name)
+
+        if existing is None:
+            # One code path for "register an external home": the directory goes to
+            # `add_project` exactly as `bm project add --home-here` sends it.
+            #
+            # Ungoverned on purpose. Governance travels with the notes — the
+            # delivered `vocabulary.yml` sits beside them — so writing a default
+            # one here would invent a governance the human never declared, and
+            # dirty a directory another VCS owns. When none arrived, the project
+            # is ungoverned and `bm doctor` says so; adopt does not paper over it.
+            await self.add_project(name, notes_path, governed=False, home=PROJECT_HOME_EXTERNAL)
+            registered = await self.get_project(name)
+            if registered is None:  # pragma: no cover
+                raise ValueError(f"Project '{name}' was not registered")
+            return ProjectAdoptResponse(
+                action="registered",
+                name=registered.name,
+                external_id=registered.external_id,
+                path=registered.path,
+            )
+
+        if existing.is_externally_homed:
+            # Already adopted. The id and the row stay as they are — a second
+            # adopt must never mint a second one — and only a moved directory
+            # (a skill renamed, a different home on this machine) changes the path.
+            if existing.path == notes_path:
+                return ProjectAdoptResponse(
+                    action="unchanged",
+                    name=existing.name,
+                    external_id=existing.external_id,
+                    path=existing.path,
+                )
+            async with db.scoped_session(self.session_maker) as session:
+                await self.repository.update_fields(session, existing.id, {"path": notes_path})
+            logger.info(f"Repointed project '{existing.name}' to {notes_path}")
+            return ProjectAdoptResponse(
+                action="repointed",
+                name=existing.name,
+                external_id=existing.external_id,
+                path=notes_path,
+            )
+
+        # Trigger: the named project's notes are under the store.
+        # Why: adopt rewrites the path and moves nothing, so it would leave every
+        #     note in `store/<id>/` unreachable — and the store is where the
+        #     history that could recover them lives.
+        # Outcome: refuse and state the conflict. No verb re-homes those notes.
+        if project_store_prefix(existing.path) is not None:
+            raise ValueError(
+                f"Project '{name}' is homed in the store at '{existing.path}'. Adopting it "
+                f"here would point it at '{notes_path}' and leave those notes unreachable."
+            )
+
+        # A legacy off-store project: notes outside the store, no declared home.
+        # Adopt is its retrofit path (design, stage 5) — but only where its notes
+        # already are, because the alternative is the same silent orphaning.
+        if existing.path != notes_path:
+            raise ValueError(
+                f"Project '{name}' keeps its notes at '{existing.path}', not at "
+                f"'{notes_path}'. Adopt records where the notes already are; it moves none."
+            )
+        async with db.scoped_session(self.session_maker) as session:
+            await self.repository.update_fields(
+                session, existing.id, {"home": PROJECT_HOME_EXTERNAL}
+            )
+        logger.info(f"Project '{existing.name}' now declares home '{PROJECT_HOME_EXTERNAL}'")
+        return ProjectAdoptResponse(
+            action="adopted",
+            name=existing.name,
+            external_id=existing.external_id,
+            path=existing.path,
+        )
 
     async def remove_project(self, name: str, delete_notes: bool = False) -> None:
         """Remove a project from the registry.

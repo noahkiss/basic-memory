@@ -11,7 +11,11 @@ from httpx import AsyncClient
 # level executes the whole tools package (fastmcp + mcp SDK) during CLI startup,
 # so each method defers the import to call time instead (#886).
 from basic_memory.schemas import ProjectIndexStatusResponse, ProjectInfoResponse
-from basic_memory.schemas.project_info import ProjectList, ProjectStatusResponse
+from basic_memory.schemas.project_info import (
+    ProjectAdoptResponse,
+    ProjectList,
+    ProjectStatusResponse,
+)
 from basic_memory.schemas.v2 import ProjectResolveResponse
 
 
@@ -77,6 +81,27 @@ class ProjectClient:
             json=project_data,
         )
         return ProjectStatusResponse.model_validate(response.json())
+
+    async def adopt_project(self, adopt_data: dict[str, Any]) -> ProjectAdoptResponse:
+        """Adopt a project whose notes another VCS delivered to this machine.
+
+        Args:
+            adopt_data: The project name and the directory its notes live in
+
+        Returns:
+            ProjectAdoptResponse saying what adopt did to the registry
+
+        Raises:
+            ToolError: If the request fails
+        """
+        from basic_memory.mcp.tools.utils import call_post
+
+        response = await call_post(
+            self.http_client,
+            "/v2/projects/adopt",
+            json=adopt_data,
+        )
+        return ProjectAdoptResponse.model_validate(response.json())
 
     async def delete_project(
         self, project_external_id: str, delete_notes: bool = False

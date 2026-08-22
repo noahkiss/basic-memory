@@ -175,6 +175,7 @@ def test_the_verbs_the_notice_covers_are_the_ones_w5_named() -> None:
         ("project.py", "list_projects"),
         ("project.py", "ls_project_command"),
         ("project.py", "display_project_info"),
+        ("project.py", "adopt_project"),
         ("project.py", "vocab_sync"),
         ("record_write.py", "edit"),
         ("record_write.py", "mark"),

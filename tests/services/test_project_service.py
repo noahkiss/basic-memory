@@ -1157,3 +1157,242 @@ async def test_add_project_ignores_an_enclosed_external_home(
 
         with pytest.raises(ValueError, match="is nested within this path"):
             await project_service.add_project(f"test-catchall-refused-{suffix}", str(other))
+
+
+# --- `bm project adopt`: arrival on a machine yadm delivered the notes to ---
+
+
+@pytest.mark.asyncio
+async def test_adopt_project_registers_delivered_notes(project_service: ProjectService):
+    """Arrival: the directory is here, the registry knows nothing, adopt registers it."""
+    from basic_memory.project_registry import PROJECT_HOME_EXTERNAL
+
+    name = f"test-adopt-new-{os.urandom(4).hex()}"
+    with tempfile.TemporaryDirectory() as temp_dir:
+        notes = Path(temp_dir) / "skill" / ".bm"
+        notes.mkdir(parents=True)
+
+        adoption = await project_service.adopt_project(name, str(notes))
+
+        assert adoption.action == "registered"
+        assert adoption.name == name
+        assert Path(adoption.path) == notes
+
+        project = await _get_project(project_service, name)
+        assert project is not None
+        assert project.external_id == adoption.external_id
+        assert project.home == PROJECT_HOME_EXTERNAL
+        assert Path(project.path) == notes
+
+
+@pytest.mark.asyncio
+async def test_adopt_project_leaves_governance_to_what_arrived(project_service: ProjectService):
+    """Adopt writes no vocabulary: governance travels with the notes, or it did not.
+
+    Writing a default one here would invent a governance the human never
+    declared, and dirty a directory another VCS owns. `bm doctor` is what
+    reports an external project that arrived without one.
+    """
+    suffix = os.urandom(4).hex()
+    with tempfile.TemporaryDirectory() as temp_dir:
+        delivered = Path(temp_dir) / "governed" / ".bm"
+        delivered.mkdir(parents=True)
+        (delivered / "vocabulary.yml").write_text("types:\n  - decision\n", encoding="utf-8")
+        bare = Path(temp_dir) / "ungoverned" / ".bm"
+        bare.mkdir(parents=True)
+
+        await project_service.adopt_project(f"test-adopt-governed-{suffix}", str(delivered))
+        await project_service.adopt_project(f"test-adopt-bare-{suffix}", str(bare))
+
+        # The delivered file is untouched, byte for byte.
+        assert (delivered / "vocabulary.yml").read_text(encoding="utf-8") == (
+            "types:\n  - decision\n"
+        )
+        # And none was invented where none arrived.
+        assert not (bare / "vocabulary.yml").exists()
+
+
+@pytest.mark.asyncio
+async def test_adopt_project_run_twice_changes_nothing(project_service: ProjectService):
+    """The second run mints no id and adds no row — adopt is arrival, not creation."""
+    name = f"test-adopt-twice-{os.urandom(4).hex()}"
+    with tempfile.TemporaryDirectory() as temp_dir:
+        notes = Path(temp_dir) / "skill" / ".bm"
+        notes.mkdir(parents=True)
+
+        first = await project_service.adopt_project(name, str(notes))
+        second = await project_service.adopt_project(name, str(notes))
+
+        assert second.action == "unchanged"
+        assert second.external_id == first.external_id
+        assert second.path == first.path
+
+        rows = [row for row in await _find_projects(project_service) if row.name == name]
+        assert len(rows) == 1
+
+
+@pytest.mark.asyncio
+async def test_adopt_project_repoints_a_moved_external_home(project_service: ProjectService):
+    """The skill moved on this machine: the path follows, the id does not change."""
+    from basic_memory.project_registry import PROJECT_HOME_EXTERNAL
+
+    name = f"test-adopt-moved-{os.urandom(4).hex()}"
+    with tempfile.TemporaryDirectory() as temp_dir:
+        first_home = Path(temp_dir) / "skills" / "example" / ".bm"
+        first_home.mkdir(parents=True)
+        second_home = Path(temp_dir) / "skills" / "renamed" / ".bm"
+        second_home.mkdir(parents=True)
+
+        first = await project_service.adopt_project(name, str(first_home))
+        moved = await project_service.adopt_project(name, str(second_home))
+
+        assert moved.action == "repointed"
+        assert moved.external_id == first.external_id
+        assert Path(moved.path) == second_home
+
+        project = await _get_project(project_service, name)
+        assert project is not None
+        assert Path(project.path) == second_home
+        assert project.home == PROJECT_HOME_EXTERNAL
+
+
+@pytest.mark.asyncio
+async def test_adopt_project_refuses_a_store_homed_project(project_service: ProjectService):
+    """Adopting one would point it away from `store/<id>/` and strand every note."""
+    name = f"test-adopt-store-{os.urandom(4).hex()}"
+    await project_service.add_project(name)
+    registered = await _get_project(project_service, name)
+    assert registered is not None
+    store_home = registered.path
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        notes = Path(temp_dir) / "skill" / ".bm"
+        notes.mkdir(parents=True)
+
+        with pytest.raises(ValueError, match="is homed in the store"):
+            await project_service.adopt_project(name, str(notes))
+
+    # The refusal changed nothing: same path, same undeclared home.
+    project = await _get_project(project_service, name)
+    assert project is not None
+    assert project.path == store_home
+    assert project.home is None
+
+
+@pytest.mark.asyncio
+async def test_adopt_project_retrofits_a_legacy_off_store_project(project_service: ProjectService):
+    """Adopt is the retrofit path: run it where a legacy project already lives."""
+    from basic_memory.project_registry import PROJECT_HOME_EXTERNAL
+
+    name = f"test-adopt-legacy-{os.urandom(4).hex()}"
+    with tempfile.TemporaryDirectory() as temp_dir:
+        notes = Path(temp_dir) / "notes"
+        notes.mkdir(parents=True)
+        await project_service.add_project(name, str(notes))
+        before = await _get_project(project_service, name)
+        assert before is not None
+        assert before.home is None
+
+        adoption = await project_service.adopt_project(name, str(notes))
+
+        assert adoption.action == "adopted"
+        assert adoption.external_id == before.external_id
+        assert Path(adoption.path) == notes
+
+        project = await _get_project(project_service, name)
+        assert project is not None
+        assert project.home == PROJECT_HOME_EXTERNAL
+        assert Path(project.path) == notes
+
+
+@pytest.mark.asyncio
+async def test_adopt_project_refuses_a_legacy_project_at_another_path(
+    project_service: ProjectService,
+):
+    """Positive control for the retrofit above: only its own directory adopts it.
+
+    Adopt moves no file, so repointing a legacy project at a directory that is
+    not the one its notes are in would strand them exactly as `move` would.
+    """
+    name = f"test-adopt-elsewhere-{os.urandom(4).hex()}"
+    with tempfile.TemporaryDirectory() as temp_dir:
+        notes = Path(temp_dir) / "notes"
+        notes.mkdir(parents=True)
+        somewhere_else = Path(temp_dir) / "skill" / ".bm"
+        somewhere_else.mkdir(parents=True)
+        await project_service.add_project(name, str(notes))
+
+        with pytest.raises(ValueError, match="keeps its notes at"):
+            await project_service.adopt_project(name, str(somewhere_else))
+
+        project = await _get_project(project_service, name)
+        assert project is not None
+        assert Path(project.path) == notes
+        assert project.home is None
+
+
+@pytest.mark.asyncio
+async def test_adopt_project_mints_a_different_id_on_each_machine(
+    project_service: ProjectService, file_service, app_config
+):
+    """Ids are machine-local; the name is the cross-machine key.
+
+    Asserted so no later feature assumes `store/<id>/` names the same directory
+    on two machines — the design calls this out as the cost of adopting by name.
+    """
+    from basic_memory.models import Base
+    from basic_memory.repository.project_repository import ProjectRepository
+
+    name = f"test-adopt-two-machines-{os.urandom(4).hex()}"
+    with tempfile.TemporaryDirectory() as temp_dir:
+        notes = Path(temp_dir) / "skill" / ".bm"
+        notes.mkdir(parents=True)
+
+        this_machine = await project_service.adopt_project(name, str(notes))
+
+        # A second registry, standing in for the next machine yadm delivers to.
+        async with db.engine_session_factory(
+            db_path=app_config.database_path, db_type=db.DatabaseType.MEMORY
+        ) as (engine, other_session_maker):
+            async with engine.begin() as connection:
+                await connection.run_sync(Base.metadata.create_all)
+            other_machine = ProjectService(
+                repository=ProjectRepository(),
+                file_service=file_service,
+                session_maker=other_session_maker,
+            )
+            next_machine = await other_machine.adopt_project(name, str(notes))
+
+    assert this_machine.name == next_machine.name
+    assert this_machine.path == next_machine.path
+    assert this_machine.external_id != next_machine.external_id
+
+
+@pytest.mark.asyncio
+async def test_add_project_refuses_an_external_home_under_project_root(
+    project_service: ProjectService, config_manager: ConfigManager, monkeypatch
+):
+    """The two settings answer the same question differently, so both cannot hold.
+
+    `project_root` derives every project's directory from its name and ignores
+    the path it was given, which would register the project at `<root>/<name>`
+    while its notes stayed in the directory it declared — indexed nowhere.
+    """
+    from basic_memory.project_registry import PROJECT_HOME_EXTERNAL
+
+    name = f"test-external-under-root-{os.urandom(4).hex()}"
+    with tempfile.TemporaryDirectory() as temp_dir:
+        notes = Path(temp_dir) / "skill" / ".bm"
+        monkeypatch.setenv("BASIC_MEMORY_PROJECT_ROOT", str(Path(temp_dir) / "root"))
+
+        # Invalidate the config cache so the new env var is what the service reads.
+        from basic_memory import config as config_module
+
+        config_module._CONFIG_CACHE = None
+        config_module._CONFIG_MTIME = None
+        config_module._CONFIG_SIZE = None
+
+        with pytest.raises(ValueError, match="BASIC_MEMORY_PROJECT_ROOT"):
+            await project_service.add_project(name, str(notes), home=PROJECT_HOME_EXTERNAL)
+
+    assert await _get_project(project_service, name) is None

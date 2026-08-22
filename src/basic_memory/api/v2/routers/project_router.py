@@ -32,6 +32,8 @@ from basic_memory.schemas import ProjectIndexStatusResponse
 from basic_memory.models import Project
 from basic_memory.repository.project_repository import ProjectRepository
 from basic_memory.schemas.project_info import (
+    ProjectAdoptRequest,
+    ProjectAdoptResponse,
     ProjectItem,
     ProjectList,
     ProjectInfoRequest,
@@ -181,6 +183,33 @@ async def add_project(
             ),
         )
     except ValueError as e:  # pragma: no cover
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/adopt", response_model=ProjectAdoptResponse)
+async def adopt_project(
+    adopt_data: ProjectAdoptRequest,
+    project_service: ProjectServiceDep,
+) -> ProjectAdoptResponse:
+    """Register, or re-point, a project whose notes another VCS delivered here.
+
+    Args:
+        adopt_data: The project's name and the directory holding its notes
+
+    Returns:
+        What adopt did to the registry, and the project's id on this machine
+    """
+    # The caller's cwd is what a relative path would resolve against, and the
+    # registry has to hold a directory that means the same thing from anywhere.
+    if not os.path.isabs(adopt_data.path):
+        raise HTTPException(status_code=400, detail="Path must be absolute")
+
+    try:
+        return await project_service.adopt_project(adopt_data.name, adopt_data.path)
+    except ValueError as e:
+        # The refusals are conflicts the caller can act on — a store-homed
+        # project of that name, or notes recorded somewhere else — so they are
+        # 400s carrying their own sentence, not 500s.
         raise HTTPException(status_code=400, detail=str(e))
 
 

@@ -609,3 +609,61 @@ async def test_resolve_project_empty_identifier(client: AsyncClient, v2_projects
     response = await client.post(f"{v2_projects_url}/resolve", json=resolve_data)
 
     assert response.status_code == 422  # Validation error
+
+
+@pytest.mark.asyncio
+async def test_adopt_project_registers_a_delivered_directory(
+    client: AsyncClient, v2_projects_url, project_repository, session_maker
+):
+    """Adopt registers the project by name and records the external home."""
+    from basic_memory.project_registry import PROJECT_HOME_EXTERNAL
+    from basic_memory.schemas.project_info import ProjectAdoptResponse
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        notes = Path(tmpdir) / "skill" / ".bm"
+        notes.mkdir(parents=True)
+
+        response = await client.post(
+            f"{v2_projects_url}/adopt",
+            json={"name": "delivered-skill", "path": str(notes)},
+        )
+
+        assert response.status_code == 200, response.text
+        adoption = ProjectAdoptResponse.model_validate(response.json())
+        assert adoption.action == "registered"
+        assert Path(adoption.path) == notes
+
+        project = await _get_project_by_name(project_repository, session_maker, "delivered-skill")
+        assert project is not None
+        assert project.external_id == adoption.external_id
+        assert project.home == PROJECT_HOME_EXTERNAL
+
+
+@pytest.mark.asyncio
+async def test_adopt_project_rejects_a_relative_path(client: AsyncClient, v2_projects_url):
+    """The caller's cwd would decide what a relative path means."""
+    response = await client.post(
+        f"{v2_projects_url}/adopt",
+        json={"name": "delivered-skill", "path": "skill/.bm"},
+    )
+
+    assert response.status_code == 400
+    assert "absolute" in response.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_adopt_project_reports_a_refusal_as_a_400(
+    client: AsyncClient, test_project: Project, v2_projects_url
+):
+    """A refusal is a conflict the caller can act on, so it carries its own sentence."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        notes = Path(tmpdir) / "skill" / ".bm"
+        notes.mkdir(parents=True)
+
+        response = await client.post(
+            f"{v2_projects_url}/adopt",
+            json={"name": test_project.name, "path": str(notes)},
+        )
+
+        assert response.status_code == 400
+        assert "keeps its notes at" in response.json()["detail"]

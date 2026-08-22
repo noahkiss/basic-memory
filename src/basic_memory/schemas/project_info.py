@@ -173,6 +173,35 @@ class ProjectInfoRequest(BaseModel):
     )
 
 
+class ProjectAdoptRequest(BaseModel):
+    """Request model for adopting a project another VCS delivered to this machine."""
+
+    name: str = Field(..., description="Registered name of the project; the cross-machine key")
+    # Required, unlike `ProjectInfoRequest.path`: adopt records where notes
+    # already are, so the directory is the whole request. It arrives already
+    # absolute and deliberately **unresolved** — under yadm's link mode the
+    # delivered `.bm` is a per-machine symlink, and a resolved path would not
+    # match the literal one another machine recorded.
+    path: str = Field(..., description="Directory the notes were delivered to, absolute")
+
+
+class ProjectAdoptResponse(BaseModel):
+    """What adopting did to the registry."""
+
+    # Four outcomes, not a boolean: the caller states what happened in one line,
+    # and "already registered" has to be distinguishable from "moved".
+    action: Literal["registered", "adopted", "repointed", "unchanged"] = Field(
+        ...,
+        description=(
+            "What adopt did: registered a new project, adopted a legacy off-store one in "
+            "place, repointed an adopted one, or found nothing to change"
+        ),
+    )
+    name: str = Field(..., description="Registered spelling of the project name")
+    external_id: str = Field(..., description="Project external ID (UUID), assigned per machine")
+    path: str = Field(..., description="Directory the project's notes now live in")
+
+
 class WatchEvent(BaseModel):
     timestamp: datetime
     path: str
