@@ -14,9 +14,10 @@ Three shape decisions, each a reversal of what the surrounding tree does:
   connection, so every query in `web/queries.py` takes the request's session
   rather than opening its own — the constraint `search_pointers` already
   carries.
-- **No external assets.** One inline stylesheet, no fonts, no scripts. The
-  operator's browser may be on a machine with no route to the internet, and a
-  board that renders unstyled there is a board nobody trusts.
+- **Nothing is fetched from the internet.** One inline stylesheet, no scripts,
+  and the two typefaces served from this process's own `/static` mount. The
+  operator's browser may be on a machine with no route out, and a board that
+  renders unstyled there is a board nobody trusts.
 """
 
 from __future__ import annotations
@@ -30,6 +31,7 @@ from typing import TYPE_CHECKING
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from jinja2 import Environment, FileSystemLoader, select_autoescape
+from starlette.staticfiles import StaticFiles
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -37,6 +39,11 @@ if TYPE_CHECKING:
     from basic_memory.cli.direct import ResolvedRecord
 
 TEMPLATE_DIR = Path(__file__).parent / "templates"
+
+# The typefaces and nothing else. Vendored rather than linked so the board looks
+# the same on a machine with no route to the internet, which is the machine this
+# server was written for.
+STATIC_DIR = Path(__file__).parent / "static"
 
 # How often the board reloads itself. A board is a wall display as much as a
 # page: it is read at a glance, and a stale glance is worse than no glance. Long
@@ -131,12 +138,13 @@ def create_app() -> FastAPI:
     global would share the first caller's database with every later one.
     """
     app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
     # --- The board ---
 
     @app.get("/", response_class=HTMLResponse)
     async def board(request: Request, project: str | None = None) -> HTMLResponse:
-        from basic_memory.web.queries import build_lanes
+        from basic_memory.web.queries import build_lanes, overview
 
         async with session_for(request) as session:
             known = await project_names(session)
@@ -156,10 +164,16 @@ def create_app() -> FastAPI:
                 )
             lanes = await build_lanes(session, project)
 
+        # Trigger: no `?project=`, so this is every project on the machine.
+        # Why: a kanban per project is a page tens of thousands of pixels tall
+        #     on a real machine, and nothing on it is legible at that scale.
+        # Outcome: the unscoped board renders one summary card per project, and
+        #     the columns appear only once a project is named.
         return page(
             request,
             "board.html",
             lanes=lanes,
+            summaries=() if project else overview(lanes),
             projects=known,
             selected=project,
             refresh_seconds=REFRESH_SECONDS,

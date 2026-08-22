@@ -43,6 +43,23 @@ MAX_COLUMN_CARDS = 25
 # what kind of material is here, not to be `bm ls`.
 MAX_OTHER_TITLES = 20
 
+# The only statuses the all-projects overview names record by record, most
+# urgent first. At that scale a card listing every open task is the page this
+# view exists to replace; work in flight and work stuck are the two things a
+# reader scanning forty projects is actually looking for. Order matters twice:
+# it is the order the rows render in, and it is what decides a card's edge
+# colour in `summarize`.
+HIGHLIGHT_STATUSES: tuple[str, ...] = ("blocked", "doing")
+
+# How many records one highlighted status lists on a project card before it says
+# how many are left. Four keeps a card readable at a glance; the true total is
+# always on the bar and in the counts line.
+MAX_HIGHLIGHT_CARDS = 4
+
+# What an overview card's left edge says when neither highlighted status has a
+# record: this project is not stuck and nothing is moving in it right now.
+IDLE_EDGE = "idle"
+
 
 @dataclass(frozen=True, slots=True)
 class Card:
@@ -220,3 +237,81 @@ async def build_lanes(session: "AsyncSession", project_name: str | None) -> list
 
     projects = sorted(await projects_in_scope(session, project_name), key=lambda row: row.name)
     return [await build_lane(session, project) for project in projects]
+
+
+# --- The all-projects overview ---
+#
+# A pure fold over lanes that have already been read, not a second set of
+# queries. The overview and a lane answer the same question at two scales, and a
+# view that re-read the corpus could disagree with the board it links into.
+
+
+@dataclass(frozen=True, slots=True)
+class Segment:
+    """One status's share of the stacked bar on a project card."""
+
+    status: str
+    total: int
+
+
+@dataclass(frozen=True, slots=True)
+class Highlight:
+    """The records of one highlighted status that a project card lists inline."""
+
+    status: str
+    cards: tuple[Card, ...]
+    # Against the column's true total, not against what the card cap left —
+    # `Column.cards` is already capped at MAX_COLUMN_CARDS upstream.
+    hidden: int
+
+
+@dataclass(frozen=True, slots=True)
+class Summary:
+    """One project as the overview draws it: a bar, a few rows, and an edge."""
+
+    lane: Lane
+    segments: tuple[Segment, ...]
+    highlights: tuple[Highlight, ...]
+    # Which of HIGHLIGHT_STATUSES claims the card's left edge, or IDLE_EDGE.
+    edge: str
+
+
+def summarize(lane: Lane) -> Summary:
+    """Fold one lane into the card the overview renders for it.
+
+    A project with nothing in it still yields a Summary: an empty bar and an
+    idle edge is the fact that the project is registered and quiet, and hiding
+    it would make the overview disagree with `bm project list`.
+    """
+    by_status = {column.status: column for column in lane.columns}
+
+    highlights: list[Highlight] = []
+    for status in HIGHLIGHT_STATUSES:
+        column = by_status.get(status)
+        # A status this project's vocabulary never declared has no column, and a
+        # declared-but-empty one has nothing to list.
+        if column is None or not column.total:
+            continue
+        shown = column.cards[:MAX_HIGHLIGHT_CARDS]
+        highlights.append(Highlight(status=status, cards=shown, hidden=column.total - len(shown)))
+
+    return Summary(
+        lane=lane,
+        # Zero-width segments are dropped rather than rendered at zero: a flex
+        # child with `flex-grow: 0` still takes its border-box width, so an
+        # empty status would draw a visible tick on the bar.
+        segments=tuple(
+            Segment(status=column.status, total=column.total)
+            for column in lane.columns
+            if column.total
+        ),
+        highlights=tuple(highlights),
+        # HIGHLIGHT_STATUSES is ordered most urgent first, so the first row a
+        # card has is also the edge it earns — blocked outranks doing.
+        edge=highlights[0].status if highlights else IDLE_EDGE,
+    )
+
+
+def overview(lanes: Sequence[Lane]) -> list[Summary]:
+    """Every lane as a card, in the order `build_lanes` already put them."""
+    return [summarize(lane) for lane in lanes]

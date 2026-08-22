@@ -186,11 +186,17 @@ the other projects still report theirs.
 ## The board in a browser
 
 `bm web` serves a read-only board over every project on this machine, at
-`http://127.0.0.1:2749/`. One lane per project: its headline, one column per
-status in that project's own vocabulary order, task and plan cards (a plan is
-badged), and a collapsed list of everything else grouped by type. Click a card
-to read the record — frontmatter as a table, the body rendered, its relations
-linked. There is a search box, and the board refreshes itself every 30 seconds.
+`http://127.0.0.1:2749/`. The front page is one card per project: its headline,
+a stacked bar of its statuses, its counts, and the records that are `doing` or
+`blocked` — the only ones worth naming when forty projects are on screen at
+once.
+
+Pick a project and you get its lane: one column per status in that project's own
+vocabulary order, task and plan cards (a plan is badged), and a collapsed list of
+everything else grouped by type. Click a card to read the record — its id, type,
+status and project as a strip of chips, the body rendered, its relations linked,
+and the full frontmatter one fold below. There is a search box, and the board
+refreshes itself every 30 seconds.
 
 Nothing on it writes. Marking a card is still `bm mark <id> <status>`; the board
 picks the change up on its next refresh.

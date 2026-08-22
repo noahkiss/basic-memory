@@ -1,0 +1,48 @@
+{# Every project on the machine, one card each. Not one kanban each: the columns
+   answer "what is the shape of this project's work", and forty of those stacked
+   answers nothing at all. A card answers "is anything stuck here", which is the
+   question the unscoped board is actually asked. #}
+<h1 class="sr">Projects on this machine</h1>
+<section data-component="overview">
+  {% for summary in summaries %}
+  {% set lane = summary.lane %}
+  {% set breakdown %}{% for segment in summary.segments %}{{ segment.status }} {{ segment.total }}{% if not loop.last %} · {% endif %}{% endfor %}{% endset %}
+  <article data-component="project-card"
+           data-edge="{{ summary.edge }}"
+           data-quiet="{{ 'yes' if not lane.live else 'no' }}">
+    <h2><a href="/?project={{ lane.project | urlencode }}">{{ lane.project }}</a></h2>
+    {% if lane.headline %}
+    <p class="headline">{{ lane.headline }}</p>
+    {% else %}
+    <p class="headline" data-set="no">no headline set</p>
+    {% endif %}
+    {# The bar is decoration to a screen reader — the same numbers follow it as
+       text, so it carries `aria-hidden` rather than a role nothing implements. #}
+    <div class="bar" title="{{ breakdown or 'no lifecycle records' }}" aria-hidden="true">
+      {% for segment in summary.segments %}
+      <span data-status="{{ segment.status }}" style="flex-grow: {{ segment.total }}"></span>
+      {% endfor %}
+    </div>
+    <p class="sr">{{ breakdown or 'no lifecycle records' }}</p>
+    <p class="counts">
+      {{ lane.live }} open{% if lane.shelved %} · shelved {{ lane.shelved }}{% endif %}{% if lane.inbox %} · inbox {{ lane.inbox }}{% endif %}
+    </p>
+    {% if summary.highlights %}
+    <ul class="highlights">
+      {% for highlight in summary.highlights %}
+      {% for card in highlight.cards %}
+      <li data-status="{{ highlight.status }}">
+        <span class="status">{{ highlight.status }}</span>
+        <a href="/p/{{ lane.project | urlencode }}/r/{{ card.record_id | urlencode }}">{{ card.title }}</a>
+        <span class="id">{{ card.record_id }}</span>
+      </li>
+      {% endfor %}
+      {% if highlight.hidden %}
+      <li class="more">+{{ highlight.hidden }} more {{ highlight.status }}</li>
+      {% endif %}
+      {% endfor %}
+    </ul>
+    {% endif %}
+  </article>
+  {% endfor %}
+</section>

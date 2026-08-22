@@ -7791,6 +7791,45 @@ command module on every invocation, so a module-scope import there would be a ta
 `basic_memory.web.app` and proves the probe can see the graph when it is really there.
 
 
+### U42 — the board rendered forty-nine kanbans on one page — **FOUND + FIXED 2026-08-21**
+
+**Found** by screenshotting U41's board the day after it shipped. Unscoped `/` stacked every
+project's full kanban: 49 lanes, 61,375 px tall at 1280 px wide. The header spent ~150 px on a
+raw wrapping list of 49 project links. Every column was a fixed 17rem, so the empty `doing` and
+`blocked` columns cost as much as `open`, and `done` sat off-screen at 1280 px. System font,
+grey-on-grey, no hierarchy. It answered "what is stored where" in the sense that the data was on
+the page; nobody would scroll it.
+
+**The fix is structural, then visual.**
+
+- **`/` is an overview, not a stack of kanbans.** One card per project, alphabetical, packed in
+  CSS columns: name, headline, a 4 px stacked status bar, mono counts, and — the only records
+  named at this scale — the ones that are `doing` or `blocked`, capped at four per status with a
+  "+N more" line. A project with anything blocked gets a red left edge; one with work in flight
+  but nothing blocked, blue. A project with nothing live still renders, muted — never hidden.
+  `queries.overview()` / `summarize()` fold the lanes into that view in Python, because the
+  stuck-outranks-busy precedence is a rule and a rule in Jinja is a rule nothing can test. No new
+  database queries: the lane already carries every count.
+- **`/?project=x` is the kanban.** Empty columns collapse to a header pill so `done` stays on
+  screen; non-empty ones flex between 16 and 24 rem; the row scrolls sideways with snap on a
+  phone. The "other records" groups are a quiet footer under the columns.
+- **One compact sticky top bar**: the `bm` wordmark, a `<details>` project picker (no JS — the
+  board still runs without a script), and search.
+- **Record page**: a mono chip strip (id, type, status tinted by its colour, opened, project),
+  the body at a 68ch measure, relations, then the full frontmatter folded into a `<details>` —
+  every key still there; the board stays lossless.
+- **Typefaces vendored, not fetched.** IBM Plex Sans and JetBrains Mono (OFL, latin subsets,
+  ~100 KB total) live in `web/static/fonts/` and are served by this process at `/static`, so the
+  offline rule from U41 still holds: nothing on the page reaches the internet. Catppuccin Latte /
+  Mocha by `prefers-color-scheme`, with a separate `--x-ink` set for text because several Latte
+  accents fall under 4.5:1 on the base colour when used as text.
+
+**Tests**: `tests/web/test_app.py` rewritten to the new contract (22 → 29 `def test_`): the
+overview links every project and names only `doing`/`blocked` work (with the positive control
+that a plain `open` title *is* on the lane page), draws the status bar, ranks a blocked edge over a
+doing one, still renders a project with no live work; the record page opens with the chip strip
+and folds the frontmatter; `/static/fonts/JetBrainsMono.woff2` answers `200 font/woff2`.
+
 ## Docs swept
 
 **2026-07-26.** A ten-reader sweep reconciled the following into this file. The gaps they contained

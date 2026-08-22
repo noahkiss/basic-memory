@@ -4,7 +4,7 @@
 <article>
   <h1>Search</h1>
   {% if not query %}
-  <p>Type a query in the box above. Titles and bodies are matched across every project.</p>
+  <p class="empty">Type a query in the box above. Titles and bodies are matched across every project.</p>
   {% else %}
   {# A count line closes the listing the way it does in `bm ls` — an empty
      result is a result, stated rather than silent (contract rule 5). #}
@@ -12,7 +12,7 @@
     {% for hit in hits %}
     <li>
       <a href="/p/{{ hit.project | urlencode }}/r/{{ hit.ref | urlencode }}">{{ hit.title }}</a>
-      <span class="id">{{ hit.ref }}</span> · {{ hit.project }}
+      <span class="line"><span class="id">{{ hit.ref }}</span> · {{ hit.project }}</span>
     </li>
     {% endfor %}
   </ul>

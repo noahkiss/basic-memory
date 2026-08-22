@@ -24,11 +24,13 @@ from httpx import ASGITransport, AsyncClient
 
 ALPHA = "alpha"
 BETA = "beta"
+GAMMA = "gamma"
 
 # Fixed UUID4-shaped external ids: the store directory is named after them, and
 # the store-relative path assertion has to be able to name it.
 ALPHA_ID = "11111111-1111-4111-8111-111111111111"
 BETA_ID = "22222222-2222-4222-8222-222222222222"
+GAMMA_ID = "33333333-3333-4333-8333-333333333333"
 
 # The id both projects hold, which is what makes an unscoped lookup ambiguous.
 SHARED_ID = "tnd-both0008"
@@ -209,20 +211,36 @@ ALPHA_RECORDS = [
 BETA_RECORDS = [
     note("tnd-beta0009", "task", "Beta work", status="open"),
     note(SHARED_ID, "task", "Shared id in beta", status="open"),
+    # The corpus's only blocked record, and it is in beta rather than alpha on
+    # purpose: the overview gives a blocked project a different edge from a
+    # merely busy one, and two projects that both had blocked work could not
+    # tell those two edges apart.
+    note("tnd-blok0010", "task", "Beta is stuck", status="blocked"),
+]
+
+# A registered project holding nothing with a lifecycle. The overview draws it
+# as a quiet card, and the rule it proves is that no project is ever hidden for
+# having no live work.
+GAMMA_RECORDS = [
+    note("tnd-quie0011", "finding", "Gamma keeps notes and nothing else"),
 ]
 
 
 @pytest.fixture
 def corpus() -> None:
-    """Two projects, one shared record id, one headline, one relation."""
+    """Three projects, one shared record id, one headline, one relation.
+
+    Between them the lanes cover every edge the overview draws: alpha has work
+    in flight and nothing stuck, beta has something stuck, gamma has neither.
+    """
     import asyncio
 
     from basic_memory.services.headline import set_headline
 
     asyncio.run(
         _seed(
-            {ALPHA: ALPHA_RECORDS, BETA: BETA_RECORDS},
-            {ALPHA: ALPHA_ID, BETA: BETA_ID},
+            {ALPHA: ALPHA_RECORDS, BETA: BETA_RECORDS, GAMMA: GAMMA_RECORDS},
+            {ALPHA: ALPHA_ID, BETA: BETA_ID, GAMMA: GAMMA_ID},
             # The finding points at a task, so the finding's page shows an
             # outgoing reference and the task's page shows the incoming one.
             [("relates_to", (ALPHA, "tnd-find0005"), (ALPHA, "tnd-open0001"))],

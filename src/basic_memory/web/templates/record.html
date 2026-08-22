@@ -1,27 +1,33 @@
 {% extends "base.html" %}
 {% block title %}{{ metadata.get('title') or record.record_id }}{% endblock %}
 {% block main %}
-<article>
+<article data-component="record">
   <h1>{{ metadata.get('title') or record.record_id }}</h1>
-  <p><span class="id">{{ record.record_id }}</span> · in
-    <a href="/?project={{ record.project | urlencode }}">{{ record.project }}</a></p>
 
-  {% if metadata %}
-  <table>
-    <tbody>
-      {% for key, value in metadata.items() %}
-      <tr><th scope="row">{{ key }}</th><td>{{ value }}</td></tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% else %}
-  <p class="empty">This file carries no frontmatter.</p>
-  {% endif %}
+  {# The strip carries the four things a reader checks before reading: which
+     record this is, what kind, what state, and since when. Each chip renders
+     only when the file actually declares that key — an invented "status: open"
+     would be this page asserting something the record does not say. #}
+  <p class="meta">
+    <span class="chip id">{{ record.record_id }}</span>
+    {% if metadata.get('type') %}
+    <span class="chip"><span class="key">type</span>{{ metadata['type'] }}</span>
+    {% endif %}
+    {% if metadata.get('status') %}
+    <span class="chip" data-status="{{ metadata['status'] }}"><span class="key">status</span>{{ metadata['status'] }}</span>
+    {% endif %}
+    {% if metadata.get('opened') %}
+    <span class="chip"><span class="key">opened</span>{{ metadata['opened'] }}</span>
+    {% endif %}
+    <a class="chip" href="/?project={{ record.project | urlencode }}"><span class="key">project</span>{{ record.project }}</a>
+  </p>
 
   {# `body` is HTML this server produced from the file's markdown with raw HTML
      escaping on (see web/render.py). It is the one value on any page that is
      deliberately not re-escaped. #}
+  <div class="body">
   {{ body | safe }}
+  </div>
 
   {% if relations %}
   <h2>Relations</h2>
@@ -30,6 +36,24 @@
     <li><a href="/r/{{ relation.record_id | urlencode }}">{{ relation.text }}</a></li>
     {% endfor %}
   </ul>
+  {% endif %}
+
+  {# Folded, never trimmed. The strip above shows the keys a reader asks for by
+     name; this board is lossless, so every other key stays one click away
+     rather than being dropped for being uninteresting. #}
+  {% if metadata %}
+  <details class="frontmatter">
+    <summary>frontmatter ({{ metadata | length }} key{{ '' if metadata | length == 1 else 's' }})</summary>
+    <table>
+      <tbody>
+        {% for key, value in metadata.items() %}
+        <tr><th scope="row">{{ key }}</th><td>{{ value }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </details>
+  {% else %}
+  <p class="empty">This file carries no frontmatter.</p>
   {% endif %}
 
   <p class="path">{{ location }}</p>

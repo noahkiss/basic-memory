@@ -389,8 +389,9 @@ layers implement.
 - `/index` - Local runtime indexing adapters, watch service + `watch_coordinator.py` for lifecycle management
 - `/indexing` - Portable indexing runners and planners shared by local and hosted runtimes
 - `/runtime` - RuntimeMode resolution + runtime Protocol contracts
-- `/web` - the `bm web` board server: its own FastAPI app, Jinja2 templates, and the
-  session-taking queries behind them (GAPS U41). Nothing on the fast CLI path imports it.
+- `/web` - the `bm web` board server: its own FastAPI app, Jinja2 templates, the
+  session-taking queries behind them, and `static/fonts/` (vendored OFL woff2 so the board
+  needs no internet — GAPS U41, U42). Nothing on the fast CLI path imports it.
 
 **Composition Roots:**
 Each entrypoint (API, MCP, CLI) has a composition root that:
