@@ -275,6 +275,46 @@ def test_edit_replaces_the_body_of_each_kept_current_type(note_type: str) -> Non
     assert "Original body." not in body
 
 
+def test_edit_rewrites_a_plan_and_leaves_its_status_alone() -> None:
+    """A plan's body IS the plan, so `bm edit` rewrites the stage list (GAPS U45).
+
+    The parametrized case above covers the body on every kept-current type. This
+    one is about the plan specifically: it is the only kept-current type that
+    also carries a status, so it is the only one where a content edit could
+    plausibly be read as a lifecycle move. `--title` and `--body` together, and
+    `status` asserted after — `bm mark` and `bm done` stay the only things that
+    move it.
+    """
+    project = seed_project()
+    record_id = create(GOVERNED, "plan", "Uplevel The App", body="## Stages\n\n- draft")
+    marked = runner.invoke(app, ["mark", record_id, "doing", "-p", GOVERNED, "--quiet"])
+    assert marked.exit_code == 0, marked.output
+
+    result = runner.invoke(
+        app,
+        [
+            "edit",
+            record_id,
+            "--title",
+            "Uplevel The App, In Four Stages",
+            "-b",
+            "## Stages\n\n- stage one\n- stage two\n- stage three\n- stage four",
+            "-p",
+            GOVERNED,
+            "--quiet",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    path = written_path(project, result.stdout)
+    after = frontmatter_of(path)
+    assert after["title"] == "Uplevel The App, In Four Stages"
+    assert after["status"] == "doing"
+    body = path.read_text(encoding="utf-8")
+    assert "- stage four" in body
+    assert "- draft" not in body
+
+
 def test_edit_prints_a_store_relative_path() -> None:
     """GAPS U11: `bm edit`'s payload names the file the way `bm new`'s does.
 

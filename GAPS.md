@@ -7506,6 +7506,10 @@ payload as quiet-dropped notices — `← derived_from by finding-0fkuaraa "Corr
 cut at 60 chars, capped at `MAX_INCOMING = 5` with an honest `… and N more incoming relations`
 line for hub records. The payload stays byte-exact; only the notice block grew.
 
+**The cap is gone — see U45** (2026-08-21). It trimmed the block on the record that needs it most:
+a plan's stages arrive as incoming `part_of` edges, so a six-stage plan had its own checklist cut.
+Everything else here still stands.
+
 ### U33 — `--last` said nothing about the one case it exists for — **FOUND + FIXED 2026-08-20**
 
 **Found 2026-08-20** (user, reviewing U26): "are you saying bm undo --last still avoids undoing an
@@ -7937,6 +7941,91 @@ new message and its positive control kept — the file on disk still says what `
 `test_override_on_a_task_edits_and_reports_that_the_flag_did_nothing`.
 `test_edit_rel_with_a_title_on_a_finding_is_still_refused` needed no change: it passes no
 `--override`, so the refusal it pins is the one that survives.
+
+### U45 — a plan's body could not be edited and its checklist was cut at five — **FOUND + FIXED 2026-08-21**
+
+**Found 2026-08-21**, by the user, from using the tool on a real plan. Two reproductions, both
+recorded as inbox records on the machine that hit them, and both about the same record type — a
+plan is the type an agent reaches for exactly when the work is too big to hold in one task, which
+is also when the two limits below bite.
+
+**Reproduction 1** (`inbox-hx1pmdvv`):
+
+```
+$ bm edit plan-… --body "…## Stages…"
+Error: 'bm edit' changes the content of records that are kept current (guide, profile, state, inbox)…
+```
+
+**Reproduction 2** (`inbox-bqy8f2co`): `bm show <plan-id>` printed the plan's file, then five
+`← part_of by …` lines, then `… and 8 more incoming relations`. The eight it hid were the rest of
+the plan's own stages — the checklist the plan exists to carry — and the summary line named none of
+their ids, so the only route to them was a query the reader had to invent.
+
+**The decision on the first — the user's call, 2026-08-21.** A plan's body IS rewritable: the
+ordered stage list lives in it, and a plan whose stages cannot be restated is a plan that goes stale
+the first time the work moves. `bm edit` takes a plan's `--title` and `--body` in any status, and
+moves the status never — `bm mark` and `bm done` stay the only things that do.
+
+That decision needed no code, because the tree already had it — and the reproduction's own error
+text says how far back the build that produced it was. The message enumerates
+`(guide, profile, state, inbox)`, which is `KEPT_CURRENT_TYPES` **before U38 added `plan` to it**
+(revisions from before U38 hold the four-value tuple, every one since holds the five-value one;
+`git grep "KEPT_CURRENT_TYPES: tuple" <rev>` shows either). So the installed `bm` that refused the
+edit predated U38 entirely: the plan type has been editable since the commit that introduced it,
+where U38 recorded "`bm edit --body` rewrites it as the plan evolves". U44 then removed the
+surrounding refusal altogether — `_refuse_edit` checks `EDITABLE_TYPES = ("task",
+*KEPT_CURRENT_TYPES)`, and the phrase "records that are kept current" no longer appears in any
+message in the tree. This is the trap AGENTS.md already names under *Measured baseline* — `+<sha>`
+reflects the last `uv sync`, not the working tree — reaching a reproduction rather than a benchmark.
+
+The docs were checked for the same staleness and were clean: the `bm edit` help text, the README
+row, and `bm brief`'s toolbox doctrine all read "every type takes an edit except a finding" and
+enumerate no type list that could rot. So the write path is unchanged here, and what U45 adds for
+the first reproduction is the test that pins the claim for a plan specifically.
+
+**The decision on the second — the user's call, 2026-08-21.** `bm show` renders every relation, for
+every record type and in both directions. No cap, no count line. A record's page shows the record's
+relations; a page that hides some of them is not one.
+
+That reverses the cap U32 introduced. U32's reasoning was a hub record — a profile thirty findings
+point at — trailing a listing longer than its own body, and it is real. It is also the wrong trade:
+the cap was applied to *incoming* references, which is where a plan's stages arrive (a stage carries
+`part_of` to its plan, so the plan sees them incoming), so the type that most needs the block is the
+one the cap trimmed. A long relation list on a hub record is information the reader can skim past.
+A truncated one is information they cannot reach at all.
+
+**What changed.** `cli/commands/records.py`, and only there:
+
+- `MAX_INCOMING` deleted, with the `record.referenced_by[:MAX_INCOMING]` slice and the
+  `… and N more incoming relations` line that followed it. The loop now walks the whole tuple.
+- Outgoing references (`record.references`, U38) were never capped, so both directions now agree.
+
+The cap lived in exactly one place. `bm web`'s record page already rendered
+`superseded_by + references + referenced_by` whole (`web/app.py`), and `bm brief` renders no
+relations at all — so neither needed a change and neither now disagrees with the CLI. Nothing at the
+query layer limits the collection either: `direct_record` reads it off the eagerly-loaded relations,
+so removing the slice renders what was already fetched and costs no extra query.
+
+The `supersedes-not-on-type` message U44 rewrote (`vocabulary/checker.py`) still holds unchanged:
+"Only a finding supersedes another record … Every other type is corrected with `bm edit` instead,
+and a task is closed with `bm done` rather than superseded." A plan is one of those other types, and
+U45 changes no type's editability, so the message was already right.
+
+**Tests.** `tests/cli/test_record_write_commands.py` (1 `def test_` added, 46 → 47):
+`test_edit_rewrites_a_plan_and_leaves_its_status_alone` — `bm mark <plan> doing`, then one
+`bm edit --title … --body …`, then the title, the new stage list and `status: doing` all asserted on
+the file. The parametrized `test_edit_replaces_the_body_of_each_kept_current_type` already covered a
+plan's body; this pins the pair the reproduction asked for, on the one kept-current type that also
+carries a status and could therefore have read a content edit as a lifecycle move.
+
+`tests/cli/test_record_read_commands.py` (1 `def test_` removed, 2 added, 40 → 41):
+`test_show_caps_incoming_references_and_counts_the_rest` is gone — it pinned the reversed decision —
+rewritten as `test_show_renders_every_incoming_reference_on_a_hub_record`, which keeps U32's
+seven-source hub corpus and now asserts all seven ids appear.
+`test_show_renders_every_stage_of_an_eight_stage_plan` is the second reproduction: eight stages
+carrying `part_of` to one plan, every stage line asserted verbatim with its status. Both assert
+`"more incoming relations" not in stdout` rather than a bare `"more"` — a corpus notice can print
+`(+N more)`, so the bare form would pass or fail for a reason unrelated to the cap.
 
 ## Docs swept
 

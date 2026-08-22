@@ -50,11 +50,6 @@ COLUMN_GAP = 2
 LS_AFFORDANCE = "bm show <id> read the full entry · bm new record something worth finding again"
 SHOW_AFFORDANCE = "bm edit <id> change it · bm path <id> print its file path"
 
-# How many incoming references `bm show` prints before summarizing (GAPS U32).
-# A hub record — a profile thirty findings point at — would otherwise trail a
-# second listing longer than its own body; the count line keeps the total honest.
-MAX_INCOMING = 5
-
 
 def fail(message: str) -> typer.Exit:
     """Write one error line to stderr and return the exit the caller raises.
@@ -249,11 +244,14 @@ def show(
         # stale finding learns that a correction points here, from the record
         # that would otherwise mislead them. Derived and quiet-dropped like the
         # supersession notice above — the payload stays byte-exact either way.
-        for reference in record.referenced_by[:MAX_INCOMING]:
+        #
+        # Every one of them, uncapped (GAPS U45, user's call 2026-08-21). U32
+        # printed five and summarized the rest, which was wrong on the record
+        # that needs the block most: a plan's stages point at it with `part_of`,
+        # so a six-stage plan had its own checklist cut, and `… and N more` named
+        # no id to follow. A record page shows the record's relations.
+        for reference in record.referenced_by:
             typer.echo(reference.describe())
-        if len(record.referenced_by) > MAX_INCOMING:
-            remaining = len(record.referenced_by) - MAX_INCOMING
-            typer.echo(f"… and {remaining} more incoming relations")
     emit_notices(scope, quiet=quiet, command="show")
     if not quiet:
         typer.echo(SHOW_AFFORDANCE)

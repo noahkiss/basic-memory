@@ -535,8 +535,13 @@ def test_show_truncates_a_long_incoming_title() -> None:
     assert "…" in result.stdout
 
 
-def test_show_caps_incoming_references_and_counts_the_rest() -> None:
-    """A hub record summarizes past MAX_INCOMING instead of trailing a listing."""
+def test_show_renders_every_incoming_reference_on_a_hub_record() -> None:
+    """No cap: a hub record lists all seven, not five and a count (GAPS U45).
+
+    U32 printed `MAX_INCOMING = 5` and summarized the rest. The summary named no
+    id, so the only way to reach the hidden records was a query the reader had to
+    invent — and `bm show` is the record's page.
+    """
     sources = [
         note(f"finding-aaaa000{index}", "finding", f"Reference {index}") for index in range(7)
     ]
@@ -550,8 +555,37 @@ def test_show_caps_incoming_references_and_counts_the_rest() -> None:
     result = runner.invoke(app, ["show", "tnd-cccc3333", "--project", MAIN])
 
     assert result.exit_code == 0, result.output
-    assert result.stdout.count("← relates_to by") == records.MAX_INCOMING
-    assert "… and 2 more incoming relations" in result.stdout
+    assert result.stdout.count("← relates_to by") == len(sources)
+    for index in range(7):
+        assert f"finding-aaaa000{index}" in result.stdout
+    assert "more incoming relations" not in result.stdout
+
+
+def test_show_renders_every_stage_of_an_eight_stage_plan() -> None:
+    """The reproduction behind U45: a plan's own checklist was cut at five.
+
+    Stages point at their plan with `part_of`, so the checklist reaches `bm show`
+    as *incoming* references — which is exactly what the cap trimmed. A plan with
+    more than five stages is the ordinary case, and the record that most needs
+    the block was the one that lost it.
+    """
+    plan = note("plan-gggg7777", "plan", "Uplevel the app", status="doing")
+    stages = [
+        note(f"tnd-stage{index:03d}", "task", f"Stage {index}", status="open") for index in range(8)
+    ]
+    seed(
+        {MAIN: [plan, *stages]},
+        relations=tuple(
+            ("part_of", f"tnd-stage{index:03d}", "plan-gggg7777") for index in range(8)
+        ),
+    )
+
+    result = runner.invoke(app, ["show", "plan-gggg7777", "--project", MAIN])
+
+    assert result.exit_code == 0, result.output
+    for index in range(8):
+        assert f'← part_of by tnd-stage{index:03d} (open) "Stage {index}"' in result.stdout
+    assert "more incoming relations" not in result.stdout
 
 
 def test_show_renders_a_plan_as_a_live_checklist_in_body_order() -> None:
