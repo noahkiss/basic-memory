@@ -220,6 +220,11 @@ class ProjectService:
         else:
             resolved_path = Path(os.path.abspath(os.path.expanduser(path))).as_posix()
 
+        # Bound before the scope so it is unambiguously in scope after it: the
+        # vocabulary write below needs the new project's id, and it has to run
+        # after the session commits (see the constraint note there).
+        new_external_id: str | None = None
+
         async with db.scoped_session(self.session_maker) as session:
             existing_projects = await self.repository.find_all(session, use_load_options=False)
 
@@ -257,8 +262,21 @@ class ProjectService:
             #     projects are siblings and can never nest, so nothing is lost.
             # Outcome: skip the check for a store-derived path; an import source
             #     still gets it, which is where tree-sharing actually happens.
-            if store_external_id is None:
+            #
+            # A declared external home is skipped for the same reason, in both
+            # directions. Its notes sit in `<some versioned directory>/.bm`, and
+            # the directory above them is very often inside a catch-all
+            # workspace project (`~`, `~/.claude`) — a skill's `.bm` under one is
+            # the arrangement, not a collision. The catch-all carries a
+            # `scope: here` marker, so it never claims the subdirectory anyway
+            # (GAPS U40). Enforcing nesting here would refuse every skill
+            # project because one broad project exists, which is the same
+            # unreachable-by-construction failure the store-derived skip avoids.
+            skip_nesting = store_external_id is not None or home == PROJECT_HOME_EXTERNAL
+            if not skip_nesting:
                 for existing in existing_projects:
+                    if existing.is_externally_homed:
+                        continue
                     if not self._check_nested_paths(resolved_path, existing.path):
                         continue
                     # Determine which path is nested within which for appropriate error message
@@ -306,14 +324,7 @@ class ProjectService:
             if store_external_id is not None:
                 project_data["external_id"] = store_external_id
             created_project = await self.repository.create(session, project_data)
-
-            # Creating a project is the deliberate human act a vocabulary needs
-            # (GAPS W4), and since GAPS U49 that act is creation itself: a new
-            # project is governed unless the caller opted out. `bm new` never
-            # writes one — on an ungoverned project it writes the record
-            # unchecked and says so.
-            if governed:
-                write_default_vocabulary(created_project.external_id)
+            new_external_id = created_project.external_id
 
             # Trigger: the caller asked for this project to be the default, or the
             #      registry has no default at all (this is the first project).
@@ -324,6 +335,29 @@ class ProjectService:
             if set_default or await self.repository.get_default_project(session) is None:
                 await self.repository.set_as_default(session, created_project.id)
                 logger.info(f"Project '{name}' set as default")
+
+        # Creating a project is the deliberate human act a vocabulary needs
+        # (GAPS W4), and since GAPS U49 that act is creation itself: a new
+        # project is governed unless the caller opted out. `bm new` never writes
+        # one — on an ungoverned project it writes the record unchecked and says
+        # so.
+        #
+        # Constraint: this runs *outside* the session scope, because that is
+        # where the row is committed. `vocabulary_path` resolves a declared home
+        # through `project_registry.lookup_project_home`, which opens its own
+        # SQLite connection and so reads committed rows only. Inside the scope
+        # the row is merely flushed, the lookup would find nothing, and an
+        # external project's vocabulary would land in the store — leaving the
+        # home it declared ungoverned. The cost of the move is that a failed
+        # vocabulary write leaves the project registered and ungoverned instead
+        # of rolling the registration back; that is the right trade, since the
+        # file sits beside the notes and is not part of the registry write.
+        #
+        # The id is never None here — the scope above either bound it or raised
+        # — but the check is what makes that provable to a type checker, which
+        # cannot know the scope's `__aexit__` does not swallow the exception.
+        if governed and new_external_id is not None:
+            write_default_vocabulary(new_external_id)
 
         logger.info(f"Project '{name}' added at {resolved_path}")
 

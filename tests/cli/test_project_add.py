@@ -462,3 +462,121 @@ def test_add_only_here_without_here_is_refused(runner, tmp_path, monkeypatch):
     assert "--only-here" in result.output
     assert "pass both" in result.output
     assert not (tmp_path / ".bm.yml").exists()
+
+
+# --- `--home-here`: notes in ./.bm, for a directory something else versions ---
+
+
+def test_project_add_home_here_sends_the_unresolved_bm_directory(
+    runner, mock_config, record_create_payload, write_registry_file, monkeypatch, tmp_path
+):
+    """The payload homes the project at `<cwd>/.bm` and declares it external.
+
+    The directory here is yadm's link mode: `.bm` is a symlink to the class
+    alternate `.bm##class.home`. The recorded path must stay the literal `.bm`,
+    because the target's name differs on a machine of another class.
+    """
+    from basic_memory.project_registry import PROJECT_HOME_EXTERNAL
+
+    skill = tmp_path / "skills" / "example"
+    skill.mkdir(parents=True)
+    (skill / ".bm##class.home").mkdir()
+    (skill / ".bm").symlink_to(skill / ".bm##class.home")
+    monkeypatch.chdir(skill)
+    write_registry_file({"example": str(tmp_path / "store")}, default="example")
+
+    result = runner.invoke(app, ["project", "add", "example", "--home-here"])
+
+    assert result.exit_code == 0, result.output
+    assert record_create_payload == [
+        {
+            "name": "example",
+            "path": (skill / ".bm").as_posix(),
+            "set_default": False,
+            "governed": True,
+            "home": PROJECT_HOME_EXTERNAL,
+        }
+    ]
+    assert "class.home" not in record_create_payload[0]["path"]
+
+
+def test_project_add_home_here_marks_the_directory_above_the_notes(
+    runner,
+    mock_config,
+    stub_create_project,
+    write_registry_file,
+    registry_external_id,
+    monkeypatch,
+    tmp_path,
+):
+    """`--home-here` implies `--here`, and the marker claims the whole tree.
+
+    The marker sits at the skill root, not inside `.bm/`: a `bm` run from
+    `references/` has to mean the skill, which is what tree scope gives.
+    """
+    skill = tmp_path / "skills" / "example"
+    (skill / "references").mkdir(parents=True)
+    monkeypatch.chdir(skill)
+    write_registry_file({"example": str(tmp_path / "store")}, default="example")
+
+    result = runner.invoke(app, ["project", "add", "example", "--home-here"])
+
+    assert result.exit_code == 0, result.output
+    marker = skill / ".bm.yml"
+    assert read_marker_project(marker) == "example"
+    assert read_marker_id(marker) == registry_external_id("example")
+    assert "scope: here" not in marker.read_text()
+    assert not (skill / ".bm" / ".bm.yml").exists()
+
+
+def test_project_add_home_here_says_nothing_about_the_store(
+    runner, mock_config, record_create_payload, write_registry_file, monkeypatch, tmp_path
+):
+    """No D3 notice: the project declared its home, so nothing is unexpected.
+
+    Positive control is `test_project_add_with_a_path_says_it_is_off_store`,
+    which proves the notice fires for the other off-store case.
+    """
+    skill = tmp_path / "skills" / "example"
+    skill.mkdir(parents=True)
+    monkeypatch.chdir(skill)
+    write_registry_file({"example": str(tmp_path / "store")}, default="example")
+
+    result = runner.invoke(app, ["project", "add", "example", "--home-here"])
+
+    assert result.exit_code == 0, result.output
+    assert "outside the store" not in result.stdout
+    assert "not recorded in the note history" not in result.stdout
+
+
+def test_project_add_home_here_refuses_a_path_argument(
+    runner, mock_config, record_create_payload, monkeypatch, tmp_path
+):
+    """The flag names the directory, so a path is a second, contradictory answer."""
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(
+        app, ["project", "add", "example", str(tmp_path / "elsewhere"), "--home-here"]
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "takes no path argument" in result.output
+    # The refusal comes before the create, so nothing was registered.
+    assert record_create_payload == []
+    # Contract rule 6: nothing lands on stdout on the error path.
+    assert result.stdout == ""
+
+
+def test_project_add_home_here_refuses_only_here(
+    runner, mock_config, record_create_payload, monkeypatch, tmp_path
+):
+    """`--only-here` would stop the marker at the root, hiding the notes below it."""
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(app, ["project", "add", "example", "--home-here", "--only-here"])
+
+    assert result.exit_code == 1, result.output
+    assert "claims the whole tree" in result.output
+    assert record_create_payload == []
+    assert result.stdout == ""
+    assert not (tmp_path / ".bm.yml").exists()

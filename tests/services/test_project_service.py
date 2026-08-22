@@ -1023,3 +1023,137 @@ async def test_move_project_refuses_an_externally_homed_project(project_service:
         assert project is not None
         assert Path(project.path) == skill_notes
         assert not destination.exists()
+
+
+# --- `--home-here`: the vocabulary, and the nesting check ---
+
+
+@pytest.mark.asyncio
+async def test_add_project_external_home_holds_the_vocabulary(
+    project_service: ProjectService, monkeypatch
+):
+    """Governance travels with the notes: `vocabulary.yml` lands in the home.
+
+    The registry lookup is stubbed because the unit suite's database is
+    in-memory (`DatabaseType.MEMORY`) while `lookup_project_home` opens its own
+    connection to the registry file — it can never see a row this service wrote.
+    What the stub does not fake is the ordering: the write still runs where
+    `add_project` puts it, and the file still lands wherever the lookup says.
+    """
+    from basic_memory.project_registry import PROJECT_HOME_EXTERNAL
+    from basic_memory.store.history import store_path
+    from basic_memory.vocabulary import model as vocabulary_model
+
+    name = f"test-home-here-{os.urandom(4).hex()}"
+    with tempfile.TemporaryDirectory() as temp_dir:
+        skill_notes = Path(temp_dir) / "skill" / ".bm"
+
+        vocabulary_model.clear_home_cache()
+        monkeypatch.setattr(vocabulary_model, "lookup_project_home", lambda _id: skill_notes)
+        try:
+            await project_service.add_project(name, str(skill_notes), home=PROJECT_HOME_EXTERNAL)
+        finally:
+            vocabulary_model.clear_home_cache()
+
+        project = await _get_project(project_service, name)
+        assert project is not None
+        assert project.is_externally_homed is True
+        # The service created the directory the project declared as its home.
+        assert skill_notes.is_dir()
+        assert (skill_notes / "vocabulary.yml").is_file()
+        # Not in the store, which is the whole point of the declaration.
+        assert not (store_path() / project.external_id / "vocabulary.yml").exists()
+
+
+@pytest.mark.asyncio
+async def test_add_project_writes_the_vocabulary_after_the_row_is_committed(
+    project_service: ProjectService, monkeypatch
+):
+    """The vocabulary write runs outside the session scope, not inside it.
+
+    It has to: `vocabulary_path` resolves a declared home through a second
+    SQLite connection, which sees committed rows only. The observable
+    difference is what a failing write leaves behind — inside the scope it
+    would roll the registration back, outside it the project stands.
+    """
+    from basic_memory.services import project_service as project_service_module
+
+    name = f"test-vocab-order-{os.urandom(4).hex()}"
+
+    def explode(external_id: str):
+        raise OSError("no room for the vocabulary")
+
+    monkeypatch.setattr(project_service_module, "write_default_vocabulary", explode)
+
+    with pytest.raises(OSError, match="no room"):
+        await project_service.add_project(name)
+
+    project = await _get_project(project_service, name)
+    assert project is not None
+
+
+@pytest.mark.asyncio
+async def test_add_project_external_home_ignores_an_enclosing_project(
+    project_service: ProjectService,
+):
+    """A skill's `.bm` under a catch-all workspace project is the arrangement.
+
+    A project registered at `~` or `~/.claude` encloses every skill directory
+    by construction, so enforcing the nesting rule there would refuse every
+    skill project. The catch-all's marker carries `scope: here` and does not
+    claim the subdirectory anyway (GAPS U40).
+    """
+    from basic_memory.project_registry import PROJECT_HOME_EXTERNAL
+
+    suffix = os.urandom(4).hex()
+    with tempfile.TemporaryDirectory() as temp_dir:
+        workspace = Path(temp_dir) / "workspace"
+        workspace.mkdir(parents=True)
+        await project_service.add_project(f"test-catchall-{suffix}", str(workspace))
+
+        await project_service.add_project(
+            f"test-skill-{suffix}",
+            str(workspace / "skills" / "example" / ".bm"),
+            home=PROJECT_HOME_EXTERNAL,
+        )
+
+        project = await _get_project(project_service, f"test-skill-{suffix}")
+        assert project is not None
+
+        # Positive control: the same directory without the declaration is still
+        # refused, so the skip is the declaration's doing and not a hole.
+        with pytest.raises(ValueError, match="nested within existing project"):
+            await project_service.add_project(
+                f"test-undeclared-{suffix}", str(workspace / "skills" / "other" / ".bm")
+            )
+
+
+@pytest.mark.asyncio
+async def test_add_project_ignores_an_enclosed_external_home(
+    project_service: ProjectService,
+):
+    """The other direction: a catch-all may be registered over existing skills."""
+    from basic_memory.project_registry import PROJECT_HOME_EXTERNAL
+
+    suffix = os.urandom(4).hex()
+    with tempfile.TemporaryDirectory() as temp_dir:
+        workspace = Path(temp_dir) / "workspace"
+        skill_notes = workspace / "skills" / "example" / ".bm"
+        await project_service.add_project(
+            f"test-skill-first-{suffix}", str(skill_notes), home=PROJECT_HOME_EXTERNAL
+        )
+
+        await project_service.add_project(f"test-catchall-after-{suffix}", str(workspace))
+
+        project = await _get_project(project_service, f"test-catchall-after-{suffix}")
+        assert project is not None
+
+    # Positive control: an undeclared project below a new one still collides.
+    with tempfile.TemporaryDirectory() as other_dir:
+        other = Path(other_dir) / "workspace"
+        await project_service.add_project(
+            f"test-legacy-{suffix}", str(other / "skills" / "example" / ".bm")
+        )
+
+        with pytest.raises(ValueError, match="is nested within this path"):
+            await project_service.add_project(f"test-catchall-refused-{suffix}", str(other))

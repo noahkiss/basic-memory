@@ -11,6 +11,11 @@ from basic_memory.cli.direct import direct_project_service
 from basic_memory.cli.notices import emit_notices
 from basic_memory.cli.runner import run_with_cleanup
 from basic_memory.cli.scope import ReadScope
+
+# Module level, unlike this file's other `project_registry` imports: it names a
+# constant rather than reaching the registry, and `cli/commands/mcp.py` already
+# puts this module on every invocation's import path (GAPS.md T30).
+from basic_memory.project_registry import PROJECT_HOME_EXTERNAL
 from basic_memory.schemas.project_info import ProjectItem, ProjectList
 from basic_memory.utils import generate_permalink
 
@@ -380,6 +385,11 @@ def add_project(
         "--only-here",
         help="Mark only this directory; subdirectories do not inherit the marker",
     ),
+    home_here: bool = typer.Option(
+        False,
+        "--home-here",
+        help="Home the notes in ./.bm, for a directory something else already versions.",
+    ),
     quiet: bool = typer.Option(False, "--quiet", help="Hide the status lines and next-step hints"),
 ) -> None:
     """Add a new project, homed in the store.
@@ -400,6 +410,12 @@ def add_project(
     run from it means this project without naming it. Add `--only-here` to stop
     the marker at that directory, leaving subdirectories unclaimed (GAPS U40).
 
+    `--home-here` homes the notes in `./.bm` instead of the store, for a
+    directory something else already versions — a Claude Code skill yadm carries
+    between machines. The vocabulary travels beside the records. It implies
+    `--here` over the whole tree, takes no path argument, and never resolves
+    `./.bm`: under yadm's link mode that name is a per-machine symlink.
+
     Example:
         bm project add research
     """
@@ -407,6 +423,20 @@ def add_project(
     # spelled both out has no idea which one this command would honour.
     if governed and ungoverned:
         raise fail("Error: --governed and --ungoverned contradict each other; pass one")
+
+    # `--home-here` names the directory itself, so a path argument would be a
+    # second, contradictory answer to the same question.
+    if home_here and path is not None:
+        raise fail("Error: --home-here homes the notes in ./.bm and takes no path argument")
+    # A skill's `.bm.yml` has to claim the tree: `bm` run from `references/` must
+    # still mean the skill, and `--only-here` would stop the marker at the root.
+    if home_here and only_here:
+        raise fail("Error: --home-here claims the whole tree; --only-here would narrow it")
+
+    # `--home-here` implies `--here`: the notes sit one directory down, so the
+    # directory above them is what has to resolve to this project. Scope stays
+    # whatever `mark_here` gives an unqualified marker — the tree.
+    here = here or home_here
 
     # Decision point: the marker conflict is checked before the project is
     # created, not after it is written.
@@ -429,9 +459,19 @@ def add_project(
             )
     # Resolve to absolute path. None stays None: it means "no import source", and
     # the service gives the project its store-derived home (decision D3).
-    resolved_path = (
-        None if path is None else Path(os.path.abspath(os.path.expanduser(path))).as_posix()
-    )
+    #
+    # Constraint: the `--home-here` path is joined and never resolved. Under
+    # yadm's link mode `.bm` is a symlink to `.bm##class.home`, so a path
+    # resolved on this machine would not match the literal one the next machine
+    # records — and `bm project adopt` compares them. `Path.cwd()` is already
+    # absolute, and the service's own path branch uses `os.path.abspath`, which
+    # normalizes without following symlinks either.
+    if home_here:
+        resolved_path = (Path.cwd() / ".bm").as_posix()
+    elif path is None:
+        resolved_path = None
+    else:
+        resolved_path = Path(os.path.abspath(os.path.expanduser(path))).as_posix()
 
     # Deferred: the MCP client graph costs ~0.04 s of import beyond what the CLI
     # already pays, and only the client-routed project subcommands need it.
@@ -443,7 +483,7 @@ def add_project(
 
     async def _add_project():
         async with get_client() as client:
-            data = {
+            data: dict[str, str | bool | None] = {
                 "name": name,
                 "path": resolved_path,
                 "set_default": set_default,
@@ -451,6 +491,11 @@ def add_project(
                 # the default and adds nothing to it (GAPS U49).
                 "governed": not ungoverned,
             }
+            # Sent only when declared. `ProjectInfoRequest.home` defaults to
+            # None, so an absent key says exactly what an explicit null would,
+            # and every other `project add` keeps the payload it always sent.
+            if home_here:
+                data["home"] = PROJECT_HOME_EXTERNAL
             return await ProjectClient(client).create_project(data)
 
     try:
@@ -474,7 +519,10 @@ def add_project(
     # Why: notes outside `store/<id>/` are not in the history repo's worktree, so
     #     every write to that project skips its commit and says so. Stating it
     #     once at creation beats discovering it one notice at a time.
-    # Outcome: one notice naming the consequence, dropped by --quiet.
+    # Outcome: one notice naming the consequence, dropped by --quiet. A
+    #     `--home-here` project is off-store too but never reaches here — it
+    #     takes no path argument — and that is deliberate: it declared its home,
+    #     and whatever versions that directory records the writes bm would have.
     if path is not None and not quiet:
         typer.echo(
             f"note: '{name}' keeps its notes at {resolved_path}, outside the store — "
