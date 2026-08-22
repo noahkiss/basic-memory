@@ -10,6 +10,7 @@ empty, which used to leave users with a blank "Doctor failed:" line.
 """
 
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Callable, NoReturn
 
 import pytest
@@ -22,7 +23,11 @@ from basic_memory.cli.direct import (
     ProjectDoctorReport,
     ProjectHygieneReport,
     ProjectIntegrityReport,
+    _missing_external_home,
+    _ungoverned_external_home,
 )
+from basic_memory.models import Project
+from basic_memory.project_registry import PROJECT_HOME_EXTERNAL
 from basic_memory.repository.entity_repository import (
     HygieneRecord,
     PermalinkIntegrityIssue,
@@ -654,3 +659,209 @@ def test_render_hygiene_reports_an_upgrade_without_counting_it():
     assert any("vocabulary-upgraded" in line for line in lines)
     # Informational only: the section still closes on "no issues".
     assert lines[-1] == NO_ISSUES
+
+
+# --- The external-home checks (plan-hhh0gdfh stage 6) ---
+#
+# An external project's notes live in a directory another VCS delivers — a
+# Claude Code skill yadm carries between machines. Two things can go wrong on
+# arrival, and they are different kinds of wrong: the directory is not here
+# (integrity, it has a right answer), or it is here without the vocabulary that
+# governs it (hygiene, an ungoverned project is a legitimate state).
+#
+# The two deciders are filesystem cross-checks, so they are exercised against
+# real directories and a real symlink rather than a stubbed `is_dir` — the same
+# reasoning `tests/repository/test_entity_repository_missing_files.py` gives.
+
+
+def external_project(path: Path, name: str = "skill-notes") -> Project:
+    """One externally homed project row, homed at `path`, never touching a DB."""
+    return Project(name=name, path=str(path), home=PROJECT_HOME_EXTERNAL)
+
+
+def test_missing_external_home_names_a_home_that_is_not_here(tmp_path):
+    """A registry pointing at nothing is what a yadm class mismatch looks like."""
+    absent = tmp_path / "skills" / "planner" / ".bm"
+
+    assert _missing_external_home(external_project(absent)) == str(absent)
+
+
+def test_missing_external_home_stays_quiet_for_a_delivered_home(tmp_path):
+    """Positive control: the same check, over a directory that did arrive."""
+    delivered = tmp_path / ".bm"
+    delivered.mkdir()
+
+    assert _missing_external_home(external_project(delivered)) is None
+
+
+def test_missing_external_home_accepts_a_symlinked_home(tmp_path):
+    """Under yadm's link mode the home IS a symlink, and must not read as missing.
+
+    `.bm` is a link to the class alternate `.bm##class.home`, so a check that
+    resolved the path — or refused a link — would report every correctly
+    delivered skill project as broken on every machine.
+    """
+    alternate = tmp_path / ".bm##class.home"
+    alternate.mkdir()
+    link = tmp_path / ".bm"
+    link.symlink_to(alternate, target_is_directory=True)
+
+    assert _missing_external_home(external_project(link)) is None
+
+
+def test_missing_external_home_ignores_a_project_that_declared_no_home(tmp_path):
+    """The check is about a declared external home, not about any absent path.
+
+    A store-homed project's directory is bm's own to create, and a legacy
+    off-store one already gets the D3 notice on every write.
+    """
+    absent = tmp_path / "gone"
+    store_homed = Project(name="alpha", path=str(absent), home=None)
+
+    assert _missing_external_home(store_homed) is None
+
+
+def test_ungoverned_external_home_names_the_vocabulary_it_lacks(tmp_path):
+    """A delivery that brought records but no `vocabulary.yml`."""
+    delivered = tmp_path / ".bm"
+    delivered.mkdir()
+    (delivered / "task-abc.md").write_text("body\n", encoding="utf-8")
+
+    assert _ungoverned_external_home(external_project(delivered)) == str(
+        delivered / "vocabulary.yml"
+    )
+
+
+def test_ungoverned_external_home_stays_quiet_when_governance_travelled(tmp_path):
+    """Positive control: the vocabulary beside the records is the healthy case."""
+    delivered = tmp_path / ".bm"
+    delivered.mkdir()
+    (delivered / "vocabulary.yml").write_text("types: [task]\n", encoding="utf-8")
+
+    assert _ungoverned_external_home(external_project(delivered)) is None
+
+
+def test_ungoverned_external_home_says_nothing_when_the_home_is_missing(tmp_path):
+    """One finding per failure: the integrity row already named the directory.
+
+    A second row about a file inside a directory that is not there would report
+    the same delivery twice and count it twice.
+    """
+    absent = tmp_path / ".bm"
+
+    assert _ungoverned_external_home(external_project(absent)) is None
+
+
+def test_ungoverned_external_home_ignores_a_project_that_declared_no_home(tmp_path):
+    """A store-homed project's governance is checked by the U39 rows, not here."""
+    directory = tmp_path / "store-project"
+    directory.mkdir()
+
+    assert _ungoverned_external_home(Project(name="alpha", path=str(directory), home=None)) is None
+
+
+def test_doctor_reports_an_external_home_that_is_not_here(stub_report):
+    """The integrity row names the home and the two ways out, and fails the run."""
+    stub_report(
+        [
+            ProjectDoctorReport(
+                project_name="planner-skill",
+                integrity=ProjectIntegrityReport(missing_home="/home/u/.claude/skills/planner/.bm"),
+            )
+        ]
+    )
+
+    result = runner.invoke(app, ["doctor", "--only", "integrity", "--quiet"])
+
+    assert result.exit_code == 1, result.output
+    lines = result.stdout.strip().splitlines()
+    assert lines[1] == (
+        "  /home/u/.claude/skills/planner/.bm  external-home-missing  "
+        "nothing has delivered this project's notes here"
+    )
+    # One repair line for the finding, naming both moves: adopt once the notes
+    # arrive, remove when the directory is gone for good.
+    assert lines[2] == (
+        "  repair: bm project adopt — run it in that directory once the notes arrive; "
+        "if the directory is gone for good, bm project remove 'planner-skill'"
+    )
+    assert lines[3] == "  1 issue"
+
+
+def test_doctor_says_nothing_about_a_home_that_is_where_it_should_be(stub_report):
+    """The rows ride on the finding, so a delivered project prints neither."""
+    stub_report([ProjectDoctorReport(project_name="planner-skill")])
+
+    result = runner.invoke(app, ["doctor", "--quiet"])
+
+    assert result.exit_code == 0, result.output
+    assert "external-home-missing" not in result.stdout
+    assert "external-home-ungoverned" not in result.stdout
+    assert "repair:" not in result.stdout
+
+
+def test_doctor_reports_an_external_delivery_without_a_vocabulary(stub_report):
+    """Hygiene: the row names where the file belongs and where it comes from.
+
+    No verb writes it — `bm project vocab-sync` refuses a project that has none —
+    so the line names the delivery, not a command that would fail.
+    """
+    stub_report(
+        [
+            ProjectDoctorReport(
+                project_name="planner-skill",
+                hygiene=ProjectHygieneReport(ungoverned_home="/skills/planner/.bm/vocabulary.yml"),
+            )
+        ]
+    )
+
+    result = runner.invoke(app, ["doctor", "--only", "hygiene", "--quiet"])
+
+    # Hygiene alone still exits 0: an ungoverned project is a legitimate state.
+    assert result.exit_code == 0, result.output
+    lines = result.stdout.strip().splitlines()
+    assert lines[1] == (
+        "  /skills/planner/.bm/vocabulary.yml  external-home-ungoverned  "
+        "governance did not travel — writes to this project go unchecked; "
+        "bring vocabulary.yml over with the notes "
+        "('bm project add --home-here' writes one beside them at creation)"
+    )
+    assert lines[2] == "  1 issue"
+    assert "vocab-sync" not in result.stdout
+
+
+def test_doctor_strict_exits_one_on_an_ungoverned_external_home(stub_report):
+    """--strict is the caller who wants the hygiene row to fail the run too."""
+    stub_report(
+        [
+            ProjectDoctorReport(
+                project_name="planner-skill",
+                hygiene=ProjectHygieneReport(ungoverned_home="/skills/planner/.bm/vocabulary.yml"),
+            )
+        ]
+    )
+
+    result = runner.invoke(app, ["doctor", "--strict", "--quiet"])
+
+    assert result.exit_code == 1, result.output
+    assert "external-home-ungoverned" in result.stdout
+
+
+def test_doctor_only_hygiene_never_mentions_a_missing_external_home(stub_report):
+    """The checks land in one group each, so --only selects between them."""
+    calls = stub_report(
+        [
+            ProjectDoctorReport(
+                project_name="planner-skill",
+                integrity=ProjectIntegrityReport(missing_home="/skills/planner/.bm"),
+                hygiene=ProjectHygieneReport(ungoverned_home="/skills/planner/.bm/vocabulary.yml"),
+            )
+        ]
+    )
+
+    result = runner.invoke(app, ["doctor", "--only", "hygiene", "--quiet"])
+
+    assert result.exit_code == 0, result.output
+    assert calls == [{"project_names": None, "include_integrity": False, "include_hygiene": True}]
+    assert "external-home-missing" not in result.stdout
+    assert "external-home-ungoverned" in result.stdout

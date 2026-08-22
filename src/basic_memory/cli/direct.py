@@ -224,6 +224,9 @@ class ProjectIntegrityReport:
     permalink_issues: "list[PermalinkIntegrityIssue]" = field(default_factory=list)
     missing_files: list[MissingFile] = field(default_factory=list)
     errors: "list[ViolationRow]" = field(default_factory=list)
+    # The recorded home of an externally homed project that is not a directory
+    # here, or None. One path, not a list: a project has one home.
+    missing_home: str | None = None
 
     @property
     def issue_count(self) -> int:
@@ -232,6 +235,7 @@ class ProjectIntegrityReport:
             + len(self.permalink_issues)
             + len(self.missing_files)
             + len(self.errors)
+            + (1 if self.missing_home else 0)
         )
 
 
@@ -252,6 +256,10 @@ class ProjectHygieneReport:
     # (GAPS U39): the delta as one human line, or None when current. Hygiene,
     # not integrity — the human ignoring it is a decision, not a defect.
     vocabulary_outdated: "str | None" = None
+    # Where an externally homed project's `vocabulary.yml` would be when the
+    # delivery did not bring one, else None. Hygiene rather than integrity: an
+    # ungoverned project is a legitimate state, so this asks rather than fails.
+    ungoverned_home: str | None = None
 
     @property
     def issue_count(self) -> int:
@@ -263,6 +271,7 @@ class ProjectHygieneReport:
             + len(self.inbox)
             + len(self.advisories)
             + (1 if self.vocabulary_outdated else 0)
+            + (1 if self.ungoverned_home else 0)
         )
 
 
@@ -283,6 +292,53 @@ def _missing_files(project_path: Path, indexed: "Sequence[IndexedFile]") -> list
         for row in indexed
         if not (project_path / row.file_path).exists()
     ]
+
+
+def _missing_external_home(project: "Project") -> str | None:
+    """The home an externally homed project records but does not have here.
+
+    An external project's notes live in a directory another VCS delivers — a
+    Claude Code skill yadm carries between machines. When that directory is not
+    here the registry points at nothing, which is what a class mismatch or an
+    un-checked-out alternate looks like: every read of the project reports an
+    empty corpus and every write lands in a directory nobody versions.
+
+    Constraint: the recorded path is stat'd as stored, never resolved. Under
+    yadm's link mode the home is a symlink (`.bm` → `.bm##class.home`), so
+    resolving it here would compare a per-machine target against the literal
+    path the registry carries. `is_dir()` follows the link without rewriting the
+    path, which is exactly the question — is there a directory at this name.
+    """
+    if not project.is_externally_homed:
+        return None
+    return None if Path(project.path).is_dir() else project.path
+
+
+def _ungoverned_external_home(project: "Project") -> str | None:
+    """Where an external project's ``vocabulary.yml`` should be but is not.
+
+    Governance travels with the notes: `bm project add --home-here` writes the
+    default vocabulary into `.bm/` beside the records, so a delivery that
+    arrives without one means governance was never declared or never travelled —
+    and `bm project adopt` registers what arrived rather than inventing a
+    vocabulary the other machine did not send.
+
+    None when the home itself is missing: the integrity row already says the
+    directory is not here, and a second row about a file inside it adds nothing.
+    """
+    if not project.is_externally_homed:
+        return None
+    home = Path(project.path)
+    if not home.is_dir():
+        return None
+
+    # Deferred like every other `vocabulary.model` use in this module: it pulls
+    # yaml, which must stay off the import path of the fast verbs that import
+    # this module without ever asking a vocabulary question.
+    from basic_memory.vocabulary.model import VOCABULARY_FILENAME
+
+    declared = home / VOCABULARY_FILENAME
+    return None if declared.is_file() else str(declared)
 
 
 @dataclass(frozen=True, slots=True)
@@ -360,6 +416,22 @@ async def direct_doctor_report(
 
             integrity = ProjectIntegrityReport()
             if include_integrity:
+                missing_home = _missing_external_home(project)
+                # Decision point: a home that has not arrived skips the per-file
+                # stat loop entirely.
+                # Why: every indexed row would report `missing-file`, and that
+                #     group's repair line — `bm reindex` — is wrong advice for a
+                #     directory yadm has not delivered: it would index the
+                #     absence. One row naming the home is the whole finding.
+                # Outcome: unchanged for every project that declared no external
+                #     home, since `missing_home` is then always None.
+                missing_files = (
+                    []
+                    if missing_home
+                    else _missing_files(
+                        Path(project.path), await entities.list_indexed_files(session)
+                    )
+                )
                 integrity = ProjectIntegrityReport(
                     unresolved=list(
                         await RelationRepository(
@@ -367,10 +439,9 @@ async def direct_doctor_report(
                         ).find_unresolved_relation_report(session)
                     ),
                     permalink_issues=await entities.find_permalink_integrity_issues(session),
-                    missing_files=_missing_files(
-                        Path(project.path), await entities.list_indexed_files(session)
-                    ),
+                    missing_files=missing_files,
                     errors=await violations.list_for_project(session, project.id, severity="error"),
+                    missing_home=missing_home,
                 )
 
             # The doctor is the gardener (GAPS W2), so U39 runs here as well as
@@ -420,6 +491,7 @@ async def direct_doctor_report(
                         session, project.id, severity="advisory"
                     ),
                     vocabulary_outdated=vocabulary_line,
+                    ungoverned_home=_ungoverned_external_home(project),
                 )
 
             reports.append(

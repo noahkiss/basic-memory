@@ -85,7 +85,7 @@ id. `bm` is the short name for `basic-memory`; both run the same commands.
 | `bm history dirty` | List note files whose changes are not recorded yet. |
 | `bm history commit` | Record note changes that `bm` did not make itself. |
 | `bm undo` | Put the note store back to the content it held before its last change. |
-| `bm doctor` | Check the notes against the index and report what needs a person. Exits 1 when integrity found something; hygiene alone exits 0, `--strict` exits 1 on either. |
+| `bm doctor` | Check the notes against the index and report what needs a person. It also checks a project homed elsewhere: integrity names a home this machine does not have, and hygiene names a delivery that arrived without its vocabulary. Exits 1 when integrity found something; hygiene alone exits 0, `--strict` exits 1 on either. |
 | `bm status` | Report what is indexed and what is not. |
 | `bm project list` | List projects. `project info` describes one. |
 | `bm project add <name>` | Create a project, homed in the store and governed — it gets the default record vocabulary, so the schema checks run on every write. `--ungoverned` skips that file and leaves writes unchecked. `--here` also writes a `.bm.yml` in the current directory pointing at it, and `--only-here` keeps that marker from covering subdirectories. |

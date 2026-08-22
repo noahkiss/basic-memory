@@ -2,10 +2,12 @@
 
 Two groups, because they need different readers:
 
-- **integrity** — dangling relations, permalink invariants, and every violation
-  the checker called an error. These have right answers.
+- **integrity** — dangling relations, permalink invariants, an external project
+  whose home is not on this machine, and every violation the checker called an
+  error. These have right answers.
 - **hygiene** — expired reviews, guessed dates, stale state records, records
-  abandoned in `doing`, the inbox pile, and every advisory. These need a person.
+  abandoned in `doing`, the inbox pile, an external project whose delivery
+  brought no vocabulary, and every advisory. These need a person.
 
 There is deliberately no second checking command: a `bm gc` or a `bm check`
 would immediately be the one nobody runs, so the gardener's jobs land here
@@ -54,10 +56,29 @@ ONLY_GROUPS = (INTEGRITY, HYGIENE, USAGE)
 
 NO_ISSUES = "  No issues"
 
-# Introduces the one repair line the missing-file check prints (GAPS U10). The
-# rows above it name what is broken; this names the single command that fixes
-# all of them, which is what nothing pointed at before.
-MISSING_FILE_REPAIR_PREFIX = "  repair: "
+# Introduces a repair line: the rows above it name what is broken, this names the
+# command that fixes them (GAPS U10). Shared by the missing-file group and by the
+# missing external home, because both have one answer for the whole finding.
+REPAIR_PREFIX = "  repair: "
+
+# What the external-home checks say. An external project's notes live in a
+# directory another VCS delivers (a skill yadm carries), so both failures are
+# about a delivery rather than about a record: the directory never arrived, or it
+# arrived without the vocabulary that governs it.
+EXTERNAL_HOME_MISSING = "nothing has delivered this project's notes here"
+EXTERNAL_HOME_REPAIR = (
+    "bm project adopt — run it in that directory once the notes arrive; "
+    "if the directory is gone for good, bm project remove"
+)
+# No verb writes this file into a project that has none: `bm project vocab-sync`
+# refuses an ungoverned project, and `bm project adopt` registers what arrived
+# rather than inventing governance the other machine did not send. So the line
+# names where the file comes from instead of a command that would not work.
+EXTERNAL_HOME_UNGOVERNED = (
+    "governance did not travel — writes to this project go unchecked; "
+    "bring vocabulary.yml over with the notes "
+    "('bm project add --home-here' writes one beside them at creation)"
+)
 
 # Closes the stale-doing rows (GAPS U43), in the same group-line shape as the
 # missing-file repair and for the same reason: the three ways out of `doing` are
@@ -174,8 +195,15 @@ def render_integrity(report: "ProjectDoctorReport") -> list[str]:
         # The repair is stated once for the group, not once per row: it is the
         # same command whether one file is gone or a hundred, and repeating it on
         # every line would bury the paths that differ (GAPS U10).
-        lines.append(f"{MISSING_FILE_REPAIR_PREFIX}bm reindex -p '{report.project_name}'")
+        lines.append(f"{REPAIR_PREFIX}bm reindex -p '{report.project_name}'")
     lines.extend(_violation_lines(integrity.errors))
+    # An external project whose home is not here: the registry points at nothing,
+    # so every read of it reports an empty corpus. Integrity rather than hygiene —
+    # a home that is not there has a right answer, and the two ways to reach it
+    # are the repair line, not a judgment doctor may make (GAPS W2).
+    if integrity.missing_home:
+        lines.append(f"  {integrity.missing_home}  external-home-missing  {EXTERNAL_HOME_MISSING}")
+        lines.append(f"{REPAIR_PREFIX}{EXTERNAL_HOME_REPAIR} '{report.project_name}'")
 
     if integrity.issue_count == 0:
         lines.append(NO_ISSUES)
@@ -247,6 +275,13 @@ def render_hygiene(report: "ProjectDoctorReport") -> list[str]:
     # detail already names the missing pieces and the sync command.
     if hygiene.vocabulary_outdated:
         lines.append(f"  vocabulary.yml  vocabulary-outdated  {hygiene.vocabulary_outdated}")
+    # A delivery that arrived without its vocabulary. Hygiene, because an
+    # ungoverned project is a legitimate state — the row asks whether this one
+    # meant to be, and names where the file would come from.
+    if hygiene.ungoverned_home:
+        lines.append(
+            f"  {hygiene.ungoverned_home}  external-home-ungoverned  {EXTERNAL_HOME_UNGOVERNED}"
+        )
 
     if hygiene.issue_count == 0:
         lines.append(NO_ISSUES)
