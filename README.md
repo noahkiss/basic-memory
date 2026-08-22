@@ -142,7 +142,9 @@ Notes live under `<data dir>/store`, which is a local git repository — see
 [Reading a project's files without running `bm`](#reading-a-projects-files-without-running-bm)
 for how `bm` resolves the data dir. Every write there is committed, which is what
 gives `bm undo` something to put back. A project you added with a path of its own
-still works; it keeps no history, and says so on each write.
+still works; it keeps no history, and says so on each write. A project that homes
+its notes elsewhere on purpose keeps no history either and stays quiet about it —
+see [Notes that travel with a skill](#notes-that-travel-with-a-skill).
 
 Which project a command uses: `--project`, then the nearest `.bm.yml` above the
 working directory — skipping any that carries `scope: here`, which counts only
@@ -175,6 +177,67 @@ state, not the registry.
 
 A marker written before `bm` recorded ids carries `project:` alone. Run
 `bm project mark` in that directory once to fill the `id:` in.
+
+### Notes that travel with a skill
+
+A project's notes normally live in the store. A project can instead home them in
+a `.bm/` directory inside a tree something else already versions. The case this
+exists for is a Claude Code skill under `~/.claude/skills/<name>/`, carried
+between machines by [yadm](https://yadm.io): the notes then arrive with the
+skill, and their `vocabulary.yml` arrives beside them, so the same schema checks
+run wherever the skill lands.
+
+Create one from inside the skill's directory:
+
+```bash
+bm project add my-skill --home-here
+```
+
+On the next machine, once yadm has delivered that directory:
+
+```bash
+bm project adopt
+```
+
+`adopt` resolves by name — names travel between machines, ids do not — then
+registers or repoints the project, writes the marker, and indexes what arrived.
+Run it again and nothing changes. It refuses when `.bm/` is not there yet: that
+means the directory has not been checked out, and creating an empty one would
+collide with the checkout that follows.
+
+What `bm` does **not** do for such a project: it records no history of its own
+and `bm undo` does not reach it. The system that versions the directory owns
+that history, which is why these projects get no off-store notice on a write.
+`bm history dirty`, `bm history commit`, and `bm undo` each end by naming the
+projects they exclude, and `bm doctor` reports a home this machine does not have
+as well as one that arrived without its `vocabulary.yml`.
+
+#### The yadm convention
+
+Track the notes directory as a yadm directory alternate, so it follows the class
+you want it on:
+
+```bash
+yadm add ~/.claude/skills/my-skill/.bm##class.home
+```
+
+Then these rules. Each one fails quietly rather than loudly:
+
+- **Keep yadm's default link mode.** Under `yadm.alt-copy` the `.bm` you write
+  into is a plain copy, every note in it is untracked, and the notes stop
+  travelling with nothing said. Link mode makes `.bm` a symlink to
+  `.bm##class.home`, which is what `bm` writes through and yadm tracks.
+- **The symlink is fine.** `bm` records and compares the home path exactly as
+  given and never resolves it. Do not record a resolved path anywhere either —
+  it will not match on the next machine.
+- **Put nothing at the skill root that the harness could read as skill
+  content.** No second `SKILL.md`, no `vocabulary.yml` at the root, no
+  `NOTES.md`. Records and the vocabulary go inside `.bm/`, which the skills
+  loader ignores.
+- **Keep per-machine state out of `.bm/`.** The headline file and the index
+  database stay in the data dir. Only records and `vocabulary.yml` travel.
+- **Leave `.bm.yml` at the skill root and untracked.** It is a per-machine
+  pointer carrying a per-machine id.
 
 ## Session briefings
 

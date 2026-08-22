@@ -150,10 +150,12 @@ class ProjectService:
             name: The name of the project
             path: An import source to adopt as the project's directory. Omit it to
                 give the project its store-derived home, which is the design
-                (AGENTS.md; verbs decision D3): note content lives only under
-                ``store/<external_id>/``, and that is what puts every write in the
+                (AGENTS.md; verbs decision D3): note content lives under
+                ``store/<external_id>/`` by default, and that is what puts every write in the
                 history repo. A path argument means "the notes are already here",
-                and the project keeps living there until W6's importer moves it.
+                and the project keeps living there: W6 closed without an importer,
+                so nothing moves it. Such a project takes D3's per-write notice
+                unless ``home`` says something else versions its directory.
             set_default: Whether to set this project as the default
             governed: Write ``DEFAULT_VOCABULARY`` into the project's store
                 directory, so the checker runs on every write to it. **On by

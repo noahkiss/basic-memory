@@ -25,6 +25,37 @@ search record belongs to exactly one project.
 - Project selection must be explicit or resolved once at an entrypoint. Lower layers receive the
   resolved project context rather than rediscovering global state.
 
+#### Where a project's notes live
+
+A project's notes live in the store by default: one plain git repository in the data dir, with the
+project's own directory at `store/<external_id>/`. A project may instead declare an **external
+home** — a `.bm/` directory inside a tree something else already versions — laid out exactly as a
+store directory is, `vocabulary.yml` beside the records.
+
+The `home` column on `project` records the intent, which `path` alone cannot express. It is
+three-valued:
+
+| `path` under the store | `home` | Meaning | Off-store notice | bm history |
+|---|---|---|---|---|
+| yes | `NULL` | store-homed; the default | no | yes |
+| no | `NULL` | legacy project at a path of its own | yes, once per write | no |
+| no | `"external"` | homed in a tree another VCS versions | no | no, and the verbs say so |
+
+The third row keeps no bm history on purpose: the other VCS owns it, so a notice offering to
+migrate would be wrong every time.
+
+#### Which identifier travels
+
+- A project's **name** is the cross-machine key. `.bm.yml` resolution keys off `project:`, and
+  `bm project adopt` resolves the same way, so the same project is the same project on every
+  machine that receives it.
+- A project's **`external_id` is machine-local**. Each registry mints its own, so `store/<id>/`
+  differs per machine and no feature may assume id stability across them. The `id:` key in a
+  marker exists for readers that must reach `store/<id>/` without running `bm`.
+- An external home's recorded path is stored and compared **unresolved**. The delivering VCS may
+  put a per-machine symlink there, and a resolved path recorded on one machine does not match the
+  literal one on the next.
+
 ### Note
 
 A note is the user-facing Markdown document. It combines optional YAML frontmatter, prose,

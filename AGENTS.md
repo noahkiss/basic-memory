@@ -65,14 +65,30 @@ entry that records how, and the constraints below still bind anything that chang
    in conversation and never written down. **Shipped:** `bm mine`, which parses and never judges —
    an agent reads its output and writes any keeper with `bm new` (GAPS W1).
 
-**The store is the only home for note content.** Every note lives in a single plain git repo in the
-data dir at **`<data dir>/store/`**, under `store/<id>/` — central and id-keyed, not one repo per
-project, and never a mirror of content that lives somewhere else. Nothing is copied on write, so
-there is no project-root-versus-store divergence to reconcile. The store path must derive from
-`resolve_data_dir()` so it honours `BASIC_MEMORY_CONFIG_DIR` like `config.json` and `memory.db` do
-— never hardcode it. The data dir is `$BASIC_MEMORY_CONFIG_DIR`, else `$XDG_CONFIG_HOME/basic-memory`
-when that variable is set, else `~/.basic-memory` — see README, *Reading a project's files without
-running `bm`*.
+**The store is the default home for note content.** Every note lives in a single plain git repo
+in the data dir at **`<data dir>/store/`**, under `store/<id>/` — central and id-keyed, not one
+repo per project, and never a mirror of content that lives somewhere else. Nothing is copied on
+write, so there is no project-root-versus-store divergence to reconcile. The store path must
+derive from `resolve_data_dir()` so it honours `BASIC_MEMORY_CONFIG_DIR` like `config.json` and
+`memory.db` do — never hardcode it. The data dir is `$BASIC_MEMORY_CONFIG_DIR`, else
+`$XDG_CONFIG_HOME/basic-memory` when that variable is set, else `~/.basic-memory` — see README,
+*Reading a project's files without running `bm`*.
+
+**A project may instead declare an external home.** Its notes live in a `.bm/` directory inside a
+directory something else already versions, laid out exactly as a store directory is, with
+`vocabulary.yml` beside the records so governance travels with them. The registry row carries
+`home = "external"`; `bm project add <name> --home-here` creates one, and `bm project adopt` is
+arrival on the next machine — it resolves the project **by name**, because names travel between
+machines and ids are minted per machine, repoints the registry, and indexes what arrived. bm
+records no history for such a project and prints no off-store notice, because the other VCS owns
+that history; `bm history` and `bm undo` end by naming the projects they exclude. The case this
+exists for is a Claude Code skill carried between machines by yadm (GAPS U51, decision
+`finding-trs78vh2`). Two constraints bind that arrangement and are easy to break silently:
+**yadm's default link mode is required** — under `yadm.alt-copy` the `.bm` alternate is a real
+copy, every note written into it is untracked, and the notes stop travelling with nothing said —
+and **bm must never `.resolve()` an external home path**, because under link mode `.bm` is a
+per-machine symlink and a resolved path recorded on one machine will not match the next. README,
+*Notes that travel with a skill*, holds the full rule set.
 
 A **`.bm.yml`** marker is a **pointer, not a container**. It sits at the root of a *working*
 directory — usually a code repo you run `bm` from — and says "when I am here, I mean this project."
@@ -83,8 +99,9 @@ project sit at `~/develop` without capturing the unmarked folders below it (GAPS
 
 Consequences, all deliberate:
 
-- A project's path is **store-derived** (`store/<id>/`), not user-chosen. A path argument to
-  `bm project add` therefore means an *import source*, not the project's home.
+- A project's path is **store-derived** (`store/<id>/`), not user-chosen, unless it declares an
+  external home. A path argument to `bm project add` therefore means an *import source*, not the
+  project's home; `--home-here` is the one flag that names a home.
 - Existing projects that live at arbitrary paths keep working and get one notice on every write:
   their files are outside the history repo, so nothing records them (verbs decision D3). Moving
   them is a Claude workflow — W6 closed without an importer.
@@ -94,8 +111,8 @@ Consequences, all deliberate:
 **Naming:** `tend` is a **codename for the design, not a command.** There is no `tend` binary and no
 `bm tend` namespace — the verbs ship flat under `bm` (`bm ls`, `bm new`, `bm edit`, `bm path`,
 `bm mine`, `bm done`, `bm show`, `bm history`, `bm undo`, `bm mark`, `bm rm`, `bm types`,
-`bm brief`, `bm headline`, `bm bug`, `bm doctor`, `bm status`, `bm project`, `bm web`; bare `bm`
-renders the project board — GAPS U37). **There is no `bm check`** —
+`bm brief`, `bm headline`, `bm bug`, `bm doctor`, `bm status`, `bm project`, `bm project adopt`,
+`bm web`; bare `bm` renders the project board — GAPS U37). **There is no `bm check`** —
 the schema and integrity checks land inside the existing `bm doctor` (see `GAPS.md` W5), because a
 second checking command would immediately be the one nobody runs.
 
@@ -234,7 +251,7 @@ Everything else in this file is a rule to follow. These four are decisions to br
 - Anything touching the user's machine outside this repo and the bm data dir.
 - A change in what the product *is* — new verbs, dropped verbs, a different store design.
 
-Moved here 2026-08-07 from `.design/campaign.md`, which was deleted; it was the only home for this.
+Moved here 2026-08-07 from `.design/campaign.md`, which was deleted; nothing else recorded this.
 
 ---
 
@@ -470,12 +487,16 @@ separate `get_client()` + `get_active_project()` pair inside an MCP tool.
 
 - Sync status: `basic-memory status` · corpus check: `basic-memory doctor` (integrity and
   hygiene, plus machine-wide `--only usage` command stats; `--only <group>`, exit 1 on integrity issues, `--strict` for any; `--self-test` checks the
-  file ↔ DB loop instead)
+  file ↔ DB loop instead). Integrity `external-home-missing` names an external home this machine
+  does not have; hygiene `external-home-ungoverned` names one that arrived without its
+  `vocabulary.yml`.
 - Board in a browser: `bm web` serves it on `127.0.0.1:2749`; `bm web install` /
   `bm web uninstall` manage the systemd user unit. Read-only.
 - Projects: `project list` / `project ls` / `project add "name" ~/path` (governed by default —
-  it writes the default record vocabulary; `--ungoverned` skips it) / `project info` /
-  `project default` / `project move` / `project remove` / `project mark` /
+  it writes the default record vocabulary; `--ungoverned` skips it) /
+  `project add "name" --home-here` (home the notes in `./.bm`, for a directory another VCS
+  versions) / `project adopt [name]` (register what that VCS delivered here, by name; idempotent) /
+  `project info` / `project default` / `project move` / `project remove` / `project mark` /
   `project vocab-sync` (append what the current default vocabulary declares and a
   hand-edited `vocabulary.yml` lacks; untouched machine snapshots upgrade themselves)
 - Config: `config list` (effective values, env overrides marked) / `config get <key>` /

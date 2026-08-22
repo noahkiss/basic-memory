@@ -2749,7 +2749,7 @@ noise before it exists. The `git clean` output above is also why the store must 
 worktree: a casual command destroys an in-tree store unrecoverably today.
 
 **Decided 2026-08-03 (user) — the store is the only home for note content, so W3 has no mirror to
-maintain.** The question this closes: does `store/<id>/` *hold* the notes, or does it mirror content
+maintain.** *(Superseded in part 2026-08-22 by U51: the store is the default home; a project may declare an external home.)* The question this closes: does `store/<id>/` *hold* the notes, or does it mirror content
 that lives at some arbitrary project root? It holds them. `.bm.yml` is a pointer that maps a working
 directory to a project; it never has note content beside it. See `AGENTS.md` for the full statement
 and its consequences (project paths become store-derived, a path argument to `bm project add`
@@ -3208,7 +3208,7 @@ the code is, so reversing one is a change, not an archaeology exercise.
 |---|---|
 | D1 | Record ids are `tnd-` + 8 chars from `[a-z0-9]`, drawn with `secrets.choice`, retried against the permalink column up to 5 times, then a loud failure. Never a counter (`vocabulary/ids.py`). |
 | D2 | Files land at `<type-dir>/<id>--<slug>.md`, plural type directories, slug lowercased and cut to 60 chars. |
-| D3 | Note files must be in the store for the history to see them: `bm project add` homes a new project at `store/<external_id>/`, and a project living elsewhere keeps working with one notice per write. |
+| D3 | Note files must be in the store for the history to see them: `bm project add` homes a new project at `store/<external_id>/`, and a project living elsewhere keeps working with one notice per write. **— superseded in part by U51 2026-08-22:** the store is the default home, not the only one, and a project that declares `home = "external"` gets no notice, because something else versions its directory. The per-write notice is now the *legacy* case alone. |
 | D4 | `bm undo` restores the newest `bm` commit's paths and records that as a **new** commit — never a reset. `--session <id>` walks every commit with that trailer, newest first, and more than one commit needs `--yes`. |
 | D5 | `bm mark <id> <status>` sets `status`, on a `task`, and nothing else. `bm done` is `bm mark <id> done`. |
 | D6 | The W9 headline file is `store/<external_id>/headline.md`, three lines, rewritten only when its bytes change. |
@@ -4258,8 +4258,8 @@ So three things change:
 2. **It lives inside the store repo but outside any project** — `store/_archive/<YYYY-MM-DD>/<repo>/`
    — so **W3's history covers it for free** and it is one `git show` away forever. It must be
    **excluded from indexing** (W10 shipped that mechanism); it is a backup, not note content, and
-   `AGENTS.md`'s "the store is the only home for note content" is not violated by a file that is
-   not a note.
+   `AGENTS.md`'s "the store is the only home for note content" (since U51: the default home) is
+   not violated by a file that is not a note.
 3. **Phase 1's "never edit a source file" rule is replaced**, not merely relaxed. The new rule:
    *snapshot first, extract, then trim the source*. An agent may not trim a file it did not snapshot.
 
@@ -8453,6 +8453,82 @@ one is the user's call, not an agent's.
 
 **T13's verbatim grep block was condensed**, because it printed the other org's path six times. The
 finding, the six sites, and the file:line of each are stated in prose instead.
+
+### U51 — notes could only live in the store, so none travelled with a skill — **DECIDED 2026-08-22, DONE 2026-08-22**
+
+**User decision, 2026-08-22 (`finding-trs78vh2`): a project may home its notes inside a directory
+something else already versions.** This is a store-design change and it adds a verb, both of which
+`AGENTS.md`'s stop-list reserves for the user; the approval is that finding. Plan record:
+`plan-hhh0gdfh`. Design: `.design/skill-homed-projects.md` (gitignored).
+
+**The gap.** A Claude Code skill under `~/.claude/skills/<name>/` is carried between machines by
+yadm, with class scoping the central store cannot give. Its working notes belonged with it and
+could not go there: every project's notes lived under `store/<external_id>/`, and a project
+registered at a path of its own was a *legacy* case that got a migrate-me notice on every write.
+So a skill's notes either sat in a store the skill never reaches on the next machine, or sat
+beside it as an untracked project that bm nagged about forever.
+
+**The revised invariant.** The store is the **default** home for note content, not the only one. A
+project may declare an **external home**: a `.bm/` directory laid out exactly as a store directory
+is, `vocabulary.yml` beside the records, so governance travels with them. `.bm/` rather than the
+directory itself, because homing a project at a skill root would index every skill file as a
+record and put `vocabulary.yml` where the harness reads skill content; a dot-directory is
+invisible to the skills loader, and `ignore_utils.py`'s derived-file patterns are already
+project-root-relative, so nothing there needed changing.
+
+**The `home` column.** One nullable `TEXT` on `project`, only meaningful value `"external"`. What
+`path` cannot express is *intent*, and it is exactly three-valued:
+
+| `path` under the store | `home` | Meaning | Off-store notice | bm history |
+|---|---|---|---|---|
+| yes | `NULL` | store-homed; the default | no | yes |
+| no | `NULL` | legacy project at a path of its own (D3) | yes, once per write | no |
+| no | `"external"` | versioned by something else | no | no, and the verbs say so |
+
+TEXT and not a boolean because the third state already existed and a fourth ("elsewhere, but bm
+still records") is plausible; `versioned_elsewhere: bool` would have to be renamed for it.
+
+**Seven stages, one commit each:**
+
+1. *a project's vocabulary.yml resolves from its home, not the store* — `lookup_project_home()` on
+   the stdlib-sqlite registry reader, cached per process; `vocabulary_path()` keeps its
+   `external_id` signature for its 80 call sites and falls back to the store.
+2. *the `home` column records why a project lives off-store* — column, migration
+   `q0l1m2n3o4p5`, readers, `ProjectInfoRequest.home` as a Literal. `move_project` refuses an
+   externally homed project: it only rewrites the registry path and would orphan the notes.
+3. *bm project add --home-here homes the notes in ./.bm* — implies `--here`, refuses a positional
+   path and `--only-here`, skips the nesting check both ways. Found here: `add_project` wrote the
+   default vocabulary inside the session scope, before the row was committed, so an external
+   project's `vocabulary.yml` would have landed in the store.
+4. *no off-store notice for an external home; history says who is excluded* — the caller passes
+   `externally_homed`; the store layer never opens the registry. `bm history dirty`,
+   `bm history commit` and `bm undo` end with one line naming the projects they exclude.
+5. *bm project adopt registers notes another VCS delivered* — resolves **by name**, refuses when
+   `./.bm` has not arrived rather than creating an empty one a later checkout would collide with,
+   and is idempotent. It is also the retrofit path for a legacy off-store project. Routed through
+   the ASGI client (`POST /v2/projects/adopt`), so it is absent from the native-command guard.
+6. *bm doctor reports an external home that is missing or ungoverned* — integrity
+   `external-home-missing` (the registry points at a directory that is not here: a yadm class
+   mismatch, or an alternate not checked out; repair names `bm project adopt`) and hygiene
+   `external-home-ungoverned` (the home holds no `vocabulary.yml`, so governance did not travel).
+   A missing home never also reports as ungoverned.
+7. *docs and the yadm convention* — this entry, plus `AGENTS.md`, `README.md` and
+   `docs/DOMAIN_MODEL.md`.
+
+**Names travel, ids do not.** `resolve_cli_project` has always keyed off the marker's `project:`,
+and `read_marker_id` has no consumer in `src/`, so the name was already the cross-machine key —
+this feature only made that load-bearing. Each machine mints its own `external_id`, a test asserts
+two registries mint different ones, and `store/<id>/` therefore differs per machine. No later
+feature may assume id stability across machines.
+
+**The yadm constraint, which fails silently in both directions.** The notes directory is tracked
+as a directory alternate, `.bm##class.home`. **yadm's default link mode is required:** under
+`yadm.alt-copy` the `.bm` that bm writes into is a plain copy, every note in it is untracked, and
+the notes stop travelling with nothing said. Link mode makes `.bm` a symlink, which is why **bm
+must never `.resolve()` an external home path** — when storing it, and when `bm doctor` stats it.
+A resolved path recorded on one machine does not match the literal one on the next, and the
+missing-home check would fire on a healthy install. The full rule set, including what must not sit
+at the skill root, is in `README.md`, *Notes that travel with a skill*.
 
 
 ## Docs swept

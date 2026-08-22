@@ -187,11 +187,13 @@ def read_marker_id(marker: Path) -> Optional[str]:
     Returns None for every marker written before GAPS U21, which carried the
     name alone; `bm project mark` is the retrofit that fills them in.
 
-    **Resolution still keys off `project:`, not this.** The id is recorded for
-    external consumers that must reach `store/<id>/` without paying for a `bm`
-    invocation. Making it authoritative for resolution is a later step: it would
-    need a decision about which key wins when a marker's two keys disagree, and
-    that question has no answer until every marker carries both.
+    **Resolution keys off `project:`, not this, and for an externally homed
+    project it never can.** Such a project's directory is carried between
+    machines by something else (GAPS U51), and each machine's registry mints its
+    own `external_id`, so the id in a delivered marker is wrong everywhere but
+    where it was written. The name is the cross-machine key. The id is recorded
+    only for external consumers that must reach `store/<id>/` on *this* machine
+    without paying for a `bm` invocation.
     """
     return _read_marker_key(marker, "id")
 

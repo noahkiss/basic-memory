@@ -55,8 +55,7 @@ _DESTRUCTIVE: frozenset[str] = frozenset({"update", "edit", "delete"})
 
 # D3: a project whose notes are not under the store keeps working, and says so
 # once per write rather than failing. The store is the default home for note
-# content, so this is a migration prompt, not an error. (AGENTS.md still says
-# "the only home"; stage 7 of the skill-homed plan is where that sentence goes.)
+# content, so this is a migration prompt, not an error.
 #
 # It is a prompt only for a project that never declared where its notes live. A
 # project homed `external` also gets no store history, but that is the design —
