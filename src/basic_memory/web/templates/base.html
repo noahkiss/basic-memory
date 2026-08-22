@@ -286,13 +286,15 @@ main { max-width: 1400px; margin: 0 auto; padding: 1.25rem 1rem 3rem; }
 
 /* --- The overview: one card per project --- */
 
-/* Multi-column flow rather than a grid: cards differ in height by whether
-   anything is stuck, and a grid row stretches to its tallest card, leaving a
-   quiet project in a box of empty space. Columns pack; the reading order is
-   alphabetical down each column, which is how an index reads anyway. */
+/* A grid with rows that do not stretch: cards differ in height by whether
+   anything is stuck, and a stretched row leaves a quiet project in a box of
+   empty space. CSS multicol packed tighter but Chrome's balancer overshoots
+   with `break-inside: avoid` — the page ran half again as long as its cards. */
 [data-component="overview"] {
-  columns: 20rem;
-  column-gap: 0.9rem;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(20rem, 1fr));
+  gap: 0.9rem;
+  align-items: start;
 }
 
 [data-component="project-card"] {
@@ -301,8 +303,6 @@ main { max-width: 1400px; margin: 0 auto; padding: 1.25rem 1rem 3rem; }
   border-left: 3px solid var(--surface1);
   border-radius: 8px;
   padding: 0.8rem 0.9rem;
-  margin: 0 0 0.9rem;
-  break-inside: avoid;
   transition: border-color 150ms ease;
 }
 [data-component="project-card"]:hover { border-color: var(--surface1); }
@@ -574,7 +574,7 @@ main > article > h1 { margin: 0 0 1rem; font-size: 1.4rem; }
 }
 
 @media (max-width: 600px) {
-  [data-component="overview"] { columns: 1; }
+  [data-component="overview"] { grid-template-columns: 1fr; }
 }
 
 @media (prefers-reduced-motion: reduce) {

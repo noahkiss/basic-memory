@@ -7802,8 +7802,8 @@ the page; nobody would scroll it.
 
 **The fix is structural, then visual.**
 
-- **`/` is an overview, not a stack of kanbans.** One card per project, alphabetical, packed in
-  CSS columns: name, headline, a 4 px stacked status bar, mono counts, and — the only records
+- **`/` is an overview, not a stack of kanbans.** One card per project, alphabetical, in a grid
+  whose rows do not stretch: name, headline, a 4 px stacked status bar, mono counts, and — the only records
   named at this scale — the ones that are `doing` or `blocked`, capped at four per status with a
   "+N more" line. A project with anything blocked gets a red left edge; one with work in flight
   but nothing blocked, blue. A project with nothing live still renders, muted — never hidden.
