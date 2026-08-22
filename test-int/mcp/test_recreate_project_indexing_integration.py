@@ -37,15 +37,21 @@ async def test_recreate_retained_project_indexes_existing_notes(
         initial_payload = _json_content(initial_create)
         assert initial_payload["indexing"]["total_files"] == 0
 
-        await client.call_tool(
+        # A project created by the tool is governed (GAPS U49), so the write is
+        # stamped with an id and its permalink equals that id (schema §2) — the
+        # path-derived `retained/retained-note` no longer names it.
+        written = await client.call_tool(
             "write_note",
             {
                 "project": project_name,
                 "title": "Retained Note",
                 "directory": "retained",
                 "content": f"# Retained Note\n\n{marker}",
+                "output_format": "json",
             },
         )
+        retained_permalink = _json_content(written)["permalink"]
+        assert retained_permalink.startswith("note-")
 
         await client.call_tool(
             "delete_project",
@@ -70,7 +76,7 @@ async def test_recreate_retained_project_indexes_existing_notes(
             "read_note",
             {
                 "project": project_name,
-                "identifier": "retained/retained-note",
+                "identifier": retained_permalink,
                 "output_format": "json",
             },
         )

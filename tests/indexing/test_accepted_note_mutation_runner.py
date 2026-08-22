@@ -310,6 +310,7 @@ class _EntityLookupRepository:
         self.by_file_path = by_file_path
         self.external_id_calls: list[tuple[AsyncSession, str, bool]] = []
         self.file_path_calls: list[tuple[AsyncSession, str, bool]] = []
+        self.permalink_calls: list[tuple[AsyncSession, str]] = []
 
     async def get_by_external_id(
         self,
@@ -330,6 +331,10 @@ class _EntityLookupRepository:
     ) -> Entity | None:
         self.file_path_calls.append((session, file_path, load_relations))
         return self.by_file_path
+
+    async def permalink_exists(self, session: AsyncSession, permalink: str) -> bool:
+        self.permalink_calls.append((session, permalink))
+        return False
 
 
 class _NoteContentLookupRepository:

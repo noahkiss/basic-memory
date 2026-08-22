@@ -488,7 +488,7 @@ def test_aliases_survive_a_file_round_trip(data_dir: Path):
 
 
 def test_vocabulary_document_serializes_aliases():
-    """`--governed` writes the aliases key, so a new project's file teaches it."""
+    """Creation writes the aliases key, so a new project's file teaches it."""
     from basic_memory.vocabulary.model import vocabulary_document
 
     document = vocabulary_document(DEFAULT_VOCABULARY)

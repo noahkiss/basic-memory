@@ -31,7 +31,9 @@ from basic_memory.indexing.accepted_note_write_runner import (
     prepare_accepted_note_replace,
     refresh_accepted_note_search_index,
     delete_accepted_note_search_index,
+    stamp_record_identity,
 )
+from basic_memory.file_utils import parse_frontmatter
 from basic_memory.models import Entity, NoteContent
 from basic_memory.markdown.schemas import (
     EntityFrontmatter,
@@ -52,6 +54,7 @@ from basic_memory.services.note_preparation import (
     PreparedEntityWrite,
 )
 from basic_memory.vocabulary.checker import Violation
+from basic_memory.vocabulary.model import parse_vocabulary
 
 
 _PreparedFields = PreparedEntityFields
@@ -494,6 +497,11 @@ def _schema() -> EntitySchema:
     )
 
 
+async def _never_taken(_permalink: str) -> bool:
+    """No note in this project claims any id, so the first draw is always free."""
+    return False
+
+
 def _entity() -> Entity:
     return Entity(
         id=42,
@@ -535,6 +543,7 @@ async def test_prepare_accepted_note_create_hashes_prepared_markdown() -> None:
         preparer,
         schema,
         check_storage_exists=False,
+        is_permalink_taken=_never_taken,
         session=session,
     )
 
@@ -542,6 +551,41 @@ async def test_prepare_accepted_note_create_hashes_prepared_markdown() -> None:
     assert result.db_checksum == sha256(b"# Created\n").hexdigest()
     assert preparer.calls == [(schema, False, session)]
     assert preparer.skip_conflict_checks == [False]
+
+
+@pytest.mark.asyncio
+async def test_stamp_record_identity_leaves_an_undeclared_type_alone() -> None:
+    """GAPS E2's rule: the write is refused a moment later for its type, so
+    spending an id on it would leave a gap in the sequence for nothing."""
+    vocabulary = parse_vocabulary({"types": ["task"]}, source="v.yml")
+
+    stamped = await stamp_record_identity(_schema(), vocabulary, is_permalink_taken=_never_taken)
+
+    assert stamped.content == "# Accepted\n"
+
+
+@pytest.mark.asyncio
+async def test_stamp_record_identity_draws_again_past_a_taken_id() -> None:
+    """The allocator asks the project before it commits to an id.
+
+    Without the collision check the drawn permalink could already belong to
+    another note, and the resolver would disambiguate it to `<id>-1` — which the
+    checker then refuses, because a permalink must equal its id byte-for-byte.
+    """
+    drawn: list[str] = []
+
+    async def taken_once(permalink: str) -> bool:
+        drawn.append(permalink)
+        return len(drawn) == 1
+
+    stamped = await stamp_record_identity(
+        _schema(),
+        parse_vocabulary({}, source="v.yml"),
+        is_permalink_taken=taken_once,
+    )
+
+    assert len(drawn) == 2
+    assert parse_frontmatter(stamped.content or "")["id"] == drawn[1]
 
 
 @pytest.mark.asyncio

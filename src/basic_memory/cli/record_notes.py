@@ -41,12 +41,9 @@ from basic_memory.project_marker import resolve_cli_project
 from basic_memory.schemas.base import Entity as EntitySchema
 
 from basic_memory.vocabulary.ids import (
-    MAX_ID_ATTEMPTS,
     SEPARATOR,
     TYPE_DIRS,
-    IdAllocationError,
     is_record_id,
-    new_record_id,
     record_slug,
 )
 from basic_memory.vocabulary.model import DEFAULT_VOCABULARY, Vocabulary
@@ -137,13 +134,12 @@ class ExistingRecord:
 # --- Which project a write lands in ---
 
 
-# What a write says when the registry holds no project it can land in. Naming
-# `--governed` is the point of the line: an ungoverned project writes records
-# unchecked (GAPS W4), so the message that creates a user's first project should
-# not steer them into the shape `bm doctor` will then complain about. Nothing
-# bootstraps a project on this path any more (GAPS U15) — this message is the
-# whole recovery, so it has to be runnable as written.
-NO_PROJECT_MESSAGE = "no project — run 'bm project add <name> --governed'"
+# What a write says when the registry holds no project it can land in. The bare
+# form is the governed one now (GAPS U49), so the line no longer has to carry a
+# flag to keep a user's first project out of the shape `bm doctor` complains
+# about. Nothing bootstraps a project on this path any more (GAPS U15) — this
+# message is the whole recovery, so it has to be runnable as written.
+NO_PROJECT_MESSAGE = "no project — run 'bm project add <name>'"
 
 
 def write_project_name(explicit: Optional[str]) -> str:
@@ -548,28 +544,19 @@ async def resolve_write_project(session: "AsyncSession", project_name: str) -> W
 async def allocate_record_id(session: "AsyncSession", project_id: int, note_type: str) -> str:
     """Draw a record id no note in this project already claims.
 
-    `vocabulary/ids.py` owns the draw, the attempt count and the error; only the
-    collision check lives here, because it is a database lookup and that
-    module's `allocate_record_id` takes a synchronous predicate. The permalink
-    column is what is checked: `permalink == id` byte-for-byte is the record
-    schema's identity rule (§2), so a taken permalink is a taken id.
-
-    ``note_type`` is the canonical type the write resolved — the id's prefix
-    carries it (U30), so the hatch's inbox records draw `inbox-…` ids and an
-    alias write draws the id of the type it stamped.
+    The loop moved to `services/record_identity.py` when the accepted-note create
+    path needed the same answer (GAPS U49); only the binding of *this* project's
+    collision check to *this* session is left here.
     """
+    from functools import partial
+
     from basic_memory.repository.entity_repository import EntityRepository
+    from basic_memory.services.record_identity import (
+        allocate_record_id as allocate_free_record_id,
+    )
 
     repository = EntityRepository(project_id=project_id)
-    for _ in range(MAX_ID_ATTEMPTS):
-        candidate = new_record_id(note_type)
-        if not await repository.permalink_exists(session, candidate):
-            return candidate
-    raise IdAllocationError(
-        f"could not allocate a free record id in {MAX_ID_ATTEMPTS} attempts; "
-        "that many collisions means the collision check is wrong, not that the "
-        "draw was unlucky"
-    )
+    return await allocate_free_record_id(note_type, partial(repository.permalink_exists, session))
 
 
 async def record_exists(session: "AsyncSession", project_id: int, record_id: str) -> bool:

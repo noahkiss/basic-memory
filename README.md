@@ -88,7 +88,7 @@ id. `bm` is the short name for `basic-memory`; both run the same commands.
 | `bm doctor` | Check the notes against the index and report what needs a person. Exits 1 when integrity found something; hygiene alone exits 0, `--strict` exits 1 on either. |
 | `bm status` | Report what is indexed and what is not. |
 | `bm project list` | List projects. `project info` describes one. |
-| `bm project add <name>` | Create a project, homed in the store. `--governed` turns the schema checks on; `--here` also writes a `.bm.yml` in the current directory pointing at it, and `--only-here` keeps that marker from covering subdirectories. |
+| `bm project add <name>` | Create a project, homed in the store and governed — it gets the default record vocabulary, so the schema checks run on every write. `--ungoverned` skips that file and leaves writes unchecked. `--here` also writes a `.bm.yml` in the current directory pointing at it, and `--only-here` keeps that marker from covering subdirectories. |
 | `bm project mark [<name>]` | Point the current directory at a project by writing its `.bm.yml`. With no name it refreshes the marker that is already there, which is how a marker written before `bm` recorded ids gains one. `--only-here` writes `scope: here`, so subdirectories do not inherit the marker. |
 
 ### A body with backticks or `$(`

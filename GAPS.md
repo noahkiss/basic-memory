@@ -8303,6 +8303,125 @@ The pattern still finds a large block of lines, so the fifteen-hit result above 
 over a corpus that can produce positives, not a broken pattern. Those GAPS hits are W6's history,
 U8's retired note, and this entry's own text.
 
+### U49 — a new project was born ungoverned, so nothing checked its first records — **DECIDED 2026-08-22, DONE 2026-08-22**
+
+**User decision, 2026-08-22 (`finding-5bwprkji`): `bm project add` writes the default record
+vocabulary by default.** A new project is governed unless the caller passes `--ungoverned`.
+
+**The D8 history, because this is the third position on one question.** D8 first had `project add`
+write `DEFAULT_VOCABULARY` unconditionally. That broke immediately: MCP's `write_note` types a note
+`note` unless told otherwise, the default vocabulary did not declare `note`, and 7 integration tests
+plus `just doctor` failed on `Type 'note' is not in this project's vocabulary` — every existing MCP
+caller would have failed the same way on its next write. D8 was reversed to opt-in and the reversal
+was written up as resting on W4's rule (an absent file means *ungoverned*, so writing one for every
+project overrides a meaning that is the human's to set). The *bug* was then fixed separately: the
+default vocabulary declares `note` alongside the seven record types. What remained was an opt-in
+default whose stated reason had already been repaired, and the practical cost was that a project
+created and then used immediately — the normal case — recorded its first weeks of work unchecked.
+
+**W4 is untouched.** An absent `vocabulary.yml` still means ungoverned, and nothing reads the
+defaults in its place. What changed is only which projects get a file at creation.
+
+**Changed:**
+
+- `src/basic_memory/schemas/project_info.py` — `ProjectInfoRequest.governed` defaults to `True`.
+  This is the hinge: the v2 router passes the field straight through, and every caller that builds
+  the request without naming `governed` inherits it.
+- `src/basic_memory/services/project_service.py` — `add_project(..., governed: bool = True)`.
+- `src/basic_memory/cli/commands/project.py` — `--ungoverned` added; `--governed` kept as a
+  **hidden, deprecated no-op** (see below); passing both is an error, checked before the create so
+  nothing is half-done; the `project add` docstring and the `vocab-sync` refusal message reworded.
+- `src/basic_memory/cli/commands/board.py`, `src/basic_memory/cli/record_notes.py` — the two
+  user-facing lines that told a reader to type `bm project add <name> --governed` now name the bare
+  form, which is the governed one.
+- `src/basic_memory/vocabulary/model.py` — comments only: `write_default_vocabulary`'s docstring
+  described itself as a reversal, and two block comments described the file as what `--governed`
+  writes.
+
+**`--governed` is a deprecated no-op, not a removed flag.** The session hook and the
+`migrating-status-files` skill both still spell it out, and a removed Typer option fails at the
+parser before the command runs at all — so it stays, hidden, asking for what already happens.
+Removing it is a later release's job, once those callers stop passing it.
+
+**`bm doctor --self-test` opts out explicitly** (`cli/commands/doctor.py`). Its two probe notes —
+one written through the API, one straight to disk — carry none of the frontmatter a governed
+project requires, because what the self-test checks is the file ↔ DB loop, not the schema. Left on
+the new default, every `just doctor` run would fail on `missing-required-field` and prove nothing
+about the loop.
+
+**Governed-by-default is wider than "the `note` bug is fixed", and the rest of it is the API
+path's identity — FIXED 2026-08-22.** The bug that forced D8's reversal was about the *type*, and it
+is genuinely gone. But `vocabulary/checker.py`'s `_REQUIRED_COMMON` — `id`, `permalink`, `title`,
+`source` — is an **error**-severity rule on every type, `note` included, and nothing on the MCP path
+filled `id` or `source`. `bm new` fills all four and was unaffected; every governed test in
+`tests/mcp/test_tool_vocabulary_enforcement.py` hands them over by hand (`BASE_FRONTMATTER`). So a
+bare `write_note` into a governed project was refused — for its missing `id` and `source`, not for
+its type — and that took out 7 integration tests the moment creation started governing.
+
+The fix stamps rather than demotes: **the accepted-note create path fills the three fields a caller
+cannot know, the same way `bm new` does.** Demoting the rule for `note` was the alternative and is
+worse — it would make the one type MCP writes by default the one type nothing identifies, and a
+record without an id is not addressable by `bm show`, `bm path` or a relation.
+
+- `src/basic_memory/services/record_identity.py` (new) — the id-allocation loop, moved out of
+  `cli/record_notes.py` so two write paths share it and neither imports the other. It takes an async
+  `is_taken` predicate; `vocabulary/ids.py` keeps the draw, the attempt count and the error, and
+  stays pure.
+- `src/basic_memory/indexing/accepted_note_write_runner.py` — `stamp_record_identity`, beside the
+  `review-by` default it is modelled on. Stamps only when the project is governed *and* the write's
+  type is one the vocabulary declares (E2's rule: an undeclared type is refused a moment later, so
+  spending an id on it buys nothing). A stated value always survives, an id included — these are
+  set-once fields. Identity is one value under two keys (schema.md §2), so a stated permalink with
+  no id becomes that id and the reverse.
+- The stamp goes into the note's **content frontmatter**, not `entity_metadata`, and *before*
+  prepare. Both for `record_markdown`'s reason: `markdown/utils.py:schema_to_markdown` drops
+  `permalink` from metadata and takes the resolver's answer instead, and the resolver honours a
+  content-frontmatter permalink verbatim while deriving every other one from the file path — so
+  `permalink == id` is only true when the value arrives that way. Before prepare, so the accepted
+  markdown, its checksum, the entity row and the file all carry what the checker then judged.
+- `src/basic_memory/indexing/accepted_note_mutation_runner.py` — passes the project's permalink
+  lookup down as `is_permalink_taken` from both create sites (`_run_accepted_note_create` and the
+  create branch of `_run_accepted_note_update`). It arrives as a capability on
+  `AcceptedNoteMutationEntityRepository` rather than a repository built inline, for the reason
+  `persist_accepted_note_violations` already records: this runner is driven by fakes that pass a
+  stub session.
+- **`source` is stamped `api`** for both MCP and REST. `write_note` carries no source parameter and
+  no tool on this path has one, so there is no narrower answer; a caller that does know one states
+  it in `metadata` and is left alone. `bm new` still stamps `cli`.
+- The sync path is untouched. It indexes files from disk in *record* mode and must never invent an
+  id for a file a human wrote.
+
+**Still refused after this, deliberately.** The stamp fills the common three and nothing else, so a
+governed `write_note(note_type="task")` with no `status`, or `note_type="finding"` with no
+`event-date` and provenance, is still rejected. Those are fields a writer has a basis to choose;
+`review-by` and identity are not. `bm new` is the verb that asks for them.
+
+**Test arithmetic: +9 `def test_` lines.** Six of them are the identity stamp:
+`tests/mcp/test_tool_vocabulary_enforcement.py` +4 — a governed bare `write_note` gets `id`,
+`permalink == id` and `source: api` *on disk*, a stated identity is never overwritten, a stated
+permalink becomes the id, and an ungoverned project is stamped with nothing (the positive control
+for the gate). `tests/indexing/test_accepted_note_write_runner.py` +2 — an undeclared type is left
+alone, and the allocator draws again past a taken id. The other three are the default flip:
+`tests/cli/test_project_add.py` −1 / +4 (net +3):
+`test_project_add_governed_flag_reaches_the_api` is replaced by four —
+`..._asks_for_governance_by_default`, `..._ungoverned_asks_for_no_vocabulary`,
+`..._still_accepts_the_deprecated_governed_flag`, `..._refuses_both_governance_flags` — over a
+shared `record_create_payload` fixture. `tests/services/test_project_service.py` −2 / +2 (net 0):
+`test_add_project_is_ungoverned_by_default` becomes `test_add_project_is_governed_by_default`, and
+`test_add_project_governed_writes_the_default_vocabulary` becomes
+`test_add_project_ungoverned_writes_no_vocabulary` — the flag that needs a test is the one that is
+no longer the default. The CLI tests assert the payload because they stub
+`ProjectClient.create_project`; the file on disk is asserted at the service layer, where it is
+written.
+
+**Fixtures needed no change.** `tests/conftest.py`'s `test_project` builds its row through
+`ProjectRepository.create`, not `ProjectService.add_project`, so it never reached the vocabulary
+write and is still ungoverned — which is what the ungoverned-path tests across `tests/` depend on.
+The `add_project` callers in `tests/api/v2/test_project_router.py`,
+`tests/db/test_issue_254_foreign_key_constraints.py` and the three MCP creation tests in
+`test-int/mcp/test_project_management_integration.py` now create governed projects, and none of
+them writes a note afterwards.
+
 ## Docs swept
 
 **2026-07-26.** A ten-reader sweep reconciled the following into this file. The gaps they contained

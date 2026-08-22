@@ -325,7 +325,7 @@ def vocab_sync(
     if vocabulary is None:
         raise fail(
             f"Error: '{registered}' is not governed — there is no vocabulary to sync "
-            "('bm project add --governed' writes one at creation)"
+            "(a project created with --ungoverned has none)"
         )
 
     delta = defaults_delta(vocabulary)
@@ -356,10 +356,19 @@ def add_project(
         None, help="A directory whose notes to adopt. Omit it to use the store."
     ),
     set_default: bool = typer.Option(False, "--default", help="Set as default project"),
+    ungoverned: bool = typer.Option(
+        False,
+        "--ungoverned",
+        help="Skip the default record vocabulary; writes to this project go unchecked.",
+    ),
+    # Kept only so the callers that still pass it keep working — the session hook
+    # and the migration skill both spell it out. It asks for what already happens,
+    # so it is accepted and does nothing (GAPS U49).
     governed: bool = typer.Option(
         False,
         "--governed",
-        help="Write the default record vocabulary, so every write to this project is checked.",
+        hidden=True,
+        help="Deprecated no-op: a new project is governed by default. Removed in a later release.",
     ),
     here: bool = typer.Option(
         False,
@@ -381,11 +390,11 @@ def add_project(
     `~/.basic-memory`. A path argument names an *import source* — somewhere notes
     already are — and that project keeps living there.
 
-    `--governed` writes the default record vocabulary into the project, which
-    turns the schema checks on for every write to it. Without it the project is
-    ungoverned and records are written unchecked. The default vocabulary declares
-    `note` alongside the six record types, so an ordinary note still has a home in
-    a governed project — what governance costs is that every write is checked.
+    A new project is governed: the default record vocabulary is written into it,
+    which turns the schema checks on for every write. `--ungoverned` skips that
+    file, and records are then written unchecked. The default vocabulary declares
+    `note` alongside the seven record types, so an ordinary note still has a home
+    in a governed project — what governance costs is that every write is checked.
 
     `--here` leaves a `.bm.yml` in the current directory, so every `bm` command
     run from it means this project without naming it. Add `--only-here` to stop
@@ -394,6 +403,11 @@ def add_project(
     Example:
         bm project add research
     """
+    # Contradictory flags are an error, never a precedence rule: the caller who
+    # spelled both out has no idea which one this command would honour.
+    if governed and ungoverned:
+        raise fail("Error: --governed and --ungoverned contradict each other; pass one")
+
     # Decision point: the marker conflict is checked before the project is
     # created, not after it is written.
     # Why: refusing after the create would leave a registered project behind and
@@ -433,7 +447,9 @@ def add_project(
                 "name": name,
                 "path": resolved_path,
                 "set_default": set_default,
-                "governed": governed,
+                # Only the opt-out carries information now; `--governed` names
+                # the default and adds nothing to it (GAPS U49).
+                "governed": not ungoverned,
             }
             return await ProjectClient(client).create_project(data)
 

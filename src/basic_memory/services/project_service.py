@@ -138,7 +138,7 @@ class ProjectService:
         name: str,
         path: str | None = None,
         set_default: bool = False,
-        governed: bool = False,
+        governed: bool = True,
     ) -> None:
         """Add a new project to the registry.
 
@@ -152,10 +152,10 @@ class ProjectService:
                 and the project keeps living there until W6's importer moves it.
             set_default: Whether to set this project as the default
             governed: Write ``DEFAULT_VOCABULARY`` into the project's store
-                directory, so the checker runs on every write to it (verbs
-                decision D8). **Off by default**, and that default is load-bearing
-                rather than cautious — see ``vocabulary/model.py``'s
-                ``write_default_vocabulary``.
+                directory, so the checker runs on every write to it. **On by
+                default** since GAPS U49 (2026-08-22): a new project is governed
+                unless the caller opts out. Passing False leaves no
+                ``vocabulary.yml``, which is what "ungoverned" means (GAPS W4).
 
         Raises:
             ValueError: If the project already exists or path collides with existing project
@@ -279,10 +279,10 @@ class ProjectService:
             created_project = await self.repository.create(session, project_data)
 
             # Creating a project is the deliberate human act a vocabulary needs
-            # (GAPS W4, verbs decision D8), but asking for one is what makes it
-            # deliberate — see `vocabulary/model.py` for why the default had
-            # to be reversed. `bm new` never writes one: on an ungoverned project
-            # it writes the record unchecked and says so.
+            # (GAPS W4), and since GAPS U49 that act is creation itself: a new
+            # project is governed unless the caller opted out. `bm new` never
+            # writes one — on an ungoverned project it writes the record
+            # unchecked and says so.
             if governed:
                 write_default_vocabulary(created_project.external_id)
 

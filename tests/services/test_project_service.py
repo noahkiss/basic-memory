@@ -823,35 +823,14 @@ async def test_add_project_without_a_path_is_homed_in_the_store(project_service:
 
 
 @pytest.mark.asyncio
-async def test_add_project_is_ungoverned_by_default(project_service: ProjectService):
-    """A new project writes no vocabulary, so its records are unchecked (W4).
+async def test_add_project_is_governed_by_default(project_service: ProjectService):
+    """Creation writes the default vocabulary, so records are checked (GAPS U49).
 
-    This default is a reversal of D8's first shape. The breakage that forced the
-    reversal is fixed — `DEFAULT_VOCABULARY` declares `note`, MCP's `write_note`
-    default, so governing a project no longer refuses the primary agent write
-    path — but the default stays ungoverned on the W4 rule itself: an absent file
-    means ungoverned, and declaring a vocabulary is the human's act to take.
-    """
-    from basic_memory.vocabulary.model import load_vocabulary, vocabulary_path
-
-    name = f"test-ungoverned-{os.urandom(4).hex()}"
-
-    await project_service.add_project(name)
-
-    project = await _get_project(project_service, name)
-    assert project is not None
-    assert not vocabulary_path(project.external_id).exists()
-    assert load_vocabulary(project.external_id) is None
-
-
-@pytest.mark.asyncio
-async def test_add_project_governed_writes_the_default_vocabulary(
-    project_service: ProjectService,
-):
-    """`--governed` is the deliberate human act a vocabulary needs (D8, W4).
-
-    `bm new` never writes one — on an ungoverned project it writes the record
-    unchecked and says so — so this is the only place a project becomes governed.
+    D8 first shipped this default, reversed it to opt-in because a governed
+    project refused MCP's `write_note` default type, and 2026-08-22 put it back:
+    `DEFAULT_VOCABULARY` declares `note`, so the reason for the reversal is gone.
+    W4 is untouched — an absent file still means ungoverned — because creation is
+    the deliberate act, and the caller who wants no file says `--ungoverned`.
     """
     from basic_memory.vocabulary.model import (
         DEFAULT_VOCABULARY,
@@ -861,7 +840,7 @@ async def test_add_project_governed_writes_the_default_vocabulary(
 
     name = f"test-governed-{os.urandom(4).hex()}"
 
-    await project_service.add_project(name, governed=True)
+    await project_service.add_project(name)
 
     project = await _get_project(project_service, name)
     assert project is not None
@@ -870,14 +849,35 @@ async def test_add_project_governed_writes_the_default_vocabulary(
 
 
 @pytest.mark.asyncio
+async def test_add_project_ungoverned_writes_no_vocabulary(
+    project_service: ProjectService,
+):
+    """`--ungoverned` is the opt-out, and it leaves no file at all (GAPS W4, U49).
+
+    The gate on the test above: without this, "governed by default" could mean
+    "governed always", and the ungoverned path W4 defines would be unreachable.
+    """
+    from basic_memory.vocabulary.model import load_vocabulary, vocabulary_path
+
+    name = f"test-ungoverned-{os.urandom(4).hex()}"
+
+    await project_service.add_project(name, governed=False)
+
+    project = await _get_project(project_service, name)
+    assert project is not None
+    assert not vocabulary_path(project.external_id).exists()
+    assert load_vocabulary(project.external_id) is None
+
+
+@pytest.mark.asyncio
 async def test_a_governed_project_refuses_an_undeclared_type(project_service: ProjectService):
     """Governing does refuse a type the vocabulary does not declare — but not `note`.
 
     Both halves matter and they are the D8 follow-up. `note` is MCP's default
-    write type and `DEFAULT_VOCABULARY` declares it, so `--governed` no longer
-    breaks `write_note`; `runbook` is undeclared and is refused, so governing
-    still means something. The funnel is checked directly, which is the layer
-    that refuses.
+    write type and `DEFAULT_VOCABULARY` declares it, so governing a project no
+    longer breaks `write_note`; `runbook` is undeclared and is refused, so
+    governing still means something. The funnel is checked directly, which is
+    the layer that refuses.
     """
     from basic_memory.services.exceptions import VocabularyViolationError
     from basic_memory.services.vocabulary_enforcement import enforce_vocabulary

@@ -147,12 +147,13 @@ class ProjectInfoRequest(BaseModel):
         default=None, description="Import source directory; omit to use the store"
     )
     set_default: bool = Field(..., description="Set the project as the default")
-    # Opt-in, because an absent `vocabulary.yml` means ungoverned (GAPS W4) and
-    # declaring one is the human's act. The MCP breakage that first forced this
-    # reversal is fixed: the default vocabulary declares `note`, `write_note`'s
-    # default type, so governing a project keeps that path working (D8).
+    # Governed by default (GAPS U49, 2026-08-22). D8 made this opt-in because a
+    # governed project refused `write_note`'s default type; that bug is fixed —
+    # the default vocabulary declares `note` — so the reason no longer holds. An
+    # absent `vocabulary.yml` still means ungoverned (GAPS W4); what changed is
+    # only what creation writes. A caller that wants none sends `governed=False`.
     governed: bool = Field(
-        default=False, description="Write the default record vocabulary into the project's store"
+        default=True, description="Write the default record vocabulary into the project's store"
     )
 
 

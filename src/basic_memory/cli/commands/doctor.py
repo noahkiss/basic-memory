@@ -341,10 +341,17 @@ async def run_doctor() -> None:
 
         async with get_client() as client:
             project_client = ProjectClient(client)
+            # Ungoverned on purpose, against the new default (GAPS U49). The
+            # self-test writes two raw notes — one through the API, one straight
+            # to disk — carrying none of the frontmatter a governed project
+            # requires, because what it checks is the file ↔ DB loop, not the
+            # schema. Governing it would make every run fail on `missing-
+            # required-field` and prove nothing about the loop.
             project_request = ProjectInfoRequest(
                 name=project_name,
                 path=str(temp_path),
                 set_default=False,
+                governed=False,
             )
 
             project_id: str | None = None

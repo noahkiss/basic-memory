@@ -41,9 +41,7 @@ BOARD_AFFORDANCE = "bm show <id> read one · bm done <id> close one · bm brief 
 
 # What an unmarked directory gets: the same opt-in line the session hook prints,
 # because two spellings of "not tracked" would teach the surface unreliably.
-NOT_TRACKED = (
-    "not bm-tracked — opt in with 'bm project add <name> --governed --here' from the project root"
-)
+NOT_TRACKED = "not bm-tracked — opt in with 'bm project add <name> --here' from the project root"
 
 
 def _fail(message: str) -> typer.Exit:

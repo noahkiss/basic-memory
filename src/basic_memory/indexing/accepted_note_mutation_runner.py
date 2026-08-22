@@ -6,6 +6,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
+from functools import partial
 from typing import Any, NoReturn, Protocol
 from uuid import UUID
 
@@ -35,6 +36,7 @@ from basic_memory.models import Entity, NoteContent, Project
 from basic_memory.repository import NoteContentVersionConflict
 from basic_memory.services.exceptions import EntityAlreadyExistsError, VocabularyViolationError
 from basic_memory.services.note_preparation import PreparedEntityWrite
+from basic_memory.services.record_identity import PermalinkTakenCheck
 from basic_memory.services.vocabulary_enforcement import enforce_vocabulary
 from basic_memory.vocabulary.checker import Violation
 from basic_memory.vocabulary.model import Vocabulary, load_vocabulary
@@ -233,6 +235,13 @@ class AcceptedNoteMutationEntityRepository(Protocol):
         *,
         load_relations: bool = False,
     ) -> Entity | None: ...
+
+    # The collision check behind a governed create's record id (GAPS U49). It is
+    # a capability rather than a repository the runner builds, for the reason
+    # `persist_accepted_note_violations` records: this runner is driven by fakes
+    # that pass a stub session, and a repository built inline would issue real
+    # SQL against it.
+    async def permalink_exists(self, session: AsyncSession, permalink: str) -> bool: ...
 
 
 class AcceptedNoteMutationNoteContentRepository(Protocol):
@@ -580,6 +589,7 @@ async def _run_accepted_note_create(
         request.data,
         check_storage_exists=dependencies.verify_storage_absent_on_create,
         session=session,
+        is_permalink_taken=partial(entity_repository.permalink_exists, session),
         vocabulary=load_vocabulary(project.external_id),
     )
 
@@ -684,6 +694,7 @@ async def _run_accepted_note_update(
             request.data,
             check_storage_exists=dependencies.verify_storage_absent_on_create,
             session=session,
+            is_permalink_taken=partial(entity_repository.permalink_exists, session),
             vocabulary=load_vocabulary(project.external_id),
         )
         entity = await create_accepted_pending_entity(
@@ -1129,13 +1140,20 @@ async def prepare_create_or_reject(
     *,
     check_storage_exists: bool,
     session: AsyncSession,
+    is_permalink_taken: PermalinkTakenCheck,
     vocabulary: Vocabulary | None = None,
 ) -> AcceptedPreparedNoteWrite:
     """Prepare a new accepted note or raise a typed mutation rejection.
 
-    ``vocabulary`` is the project's, already loaded, and is used for one thing:
-    filling in a missing ``review-by`` on a finding or a guide before the write
-    is judged. ``None`` means the project is not governed and nothing is filled.
+    ``vocabulary`` is the project's, already loaded, and is used to fill in what
+    a governed create leaves out and the checker then requires: a missing
+    ``review-by`` on a finding or a guide, and the ``id``, ``permalink`` and
+    ``source`` every record carries. ``None`` means the project is not governed
+    and nothing is filled.
+
+    ``is_permalink_taken`` answers whether this project already holds a note
+    under a candidate id, which is the one thing the id allocator cannot decide
+    on its own.
     """
     try:
         conflicting_note_paths = [
@@ -1163,6 +1181,7 @@ async def prepare_create_or_reject(
             # binary resources, which are valid alongside Markdown notes.
             skip_conflict_check=True,
             session=session,
+            is_permalink_taken=is_permalink_taken,
             vocabulary=vocabulary,
         )
     except EntityAlreadyExistsError as error:

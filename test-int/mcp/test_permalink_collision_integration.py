@@ -70,9 +70,14 @@ async def test_permalink_collision_across_projects(mcp_server, app, test_project
         read2_text = read2.content[0].text
         assert "Content from project TWO" in read2_text
 
-        # Permalinks should be project-prefixed and distinct
+        # Permalinks are distinct. The fixture project is ungoverned, so its note
+        # keeps the path-derived permalink; `second-project` came from the tool and
+        # is governed (GAPS U49), so its note carries a stamped id and, per schema
+        # §2, a permalink equal to that id — never the path form.
         assert f"{test_project.name}/notes/shared-title-note" in read1_text
-        assert "second-project/notes/shared-title-note" in read2_text
+        assert "second-project/notes/shared-title-note" not in read2_text
+        assert "permalink: note-" in read2_text
+        assert "id: note-" in read2_text
 
 
 @pytest.mark.asyncio

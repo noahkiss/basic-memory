@@ -121,15 +121,16 @@ class Vocabulary:
     aliases: Mapping[str, str] = field(default_factory=lambda: MappingProxyType({}))
 
 
-# What `bm project add --governed` WRITES into a project's first vocabulary file
-# — explicitly NOT what an absent file means. An absent file means the project is
-# not governed and the checker never runs (GAPS W4, decided 2026-08-10).
+# What `bm project add` WRITES into a project's first vocabulary file — explicitly
+# NOT what an absent file means. An absent file means the project is not governed
+# and the checker never runs (GAPS W4, decided 2026-08-10). Creation writes this
+# unless the caller passed `--ungoverned` (GAPS U49).
 #
 # `note` is the eighth and it is not one of the record types: it is MCP's
 # `write_note` default, and a governed project that did not declare it refused the
 # primary agent write path outright (GAPS D8). Declaring it costs nothing — it
 # carries the four common fields and no rules of its own, exactly like a type a
-# human added — and it keeps `--governed` from meaning "MCP stops working here".
+# human added — and it keeps governance from meaning "MCP stops working here".
 # The record types are still the seven: `note` has no picking question and no
 # glossary summary, so `bm new` never offers it as a choice.
 DEFAULT_VOCABULARY = Vocabulary(
@@ -152,7 +153,7 @@ DEFAULT_VOCABULARY = Vocabulary(
 # --- Default-vocabulary history (GAPS U39) ---
 #
 # Every mapping `vocabulary_document(DEFAULT_VOCABULARY)` has EVER produced,
-# oldest first — the exact content `bm project add --governed` serialized in
+# oldest first — the exact content `bm project add` serialized in
 # each era. A vocabulary file that parses equal to one of these is provably a
 # machine snapshot no human has touched, and the auto-upgrade path may rewrite
 # it to the current defaults. A file matching none of them is hand-edited and
@@ -554,18 +555,15 @@ def sync_vocabulary_with_defaults(external_id: str, vocabulary: Vocabulary) -> P
 def write_default_vocabulary(external_id: str) -> Path | None:
     """Give a project the default vocabulary, and return where it landed.
 
-    **Called only for `bm project add --governed`, and that is a reversal.**
-    D8 originally had `project add` write this unconditionally. It cannot, and the
-    reason it cannot is not the one that closed the item: an absent file means
-    ungoverned (GAPS W4), so writing a vocabulary for every project would
-    override that meaning rather than leave it to the human whose file it is.
+    **Called for every `bm project add` that was not told otherwise (GAPS U49).**
+    D8 first had creation write this unconditionally, then reversed it to opt-in
+    because a governed project refused MCP's `write_note` default type: 7
+    integration tests and `just doctor` had failed on `Type 'note' is not in this
+    project's vocabulary`. That breakage is fixed — the default vocabulary
+    declares `note` — so 2026-08-22 put the write back on the default path.
 
-    The *breakage* that forced the reversal is fixed. The default vocabulary now
-    declares `note`, MCP's `write_note` default, so governing a project no longer
-    refuses the primary agent write path — 7 integration tests and `just doctor`
-    had failed on `Type 'note' is not in this project's vocabulary`, and every
-    existing MCP caller would have failed the same way on its next write.
-    Governed-by-default is still not this tree's decision to take.
+    An absent file still means ungoverned (GAPS W4). What changed is only which
+    projects get one at creation: all of them, unless `--ungoverned` says no.
 
     Returns None when the file is already there. A vocabulary is hand-edited
     (`.forked/schema.md` §3), so overwriting an existing one would discard a

@@ -23,6 +23,7 @@ from basic_memory import db
 from basic_memory.file_utils import parse_frontmatter
 from basic_memory.mcp.tools import edit_note, move_note, write_note
 from basic_memory.repository.violation_repository import ViolationRepository
+from basic_memory.vocabulary.ids import is_record_id
 from basic_memory.vocabulary.model import default_review_by, parse_vocabulary, vocabulary_path
 
 # The common four the checker requires, minus the type, plus a permalink equal to
@@ -125,11 +126,11 @@ async def test_write_note_accepts_the_default_type_under_the_default_vocabulary(
 ):
     """A governed project accepts ``type: note``, MCP's default (GAPS D8).
 
-    This is the breakage that forced `bm project add --governed` to be opt-in:
+    This is the breakage that forced `bm project add` to be opt-in for a while:
     `write_note` carries `type: note` unless told otherwise, and a default
     vocabulary that did not declare it refused every existing MCP caller on its
-    next write. `--governed` stays opt-in — an absent file means ungoverned
-    (GAPS W4) — but governing a project no longer breaks the primary write path.
+    next write. Declaring `note` is what let creation govern by default again
+    (GAPS U49). An absent file still means ungoverned (GAPS W4).
     """
     govern_project()
 
@@ -564,6 +565,101 @@ async def test_an_ungoverned_project_stamps_nothing(app, test_project):
     )
 
     assert "review-by" not in stored_frontmatter(test_project, "Ungoverned Finding")
+
+
+# --- id, permalink and source, filled in on the API path (GAPS U49) ---
+#
+# `bm new` stamps the common four itself. Every other write states a title and a
+# body, so once a project is governed by default the checker refused all of them
+# over three fields no caller is in a position to know. The create path fills
+# them instead, and these tests are about the file that reaches disk — the DB row
+# alone would mean the validated write and the stored write had come apart.
+
+
+@pytest.mark.asyncio
+async def test_a_governed_note_written_without_identity_gets_it(app, test_project, govern_project):
+    """The plain MCP write: a title, a body, and nothing else."""
+    govern_project()
+
+    result = await write_note(
+        project=test_project.name,
+        title="Unstamped Note",
+        directory="notes",
+        content="Just a note.",
+        output_format="json",
+    )
+
+    assert isinstance(result, dict)
+    assert result["action"] == "created"
+    stored = stored_frontmatter(test_project, "Unstamped Note")
+    assert is_record_id(stored["id"])
+    # The prefix carries the type (GAPS U30), and MCP's default type is `note`.
+    assert stored["id"].startswith("note-")
+    assert stored["permalink"] == stored["id"]
+    assert stored["source"] == "api"
+    # The DB row and the file agree, which is what makes the record addressable
+    # by the id the file carries.
+    assert result["permalink"] == stored["id"]
+
+
+@pytest.mark.asyncio
+async def test_a_stated_identity_is_never_overwritten(app, test_project, govern_project):
+    """These fields are set-once, so a write that names them is not leaving a gap."""
+    govern_project()
+
+    await write_note(
+        project=test_project.name,
+        title="Self Stamped Note",
+        directory="notes",
+        content=note_content("Just a note.", **BASE_FRONTMATTER),
+    )
+
+    stored = stored_frontmatter(test_project, "Self Stamped Note")
+    assert stored["id"] == "tnd-0001"
+    assert stored["permalink"] == "tnd-0001"
+    assert stored["source"] == "agent"
+
+
+@pytest.mark.asyncio
+async def test_a_stated_permalink_becomes_the_id(app, test_project, govern_project):
+    """Identity is one value under two keys (schema.md §2), so neither is invented
+    when the other is stated — the checker requires them equal byte-for-byte."""
+    govern_project()
+
+    await write_note(
+        project=test_project.name,
+        title="Half Stamped Note",
+        directory="notes",
+        content=note_content("Just a note.", permalink="tnd-0002"),
+    )
+
+    stored = stored_frontmatter(test_project, "Half Stamped Note")
+    assert stored["id"] == "tnd-0002"
+    assert stored["permalink"] == "tnd-0002"
+
+
+@pytest.mark.asyncio
+async def test_an_ungoverned_project_stamps_no_identity(app, test_project):
+    """Positive control for the gate: no vocabulary.yml, no rule, nothing to fill.
+
+    Stamping here would give every note in an ungoverned project a record id it
+    never asked for, and change what its permalink addresses.
+    """
+    assert not vocabulary_path(test_project.external_id).exists()
+
+    result = await write_note(
+        project=test_project.name,
+        title="Unstamped Ungoverned Note",
+        directory="notes",
+        content="Just a note.",
+        output_format="json",
+    )
+
+    stored = stored_frontmatter(test_project, "Unstamped Ungoverned Note")
+    assert "id" not in stored
+    assert "source" not in stored
+    assert isinstance(result, dict)
+    assert result["permalink"] == stored["permalink"]
 
 
 # --- supersedes, which only a finding has (GAPS W5 rule 1) ---

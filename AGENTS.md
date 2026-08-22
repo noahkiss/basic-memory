@@ -484,7 +484,8 @@ separate `get_client()` + `get_active_project()` pair inside an MCP tool.
   file ↔ DB loop instead)
 - Board in a browser: `bm web` serves it on `127.0.0.1:2749`; `bm web install` /
   `bm web uninstall` manage the systemd user unit. Read-only.
-- Projects: `project list` / `project ls` / `project add "name" ~/path` / `project info` /
+- Projects: `project list` / `project ls` / `project add "name" ~/path` (governed by default —
+  it writes the default record vocabulary; `--ungoverned` skips it) / `project info` /
   `project default` / `project move` / `project remove` / `project mark` /
   `project vocab-sync` (append what the current default vocabulary declares and a
   hand-edited `vocabulary.yml` lacks; untouched machine snapshots upgrade themselves)

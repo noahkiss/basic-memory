@@ -106,7 +106,7 @@ def test_write_verb_refuses_instead_of_bootstrapping(tmp_path, command):
     probe = run_on_empty_registry(tmp_path, command)
 
     assert probe["exit_code"] != 0, probe["output"]
-    assert "no project — run 'bm project add <name> --governed'" in probe["output"]
+    assert "no project — run 'bm project add <name>'" in probe["output"]
     assert not probe["bootstrapped"], probe["output"]
 
 
@@ -138,7 +138,8 @@ def test_project_add_leaves_exactly_the_project_asked_for(tmp_path):
     """
     env, home = fresh_install_env(tmp_path)
 
-    added = run_probe(env, home, ["project", "add", "probe", "--governed"])
+    # Bare: the governed default is what a fresh install now gets (GAPS U49).
+    added = run_probe(env, home, ["project", "add", "probe"])
     assert added["exit_code"] == 0, added["output"]
     assert not added["bootstrapped"], added["output"]
     # The service makes the first project the default (`ProjectService.add_project`),

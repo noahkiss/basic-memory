@@ -160,6 +160,11 @@ async def create_memory_project(
     Creates a new project with the specified name and path. The project directory
     will be created if it doesn't exist. Optionally sets the new project as default.
 
+    The new project is governed: it gets the default record vocabulary, so every
+    write to it is checked against the schema (GAPS U49). A note written here
+    needs its `id`, `permalink`, `title`, and `source` frontmatter, and a `type`
+    the vocabulary declares — `bm types` lists them.
+
     Args:
         project_name: Name for the new project (must be unique)
         project_path: File system path where the project will be stored

@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from typing import Any, Protocol
 
+import frontmatter
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from basic_memory import file_utils
@@ -46,6 +47,7 @@ from basic_memory.services.note_preparation import (
     PreparedEntityWrite,
     apply_prepared_entity_fields,
 )
+from basic_memory.services.record_identity import PermalinkTakenCheck, allocate_record_id
 from basic_memory.vocabulary.checker import Violation
 from basic_memory.vocabulary.model import Vocabulary, default_review_by
 
@@ -54,6 +56,17 @@ from basic_memory.vocabulary.model import Vocabulary, default_review_by
 # than findings do, which is why a guide is on this list beside a finding.
 REVIEW_BY_DEFAULT_TYPES: frozenset[str] = frozenset({"finding", "guide"})
 REVIEW_BY_FIELD = "review-by"
+
+ID_FIELD = "id"
+PERMALINK_FIELD = "permalink"
+SOURCE_FIELD = "source"
+
+# What a write that arrived over the API or an MCP tool says its content came
+# from. `bm new` stamps `cli` for a record a human authored at the prompt
+# (`cli/record_notes.py:DEFAULT_SOURCE`); there is no narrower answer here,
+# because no tool on this path carries a source of its own — `write_note` has no
+# such parameter, and a caller that does know one states it in `metadata`.
+API_SOURCE = "api"
 
 
 class AcceptedNoteCreatePreparer(Protocol):
@@ -327,18 +340,98 @@ def stamp_default_review_by(
     return data.model_copy(update={"entity_metadata": metadata})
 
 
+async def stamp_record_identity(
+    data: EntitySchema,
+    vocabulary: Vocabulary | None,
+    *,
+    is_permalink_taken: PermalinkTakenCheck,
+) -> EntitySchema:
+    """Fill in the ``id``, ``permalink`` and ``source`` a governed record needs.
+
+    `bm new` stamps all three itself (`cli/commands/new.py:build_frontmatter`).
+    Every other write states a title and a body and nothing else, so once a
+    project is governed by default (GAPS U49) the checker's common-field rule
+    refuses every MCP and API write into one — over three fields that only the
+    tool is in a position to supply. It supplies them here instead.
+
+    Stamped into the note's *content* frontmatter rather than into
+    ``entity_metadata``, for the reason `record_markdown` states: the permalink
+    resolver honours a content-frontmatter permalink verbatim and derives every
+    other one from the file path, so ``permalink == id`` is only true when the
+    value arrives that way (`markdown/utils.py:schema_to_markdown` drops the key
+    from metadata outright). Stamped *before* prepare, like the `review-by`
+    default above, so the accepted markdown, its checksum, the entity row and the
+    file all carry the value the checker then judges.
+
+    A value the writer stated survives untouched, an id included: these fields are
+    set-once (`.forked/schema.md` §4), and a write that names its own id is
+    addressing a record rather than asking for one. Identity is one value under
+    two keys (§2), so a stated permalink with no id becomes that id, and a stated
+    id with no permalink becomes that permalink.
+
+    An ungoverned project is left alone because no rule applies to it, and a type
+    the vocabulary does not declare is left alone for GAPS E2's reason: that write
+    is refused a moment later, and spending an id on it buys nothing.
+    """
+    note_type = accepted_note_create_type(data)
+    if vocabulary is None or note_type not in vocabulary.types:
+        return data
+
+    content = data.content or ""
+    has_frontmatter = file_utils.has_frontmatter(content)
+    stated: dict[str, Any] = file_utils.parse_frontmatter(content) if has_frontmatter else {}
+    metadata = data.entity_metadata or {}
+
+    # `id` and `source` are ordinary keys and reach the file from either block,
+    # so a value in either one counts as stated. `permalink` reaches it from the
+    # content block alone, so one parked in `entity_metadata` is a value the
+    # writer meant but did not land: it names the id, and is restamped where it
+    # takes effect.
+    stated_id = stated.get(ID_FIELD) or metadata.get(ID_FIELD)
+    stated_permalink = stated.get(PERMALINK_FIELD) or metadata.get(PERMALINK_FIELD)
+    needs_id = not stated_id
+    needs_permalink = not stated.get(PERMALINK_FIELD)
+    needs_source = not (stated.get(SOURCE_FIELD) or metadata.get(SOURCE_FIELD))
+    if not (needs_id or needs_permalink or needs_source):
+        return data
+
+    record_id = stated_id or stated_permalink
+    if not record_id:
+        record_id = await allocate_record_id(note_type, is_permalink_taken)
+
+    # Stamped keys first, then the writer's own — `bm new`'s order, and the one a
+    # reader of the file expects identity to be in.
+    stamped: dict[str, Any] = {}
+    if needs_id:
+        stamped[ID_FIELD] = record_id
+    if needs_permalink:
+        stamped[PERMALINK_FIELD] = record_id
+    if needs_source:
+        stamped[SOURCE_FIELD] = API_SOURCE
+
+    body = file_utils.remove_frontmatter(content, strip=False) if has_frontmatter else content
+    post = frontmatter.Post(body, **{**stamped, **stated})
+    return data.model_copy(update={"content": file_utils.dump_frontmatter(post)})
+
+
 async def prepare_accepted_note_create(
     preparer: AcceptedNoteCreatePreparer,
     data: EntitySchema,
     *,
     check_storage_exists: bool,
+    is_permalink_taken: PermalinkTakenCheck,
     skip_conflict_check: bool = False,
     session: AsyncSession | None = None,
     vocabulary: Vocabulary | None = None,
 ) -> AcceptedPreparedNoteWrite:
     """Prepare one DB-first note create and checksum the accepted markdown."""
-    prepared = await preparer.prepare_create_entity_content(
+    governed = await stamp_record_identity(
         stamp_default_review_by(data, vocabulary),
+        vocabulary,
+        is_permalink_taken=is_permalink_taken,
+    )
+    prepared = await preparer.prepare_create_entity_content(
+        governed,
         check_storage_exists=check_storage_exists,
         skip_conflict_check=skip_conflict_check,
         session=session,

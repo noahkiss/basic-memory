@@ -89,20 +89,18 @@ def test_project_add_takes_no_path(runner, mock_config, monkeypatch, tmp_path):
     result = runner.invoke(app, ["project", "add", "test-project"])
 
     assert result.exit_code == 0, result.output
-    assert calls == [
-        {"name": "test-project", "path": None, "set_default": False, "governed": False}
-    ]
+    assert calls == [{"name": "test-project", "path": None, "set_default": False, "governed": True}]
     # Nothing to warn about: the project is where the design puts it.
     assert "outside the store" not in result.stdout
 
 
-def test_project_add_governed_flag_reaches_the_api(runner, mock_config, monkeypatch, tmp_path):
-    """`--governed` is what turns the schema checks on, so it must survive the hop.
+@pytest.fixture
+def record_create_payload(monkeypatch, tmp_path):
+    """Answer `ProjectClient.create_project` and return the payloads it received.
 
-    The default is off because an absent `vocabulary.yml` means ungoverned (GAPS
-    W4) and declaring one is the human's act. It is no longer off because it
-    broke MCP: `DEFAULT_VOCABULARY` declares `note`, `write_note`'s default type,
-    so governing a project keeps that path working (verbs decision D8).
+    The governance flags are CLI shape: what the command has to get right is the
+    `governed` key it sends. The file this key eventually writes is asserted
+    where it is written, in `tests/services/test_project_service.py`.
     """
     calls: list[dict] = []
 
@@ -114,14 +112,14 @@ def test_project_add_governed_flag_reaches_the_api(runner, mock_config, monkeypa
         calls.append(project_data)
         return ProjectStatusResponse.model_validate(
             {
-                "message": "Project 'checked' added successfully",
+                "message": f"Project '{project_data['name']}' added successfully",
                 "status": "success",
                 "default": False,
                 "old_project": None,
                 "new_project": {
                     "id": 1,
                     "external_id": "12345678-1234-1234-1234-123456789012",
-                    "name": "checked",
+                    "name": project_data["name"],
                     "path": str(tmp_path / "store" / "12345678"),
                     "is_default": False,
                 },
@@ -130,11 +128,61 @@ def test_project_add_governed_flag_reaches_the_api(runner, mock_config, monkeypa
 
     monkeypatch.setattr(async_client_module, "get_client", fake_get_client)
     monkeypatch.setattr(ProjectClient, "create_project", fake_create_project)
+    return calls
 
+
+def test_project_add_asks_for_governance_by_default(runner, mock_config, record_create_payload):
+    """A bare `project add` asks for the vocabulary (GAPS U49).
+
+    D8 made this opt-in because a governed project refused MCP's `write_note`
+    default type. `DEFAULT_VOCABULARY` declares `note` now, so the reason is
+    gone and the checks are on unless the caller says otherwise.
+    """
+    result = runner.invoke(app, ["project", "add", "checked"])
+
+    assert result.exit_code == 0, result.output
+    assert record_create_payload == [
+        {"name": "checked", "path": None, "set_default": False, "governed": True}
+    ]
+
+
+def test_project_add_ungoverned_asks_for_no_vocabulary(runner, mock_config, record_create_payload):
+    """`--ungoverned` is the opt-out, and it is the only way to get one."""
+    result = runner.invoke(app, ["project", "add", "unchecked", "--ungoverned"])
+
+    assert result.exit_code == 0, result.output
+    assert record_create_payload == [
+        {"name": "unchecked", "path": None, "set_default": False, "governed": False}
+    ]
+
+
+def test_project_add_still_accepts_the_deprecated_governed_flag(
+    runner, mock_config, record_create_payload
+):
+    """`--governed` names the default now, so it is accepted and changes nothing.
+
+    The session hook and the migration skill both still spell it out. Removing
+    the option would fail their invocations at Typer's parser, before the
+    command ran at all — so it stays until they stop passing it (GAPS U49).
+    """
     result = runner.invoke(app, ["project", "add", "checked", "--governed"])
 
     assert result.exit_code == 0, result.output
-    assert calls == [{"name": "checked", "path": None, "set_default": False, "governed": True}]
+    assert record_create_payload == [
+        {"name": "checked", "path": None, "set_default": False, "governed": True}
+    ]
+
+
+def test_project_add_refuses_both_governance_flags(runner, mock_config, record_create_payload):
+    """Contradictory flags are an error, never a precedence rule."""
+    result = runner.invoke(app, ["project", "add", "confused", "--governed", "--ungoverned"])
+
+    assert result.exit_code == 1, result.output
+    assert "--governed and --ungoverned contradict" in result.output
+    # The refusal comes before the create, so nothing was registered.
+    assert record_create_payload == []
+    # Contract rule 6: nothing lands on stdout on the error path.
+    assert result.stdout == ""
 
 
 def test_project_add_with_a_path_says_it_is_off_store(runner, mock_config, monkeypatch, tmp_path):
@@ -210,7 +258,7 @@ def test_project_add_sends_resolved_absolute_path(runner, mock_config, monkeypat
             "name": "test-project",
             "path": (tmp_path / "test-project").as_posix(),
             "set_default": False,
-            "governed": False,
+            "governed": True,
         }
     ]
 
