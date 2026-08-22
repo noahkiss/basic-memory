@@ -6,6 +6,11 @@ path. `bm undo` is the one verb here that also touches the database — it has t
 because a file restored on disk is invisible to search until it is indexed (GAPS
 T2) — and it reaches the indexing layer directly, never through `mcp` or `api`.
 
+All three verbs also name the projects the store repository does not cover — the
+ones homed elsewhere. That fact comes from `project_registry`, which reads the
+registry with the stdlib sqlite driver and so keeps SQLAlchemy off `dirty` and
+`commit`, neither of which otherwise opens the database at all.
+
 `undo` ships flat as `bm undo` (AGENTS.md's verb list) while living in this file,
 next to the two verbs that read the same repository. The documented verb list is
 the contract; the file layout is not.
@@ -28,6 +33,7 @@ from basic_memory.cli.app import app
 from basic_memory.cli.notices import emit_notices
 from basic_memory.cli.runner import run_with_cleanup
 from basic_memory.cli.scope import ReadScope
+from basic_memory.project_registry import externally_homed_project_names
 from basic_memory.store.history import (
     CommitResult,
     HistoryError,
@@ -73,6 +79,37 @@ def fail(message: str) -> typer.Exit:
     return typer.Exit(1)
 
 
+def external_home_notice() -> str | None:
+    """One line naming the projects this repository deliberately does not cover.
+
+    Every verb in this file reads the store repository, and a project homed
+    `external` keeps its notes outside it — so no dirty file, no commit, and no
+    undo will ever mention it. Saying nothing would read as "there is nothing
+    there", which is the silent-exclusion the design set out to remove. None
+    when no such project exists: a line that appears unconditionally would be
+    noise for the store-homed majority.
+    """
+    names = externally_homed_project_names()
+    if not names:
+        return None
+    count = len(names)
+    subject = "1 project" if count == 1 else f"{count} projects"
+    pronoun = "it" if count == 1 else "them"
+    return (
+        f"note: this history excludes {subject} homed elsewhere: "
+        f"{', '.join(names)} — yadm/git record {pronoun}"
+    )
+
+
+def echo_external_home_notice(quiet: bool) -> None:
+    """Print the exclusion line, unless there is none or the caller asked for quiet."""
+    if quiet:
+        return
+    notice = external_home_notice()
+    if notice is not None:
+        typer.echo(notice)
+
+
 @history_app.command()
 def dirty(
     quiet: Annotated[
@@ -92,6 +129,7 @@ def dirty(
         typer.echo(f"{path:<{path_width}}  {status}")
     typer.echo(f"{len(entries)} dirty files")
 
+    echo_external_home_notice(quiet)
     emit_notices(STORE_SCOPE, quiet=quiet, command="history dirty")
 
 
@@ -130,6 +168,7 @@ def commit(
     # An empty sweep is a result, not a failure (contract rule 5).
     if result is None:
         typer.echo("nothing to commit")
+        echo_external_home_notice(quiet)
         emit_notices(STORE_SCOPE, quiet=quiet, command="history commit")
         return
 
@@ -143,6 +182,7 @@ def commit(
         )
         typer.echo("run 'bm history dirty' to review")
 
+    echo_external_home_notice(quiet)
     emit_notices(STORE_SCOPE, quiet=quiet, command="history commit")
 
 
@@ -301,6 +341,10 @@ def undo(
     if not targets:
         typer.echo("nothing to undo")
         if not quiet:
+            # The empty case is where the exclusion matters most: a user whose
+            # only project is homed elsewhere would otherwise read "nothing to
+            # undo" as "your writes were recorded and there are none to reverse".
+            echo_external_home_notice(quiet)
             typer.echo(UNDO_AFFORDANCE)
         return
 
@@ -363,6 +407,7 @@ def undo(
     if not quiet:
         for line in _undo_notices(result, projects, unowned):
             typer.echo(line)
+        echo_external_home_notice(quiet)
         # State-aware, on top of the static affordance (GAPS U33): the fork
         # between bare undo and --redo exists right now, so one line says what
         # each would do from here. Recomputed after the restore commit, so the

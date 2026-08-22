@@ -16,7 +16,11 @@ from alembic.config import Config
 from pydantic import ValidationError
 
 from basic_memory import db
-from basic_memory.project_registry import PROJECT_HOME_EXTERNAL, lookup_project_home
+from basic_memory.project_registry import (
+    PROJECT_HOME_EXTERNAL,
+    externally_homed_project_names,
+    lookup_project_home,
+)
 from basic_memory.schemas.project_info import ProjectInfoRequest
 
 
@@ -43,15 +47,26 @@ def sqlite_alembic_config(database_path: Path) -> Config:
 
 
 def insert_project(
-    connection: sqlite3.Connection, *, row_id: int, external_id: str, path: str, home: str | None
+    connection: sqlite3.Connection,
+    *,
+    row_id: int,
+    external_id: str,
+    path: str,
+    home: str | None,
+    name: str | None = None,
 ) -> None:
-    """Insert one project row with the home the caller wants to read back."""
+    """Insert one project row with the home the caller wants to read back.
+
+    ``name`` defaults to a positional stand-in; pass it when the test asserts on
+    the name itself, as the exclusion-line reader does.
+    """
     now = datetime.now(timezone.utc).isoformat()
+    label = name if name is not None else f"p{row_id}"
     connection.execute(
         "INSERT INTO project "
         "(id, external_id, name, permalink, path, is_active, home, created_at, updated_at) "
         "VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)",
-        (row_id, external_id, f"p{row_id}", f"p{row_id}", path, home, now, now),
+        (row_id, external_id, label, label, path, home, now, now),
     )
     connection.commit()
 
@@ -114,6 +129,76 @@ def test_lookup_project_home_reads_the_migrated_column(tmp_path, monkeypatch):
 
     assert lookup_project_home(EXTERNAL_ID) == Path("/skills/example/.bm")
     assert lookup_project_home(STORE_HOMED_ID) is None
+
+
+def test_externally_homed_project_names_lists_only_the_declared_ones(tmp_path, monkeypatch):
+    """The store-history verbs name what their repository excludes, by name.
+
+    Sorted, because the line is read by a human and an order that follows insert
+    id would reshuffle whenever a project is re-added.
+    """
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("BASIC_MEMORY_HOME", str(tmp_path / "basic-memory"))
+    monkeypatch.setenv("BASIC_MEMORY_CONFIG_DIR", str(data_dir))
+
+    database_path = data_dir / "memory.db"
+    command.upgrade(sqlite_alembic_config(database_path), "head")
+
+    connection = sqlite3.connect(database_path)
+    try:
+        insert_project(
+            connection,
+            row_id=1,
+            external_id=EXTERNAL_ID,
+            path="/skills/zebra/.bm",
+            home=PROJECT_HOME_EXTERNAL,
+            name="zebra-skill",
+        )
+        insert_project(
+            connection,
+            row_id=2,
+            external_id="4a7b8c9d-0e1f-2a3b-4c5d-6e7f8a9b0c1d",
+            path="/skills/alpha/.bm",
+            home=PROJECT_HOME_EXTERNAL,
+            name="alpha-skill",
+        )
+        # Positive control: a project in the same registry that declared
+        # nothing. It must not appear, or the filter proves nothing.
+        insert_project(
+            connection,
+            row_id=3,
+            external_id=STORE_HOMED_ID,
+            path="/store/other",
+            home=None,
+            name="store-homed",
+        )
+    finally:
+        connection.close()
+
+    assert externally_homed_project_names() == ["alpha-skill", "zebra-skill"]
+
+
+def test_externally_homed_project_names_tolerates_a_pre_migration_registry(tmp_path, monkeypatch):
+    """A registry older than the column reads as "nobody declared anything".
+
+    The session hook calls this on every start, so a crash here would take the
+    whole CLI down on a database that has simply not migrated yet.
+    """
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    monkeypatch.setenv("BASIC_MEMORY_CONFIG_DIR", str(data_dir))
+
+    connection = sqlite3.connect(data_dir / "memory.db")
+    try:
+        connection.execute("CREATE TABLE project (name TEXT, path TEXT, is_active INT)")
+        connection.execute("INSERT INTO project (name, path, is_active) VALUES ('p', '/p', 1)")
+        connection.commit()
+    finally:
+        connection.close()
+
+    assert externally_homed_project_names() == []
 
 
 def test_downgrade_and_reupgrade_on_a_populated_database(tmp_path, monkeypatch):

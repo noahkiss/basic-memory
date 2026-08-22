@@ -37,7 +37,7 @@ def test_project_info_unknown_project_is_one_error_line(monkeypatch):
     assert "Error getting project info: Project 'demo' not found in database" in result.output
 
 
-def _info_payload(project_repo):
+def _info_payload(project_repo, project_home=None):
     """The attribute surface `display_project_info` actually reads (GAPS U36)."""
     from types import SimpleNamespace
 
@@ -45,6 +45,7 @@ def _info_payload(project_repo):
         project_name="demo",
         project_path="/tmp/demo",
         project_repo=project_repo,
+        project_home=project_home,
         default_project="demo",
         statistics=SimpleNamespace(
             total_entities=0,
@@ -85,3 +86,33 @@ def test_project_info_omits_the_repo_line_when_never_captured(monkeypatch):
 
     assert result.exit_code == 0, result.output
     assert "repo:" not in result.stdout
+
+
+def test_project_info_states_an_external_home_and_its_consequence(monkeypatch):
+    """The word alone is jargon; what the reader needs is what bm will not do."""
+    from basic_memory.project_registry import PROJECT_HOME_EXTERNAL
+
+    async def fake_fetch_project_info(_project_name: str):
+        return _info_payload(None, project_home=PROJECT_HOME_EXTERNAL)
+
+    monkeypatch.setattr(project_commands, "fetch_project_info", fake_fetch_project_info)
+
+    result = runner.invoke(app, ["project", "info", "demo", "--quiet"])
+
+    assert result.exit_code == 0, result.output
+    home_lines = [line for line in result.stdout.splitlines() if line.startswith("home: ")]
+    assert home_lines == ["home: external — /tmp/demo; bm records no history for it"]
+
+
+def test_project_info_omits_the_home_line_when_nothing_was_declared(monkeypatch):
+    """Positive control: NULL is the default, and a default has nothing to announce."""
+
+    async def fake_fetch_project_info(_project_name: str):
+        return _info_payload(None)
+
+    monkeypatch.setattr(project_commands, "fetch_project_info", fake_fetch_project_info)
+
+    result = runner.invoke(app, ["project", "info", "demo", "--quiet"])
+
+    assert result.exit_code == 0, result.output
+    assert "home:" not in result.stdout

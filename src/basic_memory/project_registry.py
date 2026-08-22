@@ -223,3 +223,23 @@ def lookup_project_home(external_id: str) -> Optional[Path]:
         (external_id, PROJECT_HOME_EXTERNAL),
     )
     return Path(rows[0][0]) if rows and rows[0][0] else None
+
+
+def externally_homed_project_names() -> list[str]:
+    """Every active project declaring an external home, by name, sorted.
+
+    Names rather than ids because the reader is a user-facing line: the store
+    history verbs (`bm history dirty`, `bm history commit`, `bm undo`) say which
+    projects their repository does not cover, and a name is what the reader
+    types back. Empty when no project declares one — including a registry
+    migrated before the column existed, which is the same "declared nothing".
+
+    Uncached: one call per invocation of a verb that is already reading a git
+    repository, so there is nothing to amortize. `vocabulary.model` caches its
+    home lookup because that one sits on the write path.
+    """
+    rows = _optional_column_query(
+        "SELECT name FROM project WHERE is_active = 1 AND home = ? ORDER BY name",
+        (PROJECT_HOME_EXTERNAL,),
+    )
+    return [name for (name,) in rows]

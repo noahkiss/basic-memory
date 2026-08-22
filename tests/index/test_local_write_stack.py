@@ -30,6 +30,7 @@ from basic_memory.index.local_write_stack import (
     build_local_note_write_stack,
 )
 from basic_memory.models import Entity, Project, Violation
+from basic_memory.project_registry import PROJECT_HOME_EXTERNAL
 from basic_memory.repository.entity_repository import EntityRepository
 from basic_memory.repository.project_repository import ProjectRepository
 from basic_memory.schemas.base import Entity as EntitySchema
@@ -591,6 +592,52 @@ async def test_an_off_store_project_writes_and_says_history_is_not_recorded(
     assert Path(test_project.path, result.file_path).is_file()
     assert result.history_sha is None
     assert result.notices == (OFF_STORE_NOTICE,)
+
+
+@pytest_asyncio.fixture
+async def external_project(
+    tmp_path: Path, session_maker: async_sessionmaker[AsyncSession]
+) -> Project:
+    """A project that declares its notes live in a directory something else versions.
+
+    Laid out the way `bm project add --home-here` lays one out: `.bm` inside the
+    working directory, off the store, with `home` recording the intent.
+    """
+    path = tmp_path / "skill" / ".bm"
+    path.mkdir(parents=True)
+    async with db.scoped_session(session_maker) as session:
+        return await ProjectRepository().create(
+            session,
+            {
+                "name": "external-project",
+                "external_id": "1a2b3c4d-5e6f-7081-9293-a4b5c6d7e8f9",
+                "path": str(path),
+                "home": PROJECT_HOME_EXTERNAL,
+                "is_active": True,
+            },
+        )
+
+
+@pytest.mark.asyncio
+async def test_an_external_home_write_says_nothing_about_the_store(write_stack, external_project):
+    """The D3 notice is a migration prompt, and this project has nowhere to go.
+
+    Same off-store mechanics as the test above — no commit, no sha — and the
+    pair is the control: the only difference is the `home` the row declares, so
+    the silence is that declaration's doing and nothing else.
+    """
+    result = await write_stack.write_note(
+        project_external_id=external_project.external_id,
+        data=EntitySchema(
+            title="Skill Homed Note",
+            directory="notes",
+            content=note_content("Body."),
+        ),
+    )
+
+    assert Path(external_project.path, result.file_path).is_file()
+    assert result.history_sha is None
+    assert result.notices == ()
 
 
 @pytest.mark.asyncio

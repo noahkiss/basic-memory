@@ -32,6 +32,7 @@ from basic_memory.store.history import commit_paths, ensure_store_repo
 runner = CliRunner()
 
 PROJECT = "notes"
+EXTERNAL_PROJECT = "skill-notes"
 SESSION = "sess-1111"
 OTHER_SESSION = "sess-2222"
 
@@ -119,6 +120,44 @@ def project(store: Path) -> Path:
                     {
                         "name": PROJECT,
                         "path": str(home),
+                        "is_active": True,
+                        "is_default": False,
+                    },
+                )
+        finally:
+            await db.shutdown_db()
+
+    asyncio.run(create())
+    return home
+
+
+@pytest.fixture
+def externally_homed_project(store: Path, tmp_path: Path) -> Path:
+    """A project whose notes live outside the store, by declaration.
+
+    Registered the way `bm project add --home-here` registers one: a `.bm`
+    directory in some working tree, and `home` recording that this is intended
+    rather than the legacy off-store accident.
+    """
+    home = tmp_path / "skill" / ".bm"
+    home.mkdir(parents=True, exist_ok=True)
+
+    async def create() -> None:
+        from basic_memory import db
+        from basic_memory.config import ConfigManager
+        from basic_memory.project_registry import PROJECT_HOME_EXTERNAL
+        from basic_memory.repository.project_repository import ProjectRepository
+
+        config = ConfigManager().config
+        _, session_maker = await db.get_or_create_db(config.database_path, config=config)
+        try:
+            async with db.scoped_session(session_maker) as session:
+                await ProjectRepository().create(
+                    session,
+                    {
+                        "name": EXTERNAL_PROJECT,
+                        "path": str(home),
+                        "home": PROJECT_HOME_EXTERNAL,
                         "is_active": True,
                         "is_default": False,
                     },
@@ -583,6 +622,52 @@ def test_the_new_commit_and_the_affordance_follow_the_payload(project: Path) -> 
     assert lines[1] == "1 files restored"
     assert lines[2].startswith("note: recorded as ")
     assert lines[-1] == history_cmd.UNDO_AFFORDANCE
+
+
+def test_undo_names_the_project_homed_elsewhere_once(
+    project: Path, externally_homed_project: Path
+) -> None:
+    """Skipping it in silence would read as "there was nothing of yours to undo"."""
+    path = write(project, TASK_FILE, FIRST)
+    commit([path], "create notes/tasks")
+    write(project, TASK_FILE, SECOND)
+    commit([path], "update notes/tasks")
+
+    result = runner.invoke(app, ["undo"])
+
+    assert result.exit_code == 0, result.output
+    excluded = [line for line in result.stdout.splitlines() if "homed elsewhere" in line]
+    assert excluded == [
+        f"note: this history excludes 1 project homed elsewhere: {EXTERNAL_PROJECT} "
+        "— yadm/git record it"
+    ]
+    # The affordance stays last: the exclusion is a notice, not a next step.
+    assert result.stdout.splitlines()[-1] == history_cmd.UNDO_AFFORDANCE
+
+
+def test_undo_says_nothing_when_every_project_is_store_homed(project: Path) -> None:
+    """Positive control for the line above: the store-homed majority never sees it."""
+    path = write(project, TASK_FILE, FIRST)
+    commit([path], "create notes/tasks")
+    write(project, TASK_FILE, SECOND)
+    commit([path], "update notes/tasks")
+
+    result = runner.invoke(app, ["undo"])
+
+    assert result.exit_code == 0, result.output
+    assert "homed elsewhere" not in result.stdout
+
+
+def test_nothing_to_undo_still_names_the_project_homed_elsewhere(
+    externally_homed_project: Path,
+) -> None:
+    """The empty case is where the exclusion is likeliest to be misread."""
+    result = runner.invoke(app, ["undo"])
+
+    assert result.exit_code == 0, result.output
+    lines = result.stdout.splitlines()
+    assert lines[0] == "nothing to undo"
+    assert f"homed elsewhere: {EXTERNAL_PROJECT}" in lines[1]
 
 
 def test_quiet_leaves_the_payload_alone(project: Path) -> None:

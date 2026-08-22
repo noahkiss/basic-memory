@@ -8,6 +8,10 @@ does not:
    under `store_path()` cannot be committed — its files are not in the
    repository's worktree. That project writes normally and gets one notice
    (decision D3). `bm project add` is what makes new projects store-derived.
+   The notice has two cases now: a *legacy* off-store project is unversioned and
+   is told so, while a project that declares `home = "external"` is versioned by
+   something else — yadm, or whatever owns the directory it lives in — and stays
+   quiet. Which one this is, the caller says; see `record_note_write`.
 2. **What a failed commit costs**, per W3-A's table. A *create* warns and keeps
    the note: nothing is lost, because the note is on disk. An *overwrite*
    refuses, because the prior content is the thing the history exists to protect
@@ -50,8 +54,14 @@ type WriteOperation = Literal["create", "update", "edit", "delete"]
 _DESTRUCTIVE: frozenset[str] = frozenset({"update", "edit", "delete"})
 
 # D3: a project whose notes are not under the store keeps working, and says so
-# once per write rather than failing. The store is the only home for note
-# content (AGENTS.md), so this is a migration prompt, not an error.
+# once per write rather than failing. The store is the default home for note
+# content, so this is a migration prompt, not an error. (AGENTS.md still says
+# "the only home"; stage 7 of the skill-homed plan is where that sentence goes.)
+#
+# It is a prompt only for a project that never declared where its notes live. A
+# project homed `external` also gets no store history, but that is the design —
+# the directory it lives in is versioned by something else — so prompting it to
+# migrate would be wrong every time. `record_note_write` skips the notice for it.
 OFF_STORE_NOTICE = (
     "note: notes in this project are not under the store; history is not "
     "recorded — see bm project add"
@@ -101,6 +111,14 @@ def check_can_record(project_path: str, target: str, operation: WriteOperation) 
     overwritten the file protects nothing. A create never reaches the raise: it
     has no prior content, so a broken history costs it a warning and no more.
     ``target`` names what the write was about to change, for the message.
+
+    **An off-store project is never refused**, and that includes a project homed
+    `external`. The refusal exists to stop bm destroying content only bm's
+    history would have held; for these projects it never holds any, and for an
+    external home the versioning that does hold it — yadm, or whatever owns the
+    directory — is outside this process and unaffected by the write. So no flag
+    reaches here: "not in the store's worktree" is the whole question, and the
+    path already answers it.
     """
     if operation not in _DESTRUCTIVE:
         return
@@ -119,6 +137,7 @@ def record_note_write(
     note_path: str,
     operation: WriteOperation,
     actor: str | None,
+    externally_homed: bool,
 ) -> HistoryOutcome:
     """Commit the file one write touched and report what else is dirty.
 
@@ -126,9 +145,18 @@ def record_note_write(
     headline file used to ride in here as an extra path; since GAPS U24 the
     headline is written only by `bm headline`, which commits through
     `record_headline_change` below.
+
+    ``externally_homed`` is the project's declared intent — `home = "external"`,
+    meaning its notes live in a directory something else versions. It is passed
+    in rather than looked up: this module sits below the registry and must not
+    open it, and every caller already holds the project row that answers it.
+    Its only effect is silence, because the notice it suppresses is a migration
+    prompt and an external home has nowhere to migrate to.
     """
     store_note_path = store_relative_path(project_path, note_path)
     if store_note_path is None:
+        if externally_homed:
+            return NO_HISTORY
         return HistoryOutcome(sha=None, notices=(OFF_STORE_NOTICE,))
 
     try:

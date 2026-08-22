@@ -277,6 +277,7 @@ class LocalNoteWriteStack:
                 note_path=note_path,
                 operation="delete",
                 actor=CLI_NOTE_WRITE_SOURCE,
+                externally_homed=bundle.project.is_externally_homed,
             )
         except HistoryError as error:
             raise LocalNoteWriteError(str(error)) from error
@@ -340,6 +341,10 @@ class LocalNoteWriteStack:
 
         The headline used to be refreshed and committed here; since GAPS U24 it
         is composed by `bm headline` and no note write touches it.
+
+        The project row is what carries the declared home to the store layer,
+        which must not open the registry itself — so the D3 notice stays quiet
+        for a project versioned elsewhere.
         """
         try:
             outcome = record_note_write(
@@ -347,6 +352,7 @@ class LocalNoteWriteStack:
                 note_path=result.file_path,
                 operation=operation,
                 actor=actor,
+                externally_homed=project.is_externally_homed,
             )
         except HistoryError as error:
             raise LocalNoteWriteError(str(error)) from error

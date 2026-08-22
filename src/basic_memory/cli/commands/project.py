@@ -737,6 +737,15 @@ def display_project_info(
     typer.echo("Project")
     typer.echo(f"name: {info.project_name}")
     typer.echo(f"path: {format_path(info.project_path)}")
+    # Only when declared. NULL is the default — store-homed, or a legacy
+    # off-store project — and it has nothing to say, while an external home
+    # changes what the reader can expect from `bm history` and `bm undo`. So the
+    # line carries that consequence rather than the bare word.
+    if info.project_home == PROJECT_HOME_EXTERNAL:
+        typer.echo(
+            f"home: {PROJECT_HOME_EXTERNAL} — {format_path(info.project_path)}; "
+            "bm records no history for it"
+        )
     # Only when captured: an absent repo is the common historical state, and a
     # `repo: None` line would read as a value (GAPS U36).
     if info.project_repo:

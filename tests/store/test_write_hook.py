@@ -99,11 +99,38 @@ def test_an_off_store_write_skips_the_commit_and_says_so(data_dir: Path, tmp_pat
         note_path="note.md",
         operation="create",
         actor="cli",
+        externally_homed=False,
     )
 
     assert outcome.sha is None
     assert outcome.notices == (OFF_STORE_NOTICE,)
     # The report must not create the thing it reports on.
+    assert not (store_path() / ".git").exists()
+
+
+def test_an_external_home_write_skips_the_commit_and_stays_quiet(
+    data_dir: Path, tmp_path: Path
+) -> None:
+    """A project homed elsewhere is versioned by yadm/git, so D3 has nothing to say.
+
+    Same path as the test above — no prefix, no commit — and the only difference
+    is the declared intent the caller passes down. The pair is the control: the
+    notice is suppressed by that declaration, not by anything about the path.
+    """
+    outside = tmp_path / "skill" / ".bm"
+    outside.mkdir(parents=True)
+    write_note_file(outside, "note.md", "body\n")
+
+    outcome = record_note_write(
+        project_path=str(outside),
+        note_path="note.md",
+        operation="create",
+        actor="cli",
+        externally_homed=True,
+    )
+
+    assert outcome.sha is None
+    assert outcome.notices == ()
     assert not (store_path() / ".git").exists()
 
 
@@ -119,6 +146,7 @@ def test_a_create_commits_the_note_with_both_trailers(project_dir: Path, monkeyp
         note_path=relative,
         operation="create",
         actor="agent",
+        externally_homed=False,
     )
 
     assert outcome.sha is not None
@@ -141,6 +169,7 @@ def test_an_unknown_session_writes_no_session_trailer(project_dir: Path) -> None
         note_path=relative,
         operation="create",
         actor="cli",
+        externally_homed=False,
     )
 
     message = git(store_path(), "log", "-1", "--format=%B")
@@ -156,6 +185,7 @@ def test_the_store_repo_disables_global_hooks_and_excludes(project_dir: Path) ->
         note_path=relative,
         operation="create",
         actor="cli",
+        externally_homed=False,
     )
     store = store_path()
 
@@ -183,11 +213,19 @@ def test_the_message_is_byte_stable_across_two_identical_writes(project_dir: Pat
     """Byte-stable subjects are a W3 requirement: otherwise history is noise."""
     relative = write_note_file(project_dir, "tasks/tnd-abc--ship-it.md", "first\n")
     record_note_write(
-        project_path=str(project_dir), note_path=relative, operation="create", actor="cli"
+        project_path=str(project_dir),
+        note_path=relative,
+        operation="create",
+        actor="cli",
+        externally_homed=False,
     )
     write_note_file(project_dir, relative, "second\n")
     record_note_write(
-        project_path=str(project_dir), note_path=relative, operation="create", actor="cli"
+        project_path=str(project_dir),
+        note_path=relative,
+        operation="create",
+        actor="cli",
+        externally_homed=False,
     )
 
     subjects = git(store_path(), "log", "--format=%s").splitlines()
@@ -200,11 +238,19 @@ def test_the_message_is_byte_stable_across_two_identical_writes(project_dir: Pat
 def test_an_unchanged_write_records_nothing(project_dir: Path) -> None:
     relative = write_note_file(project_dir, "tasks/tnd-abc--ship-it.md", "body\n")
     record_note_write(
-        project_path=str(project_dir), note_path=relative, operation="create", actor="cli"
+        project_path=str(project_dir),
+        note_path=relative,
+        operation="create",
+        actor="cli",
+        externally_homed=False,
     )
 
     repeat = record_note_write(
-        project_path=str(project_dir), note_path=relative, operation="update", actor="cli"
+        project_path=str(project_dir),
+        note_path=relative,
+        operation="update",
+        actor="cli",
+        externally_homed=False,
     )
 
     assert repeat.sha is None
@@ -263,7 +309,11 @@ def test_the_write_hook_leaves_the_dirty_report_to_the_command_notice(project_di
     write_note_file(project_dir, "guides/hand-edited.md", "someone else\n")
 
     outcome = record_note_write(
-        project_path=str(project_dir), note_path=relative, operation="create", actor="cli"
+        project_path=str(project_dir),
+        note_path=relative,
+        operation="create",
+        actor="cli",
+        externally_homed=False,
     )
 
     assert outcome.sha is not None
@@ -308,7 +358,14 @@ def test_a_broken_repo_lets_a_create_through(data_dir: Path) -> None:
 
 
 def test_an_off_store_overwrite_is_not_refused(data_dir: Path, tmp_path: Path) -> None:
-    """An off-store project has no history to lose, so a broken repo is moot."""
+    """An off-store project has no history to lose, so a broken repo is moot.
+
+    True of an externally homed project too, and deliberately the same test: the
+    preflight takes no home flag, because "outside the store's worktree" is the
+    whole question and the path already answers it. What holds the prior content
+    for an external home — yadm, or whatever versions that directory — is
+    outside this process and untouched by the write.
+    """
     outside = tmp_path / "elsewhere"
     outside.mkdir()
     break_store_repo()
@@ -323,7 +380,11 @@ def test_a_create_whose_commit_fails_keeps_the_note_and_warns(data_dir: Path) ->
     break_store_repo()
 
     outcome = record_note_write(
-        project_path=str(project), note_path=relative, operation="create", actor="cli"
+        project_path=str(project),
+        note_path=relative,
+        operation="create",
+        actor="cli",
+        externally_homed=False,
     )
 
     assert outcome.sha is None
@@ -346,5 +407,9 @@ def test_an_overwrite_whose_commit_fails_raises(data_dir: Path) -> None:
 
     with pytest.raises(HistoryError, match="no longer recoverable"):
         record_note_write(
-            project_path=str(project), note_path=relative, operation="update", actor="cli"
+            project_path=str(project),
+            note_path=relative,
+            operation="update",
+            actor="cli",
+            externally_homed=False,
         )
