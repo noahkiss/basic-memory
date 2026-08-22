@@ -408,21 +408,59 @@ def test_edit_with_a_title_only_leaves_the_editor_shut(
     assert frontmatter_of(written_path(project, result.stdout))["title"] == "New Title"
 
 
-def test_edit_on_a_task_names_done_and_mark() -> None:
-    """A task is closed, not rewritten — and the refusal names the verb that does it (D12)."""
-    seed_project()
+def test_edit_changes_a_task_while_it_is_open_and_after_it_is_closed() -> None:
+    """A task takes an edit in every status, and no edit moves the status (GAPS U44).
+
+    Both halves are the point. An uneditable task goes stale and then gets quoted
+    as fact, and the old repair — close it and write a replacement — split one
+    item's history in two. `bm mark` and `bm done` stay the only things that move
+    `status`, which is why it is asserted on both sides of the close.
+    """
+    project = seed_project()
     record_id = create(GOVERNED, "task", "Move The Backups")
 
-    result = runner.invoke(app, ["edit", record_id, "-b", "different", "-p", GOVERNED])
+    while_open = runner.invoke(
+        app,
+        [
+            "edit",
+            record_id,
+            "--title",
+            "Move The Backups Off The Old Disk",
+            "-b",
+            "Rewritten while open.",
+            "-p",
+            GOVERNED,
+            "--quiet",
+        ],
+    )
 
-    assert result.exit_code == 1
-    assert f"bm done {record_id}" in result.stderr
-    assert f"bm mark {record_id}" in result.stderr
-    assert result.stdout.strip() == ""
+    assert while_open.exit_code == 0, while_open.output
+    path = written_path(project, while_open.stdout)
+    opened = frontmatter_of(path)
+    assert opened["title"] == "Move The Backups Off The Old Disk"
+    assert opened["status"] == "open"
+    assert "Rewritten while open." in path.read_text(encoding="utf-8")
+
+    closed = runner.invoke(app, ["done", record_id, "-p", GOVERNED, "--quiet"])
+    assert closed.exit_code == 0, closed.output
+
+    after_close = runner.invoke(
+        app, ["edit", record_id, "-b", "Rewritten after it closed.", "-p", GOVERNED, "--quiet"]
+    )
+
+    assert after_close.exit_code == 0, after_close.output
+    done = frontmatter_of(path)
+    assert done["status"] == "done"
+    assert done["title"] == "Move The Backups Off The Old Disk"
+    assert "Rewritten after it closed." in path.read_text(encoding="utf-8")
 
 
-def test_edit_on_a_finding_names_supersession() -> None:
-    """A finding is provisional evidence: correcting it in place destroys the record (§5)."""
+def test_edit_on_a_finding_names_supersession_and_the_override() -> None:
+    """A finding is provisional evidence: correcting it in place destroys the record (§5).
+
+    The refusal stands by default and names both ways out — the successor and
+    `--override` (GAPS U44).
+    """
     seed_project()
     record_id = create(GOVERNED, "finding", "What We Learned")
 
@@ -430,10 +468,52 @@ def test_edit_on_a_finding_names_supersession() -> None:
 
     assert result.exit_code == 1
     assert f"--supersedes {record_id}" in result.stderr
+    assert "--override" in result.stderr
     assert result.stdout.strip() == ""
     assert "Original body." in payload_path(
         runner.invoke(app, ["path", record_id, "-p", GOVERNED]).stdout + "\n"
     ).read_text(encoding="utf-8")
+
+
+def test_edit_a_finding_with_override_rewrites_it_in_place() -> None:
+    """`--override` is the way through, for a finding that is wrong rather than superseded.
+
+    A successor to a mistyped title is two records saying one thing, and the
+    store's history keeps the old text either way (GAPS U44, W3). The positive
+    control is the test above: the same edit without the flag is refused and
+    writes nothing.
+    """
+    project = seed_project()
+    record_id = create(GOVERNED, "finding", "What We Learnt")
+
+    result = runner.invoke(
+        app,
+        ["edit", record_id, "--title", "What We Learned", "--override", "-p", GOVERNED, "--quiet"],
+    )
+
+    assert result.exit_code == 0, result.output
+    path = written_path(project, result.stdout)
+    assert frontmatter_of(path)["title"] == "What We Learned"
+    assert "Original body." in path.read_text(encoding="utf-8")
+
+
+def test_override_on_a_task_edits_and_reports_that_the_flag_did_nothing() -> None:
+    """A task never refused the edit, so the flag is accepted and named as a no-op.
+
+    Accepting it silently teaches an agent to pass it everywhere, which is how a
+    flag that exists to be deliberate becomes boilerplate. It is a notice rather
+    than an error because the edit itself is well-formed (contract rules 4 and 5).
+    """
+    project = seed_project()
+    record_id = create(GOVERNED, "task", "Move The Backups")
+
+    result = runner.invoke(
+        app, ["edit", record_id, "-b", "Rewritten.", "--override", "-p", GOVERNED]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "--override has no effect on a task" in result.stdout
+    assert "Rewritten." in written_path(project, result.stdout).read_text(encoding="utf-8")
 
 
 # --- bm edit --rel (GAPS U14) ---
@@ -576,7 +656,9 @@ def test_edit_in_the_editor_replaces_relations_the_user_removed() -> None:
 @pytest.mark.parametrize("note_type", ["task", "finding"])
 def test_edit_rel_alone_is_allowed_on_a_closed_type(note_type: str) -> None:
     """An edge adds a link and rewrites nothing the record claims, so the type
-    refusal that guards a task's closure and a finding's evidence does not apply."""
+    refusal that guards a finding's evidence does not apply. A task is covered
+    for the same reason it was before U44 widened `bm edit`: `--rel` alone is a
+    link, not a rewrite, and it needs no flag on any type."""
     project = seed_project()
     record_id = create(GOVERNED, note_type, "The Record")
     target = create(GOVERNED, "finding", "Where It Came From")

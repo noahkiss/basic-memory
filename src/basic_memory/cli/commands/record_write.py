@@ -4,14 +4,20 @@ They share a module because they share everything that matters: the write-chain
 scope, the identity-verified lookup, the local write stack, and the shape of
 what they print. What differs is one rule each, and each rule is a decision:
 
-- **`bm edit` changes *content* only on the kept-current types** — `guide`,
-  `profile`, `state`, `inbox` (`.forked/schema.md` §4, VERBS_PLAN D12). On a
-  `task` it names `bm done`/`bm mark`; on a `finding` it names supersession. A
-  finding is provisional by construction, so correcting one in place destroys the
-  evidence the record existed to hold. A **relations-only** run — `--rel` with no
-  `--title`, `--body` or `--set` — is exempt and accepted on every type (GAPS
-  U18): an edge is a link, not a claim the record makes, and the pair worth
-  linking is usually spotted after both records are written.
+- **`bm edit` changes *content* on every record type but `finding`** — `task`,
+  `plan`, `guide`, `profile`, `state`, `inbox` (`.forked/schema.md` §4,
+  VERBS_PLAN D12, widened by GAPS U44). A task takes an edit in every status,
+  `open` through `done`: an uneditable task goes stale and then gets quoted as
+  fact, and the old repair — `bm done` plus a fresh `bm new` — split one item's
+  history in two. Since W3 every write is a commit in the store repo, so an edit
+  loses nothing. Status is still `bm mark`/`bm done` alone; `bm edit` does not
+  touch it. A `finding` keeps the refusal, because correcting one in place
+  destroys the evidence the record existed to hold — supersession is the answer
+  when the world moved, and `--override` is the answer when the finding itself
+  is wrong. A **relations-only** run — `--rel` with no `--title`, `--body` or
+  `--set` — is exempt and accepted on every type (GAPS U18): an edge is a link,
+  not a claim the record makes, and the pair worth linking is usually spotted
+  after both records are written.
 - **`--set name=value` writes a declared field, and only on a `profile`**
   (`.forked/schema.md` §4 item 4, GAPS V-J1). A profile is the one type that
   accretes facts, and its project's declared fields are where they land. Every
@@ -68,10 +74,23 @@ if TYPE_CHECKING:  # pragma: no cover
 EDIT_AFFORDANCE = "bm show <id> read it back · bm history dirty see uncommitted changes"
 MARK_AFFORDANCE = "bm ls --status open what is still open · bm new record what you learned"
 
-# The types `bm edit` changes in place. Fixed by the schema, not by a project's
-# vocabulary: a type is kept current or it is not, and that is a property of the
-# type's temporal shape rather than of any one project's declarations.
+# The types whose whole point is that they say what is true now. Fixed by the
+# schema, not by a project's vocabulary: a type is kept current or it is not, and
+# that is a property of the type's temporal shape rather than of any one
+# project's declarations.
 KEPT_CURRENT_TYPES: tuple[str, ...] = ("plan", "guide", "profile", "state", "inbox")
+
+# The types `bm edit` changes in place. A `task` is not kept current — it is
+# opened and then closed — but it is still editable, because a task that has gone
+# stale and cannot be corrected gets quoted as fact instead (GAPS U44, user's
+# call 2026-08-21). Every type but `finding` and MCP's `note` is here.
+EDITABLE_TYPES: tuple[str, ...] = ("task", *KEPT_CURRENT_TYPES)
+
+# The one type that refuses a content edit by default. A finding is evidence: the
+# correction is normally a successor written with `bm new --supersedes`, which
+# keeps both halves of the reversal. `--override` is the way through, for the case
+# supersession cannot express — the finding itself is wrong, not superseded.
+EVIDENCE_TYPE = "finding"
 
 # The one type whose declared fields are mutable (`.forked/schema.md` §1 table and
 # §4 item 4). A profile accretes facts about a subject; on every other type the
@@ -187,40 +206,62 @@ def _write_scope(outcome: WriteOutcome) -> ReadScope:
 # --- bm edit ---
 
 
-def _refuse_edit(record: "ExistingRecord") -> None:
-    """Refuse a *content* edit to a type that is not kept current, naming what to do instead.
+def _refuse_edit(record: "ExistingRecord", *, override: bool) -> None:
+    """Refuse a *content* edit the record's type does not take, naming what to do instead.
 
     Only reached for an edit that changes what the record says — `--title`,
     `--body`, `--set`, or an `$EDITOR` session. A relations-only `--rel` run
     never gets here: it is allowed on every type (GAPS U18), because it adds an
     edge and rewrites no evidence.
 
-    All three refusals point at a verb rather than at a rule. An agent that reads
-    "a finding is immutable" files the correction somewhere else; one that reads
-    the exact `bm new --supersedes` line writes the successor. Each also names
-    `--rel`, because the reader has just been told this record cannot be edited
-    and the one edit it *can* take is the one they most often want next.
+    Both refusals point at a verb rather than at a rule. An agent that reads "a
+    finding is immutable" files the correction somewhere else; one that reads the
+    exact `bm new --supersedes` line writes the successor.
+
+    Trigger: `--override` on a `finding`.
+    Why: supersession keeps both halves of a reversal, which is right when the
+        world moved and wrong when the finding was simply mistyped — a successor
+        to a typo is two records saying one thing. The store's history holds the
+        old text either way (W3), so nothing is destroyed by the rewrite.
+    Outcome: the edit lands in place. Every other type ignores the flag.
     """
-    if record.note_type in KEPT_CURRENT_TYPES:
+    if record.note_type in EDITABLE_TYPES:
         return
-    if record.note_type == "task":
+    if record.note_type == EVIDENCE_TYPE:
+        if override:
+            return
         raise RecordVerbError(
-            f"'{record.record_id}' is a task, and a task is closed rather than edited — "
-            f"use 'bm done {record.record_id}' or 'bm mark {record.record_id} <status>'; "
-            f"'bm edit {record.record_id} --rel <type>:<id>' on its own adds a link"
+            f"'{record.record_id}' is a finding, and a finding is evidence — record the "
+            f'correction with bm new finding "<title>" --supersedes {record.record_id}, '
+            f"or pass --override to rewrite this one in place "
+            f"(the store's history keeps the old text)."
         )
-    if record.note_type == "finding":
-        raise RecordVerbError(
-            f"'{record.record_id}' is a finding, and a finding is never rewritten — "
-            f"record what replaced it with "
-            f"'bm new finding \"<title>\" --supersedes {record.record_id}'; "
-            f"'bm edit {record.record_id} --rel <type>:<id>' on its own adds a link"
-        )
+    # Everything left is outside the record schema — MCP's `note`, or a type an
+    # ungoverned project invented. It names `--rel` because the reader has just
+    # been told this record cannot be edited, and the one edit it *can* take is
+    # the one they most often want next.
     raise RecordVerbError(
-        f"'bm edit' changes the content of records that are kept current "
-        f"({', '.join(KEPT_CURRENT_TYPES)}); '{record.record_id}' is a {record.note_type} — "
+        f"'bm edit' changes the content of a record ({', '.join(EDITABLE_TYPES)}); "
+        f"'{record.record_id}' is a {record.note_type} — "
         f"'bm edit {record.record_id} --rel <type>:<id>' on its own adds a link"
     )
+
+
+def _override_notices(record: "ExistingRecord", *, override: bool) -> tuple[str, ...]:
+    """The line `--override` earns on a type that never refused the edit (rule 4).
+
+    Trigger: `--override` on anything but a `finding`.
+    Why: the flag did nothing, and silently accepting it teaches an agent to pass
+        it everywhere — which is how a flag that exists to be deliberate becomes
+        boilerplate. It is a notice rather than an error because the edit itself
+        is well-formed and the caller's intent is unambiguous (contract rule 5:
+        this is content, not an addressing failure).
+    Outcome: one notice after the payload, and the edit proceeds; `--quiet` drops
+        it like any other notice.
+    """
+    if not override or record.note_type == EVIDENCE_TYPE:
+        return ()
+    return (f"--override has no effect on a {record.note_type} — only a finding refuses an edit",)
 
 
 def parse_field_assignments(assignments: Sequence[str]) -> dict[str, str]:
@@ -321,11 +362,14 @@ async def edit_record(
     body: Optional[str],
     fields: Sequence[str] = (),
     relations: Sequence[tuple[str, str]] = (),
+    override: bool = False,
 ) -> WriteOutcome:
-    """Replace a kept-current record's title, body and declared fields, or add an edge.
+    """Replace a record's title, body and declared fields, or add an edge.
 
-    Only a `profile` has declared fields, and `fields` is the only frontmatter
-    this verb writes — every set-once field stays as `bm new` wrote it.
+    Every record type takes a content edit but `finding`, which refuses one
+    unless `override` is set (GAPS U44). Only a `profile` has declared fields,
+    and `fields` is the only frontmatter this verb writes — every set-once field
+    stays as `bm new` wrote it, `status` included.
 
     A record's edges are facts somebody recorded, so nothing here removes one:
 
@@ -350,17 +394,17 @@ async def edit_record(
     stack, project, record = await _open_record(project_name, record_id)
 
     # Trigger: `--rel` and nothing else — no `--title`, no `--body`, no `--set`.
-    # Why: the type refusal exists because a task is closed rather than revised
-    #     and a finding is evidence rather than a draft (D12). An edge states
-    #     neither: it adds a link and rewrites nothing the record claims, and
-    #     provenance is usually noticed on the read-back, after both records are
-    #     written (GAPS U18). `fields` is read raw rather than parsed, so a
-    #     malformed `--set` still reaches the type refusal it used to.
+    # Why: the type refusal exists because a finding is evidence rather than a
+    #     draft (D12, U44). An edge states nothing of the sort: it adds a link and
+    #     rewrites nothing the record claims, and provenance is usually noticed on
+    #     the read-back, after both records are written (GAPS U18). `fields` is
+    #     read raw rather than parsed, so a malformed `--set` still reaches the
+    #     type refusal it used to.
     # Outcome: a relations-only edit is allowed on every type; every other edit
     #     keeps the refusal.
     relations_only = bool(relations) and title is None and body is None and not fields
     if not relations_only:
-        _refuse_edit(record)
+        _refuse_edit(record, override=override)
 
     updates = parse_field_assignments(fields)
     if updates:
@@ -439,7 +483,11 @@ async def edit_record(
         # <id>` is the way to get the absolute one.
         detail=result.file_path,
         project=project.name,
-        notices=(*result.notices, *_ungoverned_notices(project.external_id)),
+        notices=(
+            *result.notices,
+            *_override_notices(record, override=override),
+            *_ungoverned_notices(project.external_id),
+        ),
     )
 
 
@@ -486,6 +534,15 @@ def edit(
             ),
         ),
     ] = None,
+    override: Annotated[
+        bool,
+        typer.Option(
+            "--override",
+            help=(
+                "Rewrite a finding in place instead of superseding it. No effect on any other type."
+            ),
+        ),
+    ] = False,
     project: Annotated[
         Optional[str],
         typer.Option("--project", "-p", help="Project to write to. Defaults to .bm.yml."),
@@ -495,14 +552,15 @@ def edit(
         typer.Option("--quiet", help="Hide the notices and the next-step hints."),
     ] = False,
 ) -> None:
-    """Change a record that is kept current, or add a link to any record.
+    """Change a record's title, body or declared fields, or add a link to it.
 
-    The title and the body move on a guide, profile, state or inbox note, and
-    `--set` writes a declared field on a profile. `--rel <type>:<id>` on its own
-    adds a link to another record and works on every type, a task and a finding
-    included. Every field set at creation stays set — a task is closed with
-    `bm done`, and a finding is replaced by a successor written with
-    `bm new --supersedes`.
+    Every type takes an edit — a task in any status, `open` through `done`
+    included — except a finding, which is evidence: correct one by writing its
+    successor with `bm new finding --supersedes <id>`, or pass `--override` to
+    rewrite it in place. `--set` writes a declared field on a profile, and
+    `--rel <type>:<id>` on its own adds a link to any record. Every other field
+    set at creation stays set, `status` included: `bm mark` and `bm done` are
+    what move it.
     """
     from basic_memory.cli.record_notes import parse_relations, write_project_name
 
@@ -521,6 +579,9 @@ def edit(
     # Trigger: no --title, --body, --set or --rel, and no terminal to open $EDITOR on.
     # Why: the edit would rewrite the record with exactly what it already says,
     #     which is a no-op write the caller did not ask for and cannot see.
+    #     `--override` is deliberately absent from this list: it lifts a refusal
+    #     and states no change of its own, so `--override` alone is that same
+    #     no-op (GAPS U44).
     # Outcome: an addressing failure naming every way to state the change.
     if title is None and body is None and not set_fields and not rel and not sys.stdin.isatty():
         raise fail("Error: nothing to change — pass --title, --body, --set or --rel")
@@ -533,6 +594,7 @@ def edit(
             body=body,
             fields=set_fields or (),
             relations=relations,
+            override=override,
         ),
         quiet=quiet,
     )

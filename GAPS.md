@@ -3224,7 +3224,7 @@ the code is, so reversing one is a change, not an archaeology exercise.
 | D9 | `bm path` prints one absolute path: no count line, no notices, no affordances, no `--quiet`. Documented as the one exception in `docs/OUTPUT_CONTRACT.md`. |
 | D10 | `bm show` prints the file's bytes verbatim; a supersession is a notice after the payload, dropped by `--quiet`. |
 | D11 | Body input is `--body <text>`, `--body -` for stdin, or `$EDITOR` when a terminal is attached. No interactive prompts. |
-| D12 | `bm edit` accepts `guide`, `profile`, `state`, `inbox`, and moves title, body and — on a `profile` only — the fields the project declares, with `--set name=value` (added 2026-08-17, V-J1). A `task` is pointed at `bm done`/`bm mark`, a `finding` at `bm new --supersedes`. |
+| D12 | `bm edit` accepts `guide`, `profile`, `state`, `inbox`, and moves title, body and — on a `profile` only — the fields the project declares, with `--set name=value` (added 2026-08-17, V-J1). A `task` is pointed at `bm done`/`bm mark`, a `finding` at `bm new --supersedes`. **— revised by U44 2026-08-21:** a `task` takes an edit in every status, `open` through `done`, with no flag; a `finding` still refuses by default and now yields to `--override`. Only `finding` and MCP's `note` refuse anything. `status` is untouched by `bm edit` either way — that is still `bm mark`/`bm done` alone. |
 
 Four more, taken while building:
 
@@ -7871,6 +7871,72 @@ record untouched for 30 days does not match, so the status gates it), and the cr
 isolation test now covers the new query. `tests/cli/test_doctor_command.py` — the rendered row and
 its single group line, no moves line on a corpus with nothing stuck, and `--only integrity`
 neither running the query nor printing the row.
+
+### U44 — an uneditable task gets quoted as fact after it goes stale — **FOUND + FIXED 2026-08-21**
+
+**Found 2026-08-21**, by the user, from using the tool. `_refuse_edit` allowed a content edit only
+on the kept-current types, on the rule recorded as D12: a task is closed rather than edited, a
+finding is superseded rather than edited. The finding half was right. The task half was not, and
+it failed in two ways that only show up after the corpus has some age on it:
+
+- **A stale task is still read as current.** Nothing about a task decays visibly — `bm ls` and
+  `bm brief` render it exactly as they render one written this morning. An agent that finds a task
+  whose body no longer describes the work quotes the body as fact, because the alternative was to
+  refuse the whole record.
+- **The sanctioned repair split one item in two.** `bm done` the stale task, `bm new` a replacement:
+  two ids, two histories, and a closed record that says something wrong sitting in the corpus
+  forever. That is the cost of an edit refusal on a type whose whole life is "open, then closed".
+
+The refusal was also already contradicted inside the tool. `cli/commands/doctor.py:71` offers
+`bm edit <id> refreshes the clock` as one of the three moves for a stale `doing` row (U43) — and
+every stale `doing` row is a task or a plan. Under the old rule, the advice `bm doctor` printed
+failed on the type it printed it for.
+
+**The decision — the user's call, 2026-08-21.** Take the refusal off `task` entirely: `--title`,
+`--body`, `--set` and the `$EDITOR` session all work in every status, `open` through `done`, with
+no flag to ask for. Nothing is lost by allowing it, because since W3 every write is a commit in the
+store repo, so the pre-edit text is recoverable with `bm history` and `bm undo`. Keep `finding`
+refusing, because supersession keeps both halves of a reversal and that is what a finding is for —
+but add `--override` for the case supersession cannot express: the finding itself is wrong (a
+mistyped title, a garbled quote), where a successor would be two records saying one thing.
+
+**What changed.** `cli/commands/record_write.py`:
+
+- `EDITABLE_TYPES = ("task", *KEPT_CURRENT_TYPES)` is what `_refuse_edit` now checks.
+  `KEPT_CURRENT_TYPES` survives as the narrower idea it always named; a task is editable without
+  being kept current.
+- The `task` branch of `_refuse_edit` is gone. `EVIDENCE_TYPE = "finding"` keeps its branch, with a
+  new message: `'<id>' is a finding, and a finding is evidence — record the correction with bm new
+  finding "<title>" --supersedes <id>, or pass --override to rewrite this one in place (the store's
+  history keeps the old text).`
+- `--override` on `bm edit`, threaded to `edit_record`. On a finding it lifts the refusal. On every
+  other type `_override_notices` prints one notice after the payload —
+  `--override has no effect on a <type> — only a finding refuses an edit` — and the edit proceeds,
+  exit 0. A notice rather than an error because the edit is well-formed (contract rules 4 and 5);
+  named rather than silent because a flag accepted everywhere stops being deliberate.
+- `--override` states no change of its own, so it is deliberately absent from the "nothing to
+  change" list: `bm edit <id> --override` with no terminal is the same no-op error it was.
+- `status` is untouched, as before. `bm mark` and `bm done` remain the only things that move it,
+  which is why the task test asserts the status on both sides of the close.
+
+The `--rel`-alone exemption (U18) is unchanged on every type, and needs no `--override`.
+
+Docs: the `bm edit` help text, the README row, and `bm brief`'s toolbox doctrine, which now reads
+"a finding is evidence — supersede it … `bm edit <id> --override` rewrites one in place" plus a
+second line saying every other record, a closed task included, takes `bm edit` directly. One more
+copy of the old rule was found by grep and fixed: the `supersedes-not-on-type` violation message in
+`vocabulary/checker.py` said "A finding is never edited" and implied a task is not edited in place.
+The rule it enforces is unchanged — only a finding supersedes anything — and no test pins its prose.
+
+**Tests** (`tests/cli/test_record_write_commands.py`; 2 `def test_` removed, 4 added, 44 → 46):
+`test_edit_changes_a_task_while_it_is_open_and_after_it_is_closed` (title and body move, `status`
+asserted before and after `bm done`) replaces `test_edit_on_a_task_names_done_and_mark`;
+`test_edit_on_a_finding_names_supersession_and_the_override` is the old finding refusal with the
+new message and its positive control kept — the file on disk still says what `bm new` wrote;
+`test_edit_a_finding_with_override_rewrites_it_in_place`;
+`test_override_on_a_task_edits_and_reports_that_the_flag_did_nothing`.
+`test_edit_rel_with_a_title_on_a_finding_is_still_refused` needed no change: it passes no
+`--override`, so the refusal it pins is the one that survives.
 
 ## Docs swept
 

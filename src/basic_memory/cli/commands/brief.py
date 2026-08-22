@@ -689,7 +689,9 @@ def toolbox_lines() -> list[str]:
     W19); `bm types` remains the project-accurate report this block points at.
     The doctrine lines at the end are the hn-app audit's lessons (GAPS U31/U32):
     seventeen open tasks with zero ever closed, and corrections whose stale
-    predecessors nothing flagged.
+    predecessors nothing flagged. The edit line is U44's: `bm edit` used to refuse
+    a task outright, so agents quoted stale ones as fact — it now refuses only a
+    finding, and even that yields to `--override`.
     """
     from basic_memory.vocabulary.glossary import PICKING_QUESTIONS, SUPERSEDES_RELATION
     from basic_memory.vocabulary.model import DEFAULT_VOCABULARY
@@ -709,9 +711,13 @@ def toolbox_lines() -> list[str]:
         f"types: {gists} · aliases: {aliases} — bm types for detail",
         f"statuses: {statuses} — shelved is parked, not dropped; bm mark <id> open revives it",
         "doctrine: finished it? bm done — learned it? bm new finding — will do it? bm new task",
-        "findings are never edited — supersede: "
+        "a finding is evidence — supersede it: "
         f'bm new finding "<corrected>" --rel {SUPERSEDES_RELATION}:<old-id>; '
-        "ls and show then flag the old record",
+        "ls and show then flag the old record. bm edit <id> --override rewrites one in "
+        "place, for the rarer case the finding itself is wrong",
+        "every other record takes bm edit directly, a closed task included — a stale task "
+        "nobody can correct gets quoted as fact; status still moves only with bm mark and "
+        "bm done",
         # The toolbox is normative — one recommended way, stated once (user
         # decision 2026-08-20): every agent on every machine does it the same
         # way, or the corpus grows four spellings of the same structure.

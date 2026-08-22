@@ -437,9 +437,9 @@ def _check_supersedes(record_type: str, relation_types: Sequence[str] | None) ->
             field=_SUPERSEDES_RELATION,
             message=(
                 f"Only a finding supersedes another record, and this is a {record_type}. "
-                "A finding is never edited, so a correction is a new finding that "
-                "supersedes the old one. A task is closed with `bm done`, not superseded; "
-                "a guide, a profile, and a state are edited in place."
+                "Supersession keeps both halves of a reversal, which is what a finding "
+                "is for. Every other type is corrected with `bm edit` instead, and a "
+                "task is closed with `bm done` rather than superseded."
             ),
             severity="error",
         )
