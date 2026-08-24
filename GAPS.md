@@ -8531,6 +8531,54 @@ missing-home check would fire on a healthy install. The full rule set, including
 at the skill root, is in `README.md`, *Notes that travel with a skill*.
 
 
+### U52 — `bm brief -q` fails closed for half-remembered recall, and one hyphen breaks a correct query — **FOUND 2026-08-24**
+
+Measured on v0.1.16 with 22 invented half-remembered queries (paraphrase + typo per target, 11
+targets across four projects) plus 5 positive controls taken verbatim from titles. Result: **0 of
+22** fuzzy queries returned anything — not low ranks, empty result sets — and **one positive
+control failed**, which is a correctness bug, not a recall gap. Invented queries are weaker
+evidence than real ones (the tester could not reproduce genuine forgetting); the mechanisms below
+are source-confirmed and do not depend on them.
+
+Three mechanisms, in fix order:
+
+1. **A punctuated word collapses the whole query into an exact phrase.**
+   `repository/sqlite_search_repository.py:301` lists `needs_quoting_chars` (`-`, `:`, `.`, `,`,
+   `/`); if *any* word contains one, the branch at `:325-327` quotes the entire query as a single
+   FTS5 phrase demanding contiguous adjacency, instead of `w1* AND w2*`. Reproduction:
+
+   ```
+   $ bm brief -q "crash-looping" -p servers            → 5 results
+   $ bm brief -q "nanoclaw" -p servers                 → 9 results
+   $ bm brief -q "nanoclaw crash-looping" -p servers   → 0 results
+   $ bm brief -q "db:pull hardcoded" -p hn-app         → 0 results
+   $ bm brief -q "pull hardcoded" -p hn-app            → 1 result   (colon removed: rescued)
+   ```
+
+   The corpus is full of hyphenated titles (`crash-looping`, `OOM-killed`, `read-only`), so this
+   fires on queries the user typed *correctly*.
+
+2. **No stemmer, and the prefix wildcard works in one direction only.** `models/search.py:12`
+   builds the FTS5 table with `tokenize='unicode61'`. `dirty page cache` → 1 result;
+   `dirty page cached` / `caches` → 0. A note saying "restarts" is unreachable by "restarting".
+   `porter unicode61` fixes both directions with no new dependency and no hot-path cost.
+
+3. **Strict AND with no rescue.** A multi-word query requires every word present as a prefix in
+   one note, so one wrong word out of eight equals eight wrong words. The OR-relax fallback
+   already exists (`services/search_service.py:298-320`) but `cli/commands/brief.py:553-565`
+   hardcodes `SearchRetrievalMode.FTS` against the repository directly and never passes
+   `allow_relaxed` — deliberate for hot-path latency (no 64 MB model load), but nothing relaxes a
+   zero-result strict pass either. Four of the 22 misses had *every* query word present in the
+   project; only the conjunction failed.
+
+   Typo tolerance (10 of 22 misses) would need trigram/edit-distance fuzzing — ranked below the
+   three fixes above: most invasive, and the user notices their own typo. True synonym recall is
+   the semantic arm's job; it ships in this tree, is enabled in config, and `brief -q` bypasses
+   it by design.
+
+   Tasks filed 2026-08-24; the full query table and tallies live in `finding-vw57u6sk` in
+   the basic-memory project (see the tasks' relations).
+
 ## Docs swept
 
 **2026-07-26.** A ten-reader sweep reconciled the following into this file. The gaps they contained
