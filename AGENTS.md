@@ -1,7 +1,9 @@
 # Read this first
 
 This repo is [`noahkiss/basic-memory`](https://github.com/noahkiss/basic-memory). **It is public**,
-so don't commit local paths or personal material; design docs live in `.design/` (gitignored).
+so don't commit local paths or personal material; design docs and working notes live in bm
+records (project basic-memory) — the `.design/` directory was retired 2026-08-24 into guide
+records and the archive tarball in the bm data dir.
 
 ## → `GAPS.md` is this project's to-do list. Write to it as you work.
 
@@ -240,7 +242,7 @@ judgment call taken. No Claude co-author line, no generated-with footer.
 
 ### Publishing
 
-The repo is public. No local paths, no personal material, nothing from `.design/` committed.
+The repo is public. No local paths, no personal material, no working-note files committed.
 
 ### The stop-list — the only things that still require asking
 
@@ -299,7 +301,7 @@ tags, pushes, and runs `gh release create` against `noahkiss/basic-memory` expli
 release-preview vX.Y.Z` shows what it would do. Install is the Homebrew tap
 (`brew install noahkiss/tap/basic-memory`), with `uv tool install git+…@vX.Y.Z` as the fallback on a
 machine without the tap. Versioning starts at `v0.1.0` (2026-08-17). See
-`.design/release-design.md` for why there is still no PyPI, npm, or CI.
+bm guide `tnd-1jacnvx6` (the absorbed release design) for why there is still no PyPI, npm, or CI.
 
 ### Test Structure
 

@@ -439,7 +439,7 @@ migration message:
 # is published to an index: the installable artifact is the tagged source, and
 # uv-dynamic-versioning derives the package version from the tag at install
 # time. The Homebrew tap formula (noahkiss/tap/basic-memory) is the install
-# path and is bumped separately. See .design/release-design.md.
+# path and is bumped separately. See bm guide tnd-1jacnvx6 (release design).
 
 # The one gate. Run before pushing anything you would be sad to break.
 gate:

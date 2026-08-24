@@ -60,5 +60,3 @@ claude-output
 .benchmarks/
 
 
-# Local design docs (not published)
-.design/
