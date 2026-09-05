@@ -1,0 +1,22 @@
+name: tests
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  pytest:
+    permissions:
+      contents: read
+    uses: noahkiss/workflows/.github/workflows/python-ci.yml@main
+    with:
+      # Benchmarks assert on wall-clock timings, which a shared runner cannot
+      # hold to; pyproject.toml defines the markers for exactly this.
+      #
+      # Do not add `-n auto` to make this quicker. Coverage is collected with
+      # `concurrency = ["thread", "gevent"]`, and under xdist it under-reports
+      # by about four points -- 90.17% against the same tree that measures
+      # 94.25% serially, which fails the 93.8 ratchet for no real reason.
+      commands: pytest -m "not benchmark and not slow"
